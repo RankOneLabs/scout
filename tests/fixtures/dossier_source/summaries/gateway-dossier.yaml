@@ -1,0 +1,322 @@
+id: gateway-dossier
+type: summary
+topic: Gateway — x402/ERC-8004 Free Trial Access Gateway
+status: active
+summary: >
+  Canonical operator-reviewed dossier for the gateway project: a proposed access
+  gateway that gates free trial API and SaaS access via two paths — pay a penny
+  (x402 micropayment) or present a ZK reputation credential via ERC-8004 Trustless
+  Agents. No code has been shipped as of the reviewed date; the project is in the
+  spark/ideation stage.
+tags:
+  - gateway
+  - x402
+  - erc-8004
+  - zk
+  - free-trial
+  - dossier
+dossier:
+  project_key: gateway
+  last_reviewed: '2026-07-11'
+  reviewer:
+    id: reviewer
+    display_name: Example Reviewer
+  evidence:
+    - id: evidence-gateway-entry-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-02-18-x402-8004-free-trial-gateway.yaml
+      immutable_ref: 843b9b5b4f757c2f41d9d7d0747ba4b459e8321d
+    - id: evidence-erc8004-opp-entry-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-02-12-erc8004-x402-zk-opportunity.yaml
+      immutable_ref: 193995b419ebd95d1872b8932a680899e42366e0
+    - id: evidence-x402-protocol-summary-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        summaries/x402-protocol.yaml
+      immutable_ref: 5a64c324ed2f05cb9d1ef3fe3999a4e75f502624
+  facts:
+    - id: fact-gateway-dual-access-paths
+      claim: >-
+        The gateway offers two access paths: pay a penny via x402 micropayment
+        or present a ZK reputation credential via ERC-8004.
+      status: planned
+      safe_phrasings:
+        - >-
+          The gateway offers two access paths: pay a penny via x402 micropayment
+          or present a ZK reputation credential via ERC-8004.
+        - >-
+          Gateway access requires either a micropayment (x402) or a ZK reputation
+          credential (ERC-8004).
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-solves-free-trial-abuse
+      claim: >-
+        The gateway directly addresses free trial abuse for API and SaaS
+        providers.
+      status: planned
+      safe_phrasings:
+        - >-
+          The gateway directly addresses free trial abuse for API and SaaS
+          providers.
+        - 'Gateway solves the free trial abuse problem for API and SaaS providers.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-ai-agent-relevance
+      claim: >-
+        The gateway is especially relevant as AI agents increasingly consume
+        API free tiers.
+      status: planned
+      safe_phrasings:
+        - >-
+          The gateway is especially relevant as AI agents increasingly consume
+          API free tiers.
+        - >-
+          Gateway relevance grows as AI agents become primary consumers of API
+          free tiers.
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-x402-integration
+      claim: 'The gateway integrates x402 for its micropayment access path.'
+      status: planned
+      safe_phrasings:
+        - 'The gateway integrates x402 for its micropayment access path.'
+        - 'Gateway uses x402 as the payment protocol for the pay-to-access path.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-erc8004-integration
+      claim: >-
+        The gateway integrates ERC-8004 (Trustless Agents) for its ZK
+        reputation credential access path.
+      status: planned
+      safe_phrasings:
+        - >-
+          The gateway integrates ERC-8004 (Trustless Agents) for its ZK
+          reputation credential access path.
+        - >-
+          Gateway uses ERC-8004 Validation Registry as the credential verification
+          layer.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+    - id: fact-gateway-standalone-buildable
+      claim: >-
+        The gateway can be built as a standalone demo independent of any
+        specific client engagement.
+      status: planned
+      safe_phrasings:
+        - >-
+          The gateway can be built as a standalone demo independent of any
+          specific client engagement.
+        - 'Gateway is buildable on spec as a standalone demonstration project.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-spark-stage
+      claim: >-
+        The gateway is in the spark/ideation stage. No code has been shipped.
+      status: planned
+      safe_phrasings:
+        - >-
+          The gateway is in the spark/ideation stage. No code has been
+          shipped.
+        - >-
+          Gateway is a planned concept; no implementation has been released
+          to date.
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-erc8004-zk-ready
+      claim: >-
+        ERC-8004 Validation Registry is explicitly ZK-ready with a pluggable
+        verifier interface, enabling the credential access path.
+      status: shipped
+      safe_phrasings:
+        - >-
+          ERC-8004 Validation Registry is explicitly ZK-ready with a pluggable
+          verifier interface.
+        - >-
+          ERC-8004 supports pluggable ZK verifiers in its Validation Registry,
+          enabling the credential path.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+    - id: fact-gateway-x402-roadmap
+      claim: >-
+        ERC-8004 integration is on the x402 roadmap for Q1-Q2 2026.
+      status: planned
+      safe_phrasings:
+        - 'ERC-8004 integration is on the x402 roadmap for Q1-Q2 2026.'
+        - 'x402 has ERC-8004 integration planned for Q1-Q2 2026.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-x402-100m-payments
+      claim: >-
+        x402 has processed 100M+ payments since its May 2025 launch, providing
+        a proven payment rail for the gateway.
+      status: shipped
+      safe_phrasings:
+        - >-
+          x402 has processed 100M+ payments since its May 2025 launch,
+          providing a proven payment rail for the gateway.
+        - >-
+          x402 processed over 100 million payments in its first six months
+          of operation.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: fact-gateway-erc8004-institutional
+      claim: >-
+        ERC-8004 has institutional backing from Coinbase, MetaMask, Ethereum
+        Foundation, and Google, with 100+ contributors.
+      status: shipped
+      safe_phrasings:
+        - >-
+          ERC-8004 has institutional backing from Coinbase, MetaMask, Ethereum
+          Foundation, and Google, with 100+ contributors.
+        - >-
+          ERC-8004 is co-authored by Coinbase, MetaMask, Ethereum Foundation,
+          and Google with broad industry adoption.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+    - id: fact-gateway-zk-threshold-proof
+      claim: >-
+        The credential path uses ZK proofs to prove a reputation threshold
+        without revealing the underlying reputation score.
+      status: planned
+      safe_phrasings:
+        - >-
+          The credential path uses ZK proofs to prove a reputation threshold
+          without revealing the underlying score.
+        - >-
+          Gateway credential access proves reputation threshold via ZK, keeping
+          the actual score private.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+    - id: fact-gateway-no-community
+      claim: >-
+        Gateway has no established community (no forum, Discord, or public
+        channel) as of the reviewed date.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Gateway has no established community as of the reviewed date.
+        - 'No community exists for the gateway project at this time.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-no-site
+      claim: >-
+        Gateway has no public website or landing page as of the reviewed
+        date.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Gateway has no public website or landing page as of the reviewed
+          date.
+        - 'No public site exists for the gateway project at this time.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-no-customers
+      claim: >-
+        Gateway has no customers or paying users as of the reviewed date.
+      status: shipped
+      safe_phrasings:
+        - 'Gateway has no customers or paying users as of the reviewed date.'
+        - 'No customers or paying users exist for the gateway project at this time.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+    - id: fact-gateway-zk-erc8004-gap
+      claim: >-
+        No ZK privacy implementation exists for ERC-8004 reputation or identity
+        layers as of the reviewed date; only zkML inference verification is
+        active.
+      status: shipped
+      safe_phrasings:
+        - >-
+          No ZK privacy implementation exists for ERC-8004 reputation or
+          identity layers as of the reviewed date.
+        - >-
+          The ZK gap in ERC-8004 is in the reputation and identity layers,
+          not in inference verification.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+  resources:
+    - id: res-erc8004-eip
+      label: 'ERC-8004: Trustless Agents (EIP)'
+      canonical_url: https://eips.ethereum.org/EIPS/eip-8004
+      purpose: >-
+        Primary specification for ERC-8004 Trustless Agents, defining the
+        Validation Registry and pluggable ZK verifier interface used by
+        the credential path.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+    - id: res-x402-site
+      label: x402 Protocol Homepage
+      canonical_url: https://www.x402.org
+      purpose: >-
+        Canonical x402 protocol site. Primary reference for the payment
+        path specification and x402 ecosystem documentation.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: res-x402-github
+      label: x402 GitHub Repository
+      canonical_url: https://github.com/coinbase/x402
+      purpose: >-
+        Source repository for the x402 protocol implementation; the
+        extension PR would target this repo.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: res-icme-zkml-blog
+      label: Trustless Agents with zkML (ICME)
+      canonical_url: https://blog.icme.io/trustless-agents-with-zkml/
+      purpose: >-
+        Documents the only active ZK project on ERC-8004 (JOLT-Atlas
+        zkML inference verification). Context for the ZK gap that gateway
+        aims to fill.
+      evidence_ids:
+        - evidence-erc8004-opp-entry-blob
+    - id: res-cloudflare-x402-blog
+      label: Cloudflare x402 Foundation Announcement
+      canonical_url: https://blog.cloudflare.com/x402/
+      purpose: >-
+        Cloudflare co-founded the x402 Foundation with Coinbase. Documents
+        enterprise-level backing and protocol adoption metrics.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+  prohibitions:
+    - id: proh-no-shipped-claims
+      normalized_phrase: shipped to production
+      forbidden_phrasings:
+        - 'Gateway is shipped to production.'
+        - 'Gateway is live.'
+        - 'Gateway is deployed.'
+        - 'Gateway is available to users.'
+      evidence_ids:
+        - evidence-gateway-entry-blob
+      resource_ids: []
+  known_gaps:
+    - id: gap-implementation-timeline
+      question: >-
+        What is the realistic implementation timeline and minimum viable
+        scope for a standalone gateway demo?
+      related_fact_ids:
+        - fact-gateway-spark-stage
+        - fact-gateway-standalone-buildable
+      related_resource_ids:
+        - res-erc8004-eip
+    - id: gap-zk-circuit-design
+      question: >-
+        Which ZK proof system and circuit architecture would best implement
+        the ERC-8004 reputation threshold credential for the gateway?
+      related_fact_ids:
+        - fact-gateway-erc8004-zk-ready
+        - fact-gateway-zk-threshold-proof
+      related_resource_ids:
+        - res-erc8004-eip
+    - id: gap-pricing-model
+      question: >-
+        What is the right micropayment price point that deters abuse without
+        blocking legitimate free trial users?
+      related_fact_ids:
+        - fact-gateway-dual-access-paths
+        - fact-gateway-x402-integration

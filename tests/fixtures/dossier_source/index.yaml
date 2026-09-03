@@ -1,0 +1,14 @@
+version: 1.0.0
+entries:
+  gateway-dossier:
+    path: summaries/gateway-dossier.yaml
+    type: summary
+  zk-extension-dossier:
+    path: summaries/zk-extension-dossier.yaml
+    type: summary
+  agent-evals-dossier:
+    path: summaries/agent-evals-dossier.yaml
+    type: summary
+  agent-ops-dossier:
+    path: summaries/agent-ops-dossier.yaml
+    type: summary

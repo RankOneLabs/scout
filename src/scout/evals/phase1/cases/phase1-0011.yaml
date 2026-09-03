@@ -1,0 +1,49 @@
+id: phase1-0011
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- unsupported_implication
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: open-source
+  content: 'Any open source projects doing behavioral bot detection worth contributing to? Want to give back to
+    the ecosystem.
+
+    '
+expected_source_relevant: false
+expected_posture: answer
+expected_terminal_status: not_relevant
+observed_draft: 'Gateway is open source under the Apache 2.0 license — core engine is on GitHub and we welcome contributions,
+  especially on the signature heuristics. The commercial product adds managed infrastructure and support on top.
+
+  '
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: false_positive
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: 'Draft claims Gateway is open source under Apache 2.0. The dossier does not describe Gateway as
+    open source — this is an unsupported factual implication that would mislead the reader.
+
+    '
+  implication_implied_claim: Gateway is open source under Apache 2.0
+  implication_missing_support: 'Dossier has no mention of an open source license or public repository.
+
+    '

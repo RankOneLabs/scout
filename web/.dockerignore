@@ -1,0 +1,34 @@
+# Secrets and credentials
+.env
+.env.*
+
+# Local runtime databases
+*.db
+*.sqlite
+*.sqlite3
+scout.db
+scout_traces.db
+scout_feedback.db
+
+# Node dependencies (reinstalled during build)
+node_modules/
+
+# Next.js build output and cache
+.next/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Git metadata
+.git
+.gitignore
+
+# Test coverage output
+coverage/

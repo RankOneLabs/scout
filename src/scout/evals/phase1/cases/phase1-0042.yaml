@@ -1,0 +1,22 @@
+id: phase1-0042
+origin: synthetic
+case_kind: dossier_bad_write
+reserved_phase2_rail: true
+tags:
+- synthetic
+- wrong_intent_keyword
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+proposed_bad_write:
+  operation: update_dossier
+  payload:
+    project_key: zk-extension
+    fact_id: fact-nonexistent
+    claim: Unsupported automated write
+expected_rail_violations:
+- automated_write_forbidden
+- unknown_fact_id

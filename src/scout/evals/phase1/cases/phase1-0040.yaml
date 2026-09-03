@@ -1,0 +1,47 @@
+id: phase1-0040
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- clear_relevant
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: crypto-dev
+  content: 'We''re writing a custom circuit for a Merkle membership proof and hitting issues with the constraint
+    count — it''s growing quadratically with tree depth. Is there a standard optimization technique for this?
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'ZK-Extension is a great tool for zero-knowledge proof development — it simplifies the process of
+  building and verifying proofs and could be useful for your project. Feel free to check it out and reach out if
+  you have questions!
+
+  '
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - usefulness
+  failure_note: 'The post asks a specific technical question about Merkle proof circuit optimization and quadratic
+    constraint growth. The draft is a generic product plug that doesn''t address the technical question at all.
+    It wastes the reader''s time without providing any useful information.
+
+    '

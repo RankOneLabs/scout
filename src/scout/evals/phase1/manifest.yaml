@@ -1,0 +1,39 @@
+version: '1.0'
+phase: 1
+description: Revision-pinned Phase 1 corpus for dossier-grounded Scout grading.
+created_at: '2026-07-12'
+content_repository: https://github.com/external/dossier-source.git
+dossiers:
+  gateway:
+    summary_id: gateway-dossier
+    revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+  zk-extension:
+    summary_id: zk-extension-dossier
+    revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory_vocabulary:
+  - source_post
+  - immediate_parent
+  - canonical_facts
+  - approved_resources
+  - explicit_absences
+  - relationship_history
+  - none
+constraints:
+  min_cases: 40
+  min_gateway_cases: 15
+  min_zk_extension_cases: 15
+  min_unsupported_implication_pct: 25
+  min_phase2_rail_cases: 4
+  coverage_minima:
+    clear_relevant: 2
+    clear_non_relevant: 2
+    wrong_intent_keyword: 2
+    parent_changes_outcome: 2
+    explicit_no_community: 2
+    explicit_no_site: 2
+    ask_correct: 4
+    abstain_correct: 2
+    implied_experience: 2
+    implied_community: 2
+    implied_resource: 2
+  min_complete_resource_pairs: 2

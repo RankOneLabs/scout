@@ -1,0 +1,54 @@
+id: phase1-0038
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- resource_available
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+- approved_resources
+source:
+  platform: discord
+  channel: academic
+  content: 'New preprint on recursive SNARKs for incrementally verifiable computation — anyone read the Kothapalli
+    et al. paper? The Nova folding scheme is elegant but I''m not sure it''s practical outside of L2 rollups yet.
+
+    '
+expected_source_relevant: false
+expected_posture: answer
+expected_terminal_status: not_relevant
+observed_draft: 'ZK-Extension supports recursive proofs via our folding scheme API — if you''re interested in applying
+  Nova-style IVC to your research, we''d be happy to collaborate or share our implementation.
+
+  '
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids:
+- res-x402-site
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: false_positive
+  action_judgment: fail
+  dimensions:
+  - contextual_understanding
+  failure_note: 'This is an academic research discussion about a specific paper in a dedicated academic channel.
+    The author is a researcher engaging with peer literature, not evaluating developer tools. A product pitch is
+    inappropriate here.
+
+    '
+  context_missing_input: 'Post is in an #academic channel discussing a preprint by Kothapalli et al. The author
+    is evaluating the theoretical contribution of a research paper, not looking for developer tooling.
+
+    '
+pair_id: zk-extension-resource-pair
+resource_state: available

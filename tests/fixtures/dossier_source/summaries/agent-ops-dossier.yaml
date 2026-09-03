@@ -1,0 +1,349 @@
+id: agent-ops-dossier
+type: summary
+topic: Agent Ops — running production agents on shared infrastructure
+status: active
+summary: >
+  Canonical operator-reviewed dossier for the agent-ops project: the practice of
+  operating multiple production agents (Scout's inbound/outbound engagement,
+  Ledger's trading strategy pipeline) on shared infrastructure (jig) with explicit
+  safety gates — human review before deployment, fail-closed readiness checks,
+  drawdown halts, and crash-safe restart handling. Scoped tightly to what is
+  actually documented and shipped across these systems; open questions are
+  recorded rather than assumed answered.
+tags:
+  - agent-ops
+  - jig
+  - ledger
+  - scout
+  - rank-one-labs
+  - dossier
+dossier:
+  project_key: agent-ops
+  last_reviewed: '2026-07-13'
+  reviewer:
+    id: reviewer
+    display_name: Example Reviewer
+  evidence:
+    - id: evidence-jig-ideation-entry
+      kind: git-blob
+      locator: 'example-org/content-source @ 5e7de23: entries/2026-03-18-jig-ideation.yaml'
+      immutable_ref: 4aa79378aa1165fee23010ea1554475560278290
+    - id: evidence-compute-routing-entry
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ 5e7de23:
+        entries/2026-03-13-compute-routing-architecture.yaml
+      immutable_ref: dd6365ade5e9232afa8520744751115551471ce2
+    - id: evidence-jig-pinned-in-scout
+      kind: git-blob
+      locator: 'example-org/scout @ 7260b29: uv.lock'
+      immutable_ref: 6c77df2a69a230c953d8da47a3bfa2602b36ec58
+    - id: evidence-jig-path-dep-in-ledger
+      kind: git-blob
+      locator: 'example-org/ledger @ 5800f8c: agents/pyproject.toml'
+      immutable_ref: 4a98fc6d2b39f7110b50b77834595dd631d287be
+    - id: evidence-ledger-readme
+      kind: git-blob
+      locator: 'example-org/ledger @ 5800f8c: README.md'
+      immutable_ref: 330f144393adf73ca0e420a3167a9121acfd0158
+    - id: evidence-scout-dossier-resolver
+      kind: git-blob
+      locator: 'example-org/scout @ a1e276c: dossier.py'
+      immutable_ref: 6992d0e5aa9649e8b6d9c2df7529483b434534f2
+    - id: evidence-scout-state-manager
+      kind: git-blob
+      locator: 'example-org/scout @ 7260b29: state_manager.py'
+      immutable_ref: d68083690657b5496e80c148a680c637889aefaf
+  facts:
+    - id: fact-two-agents-share-jig
+      claim: >-
+        Rank One Labs runs at least two production agent systems — Scout
+        (inbound/outbound social engagement) and Ledger (crypto trading strategy
+        discovery, backtesting, and deployment) — on a shared execution
+        framework, jig.
+      status: shipped
+      safe_phrasings:
+        - 'Scout and Ledger both run in production on the shared jig framework.'
+        - 'Two production agents currently share one execution framework.'
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+        - evidence-jig-path-dep-in-ledger
+    - id: fact-jig-designed-cross-agent
+      claim: >-
+        jig's shared interfaces were designed specifically so any Rank One Labs
+        agent — not one specific product — could swap models, prompts, memory
+        backends, and graders without changing agent-specific logic.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig's interfaces were designed for reuse across agents, not for one
+          specific product.
+        - 'Model, prompt, memory, and grader swaps in jig are agent-agnostic by design.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-ledger-human-review-gate
+      claim: >-
+        Ledger's strategy pipeline requires a human-review checkpoint between
+        automated scoring and the refiner/deploy stages; no strategy reaches
+        deployment without that manual gate.
+      status: shipped
+      safe_phrasings:
+        - 'No Ledger strategy deploys without passing a human-review checkpoint.'
+        - 'Ledger''s pipeline gates deployment on manual review after scoring.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-paper-live-separation
+      claim: >-
+        Ledger separates paper (dry-run) and live trading within a single SQLite
+        database using a mode column on every trading table, so paper and live
+        data coexist without interference through the same query paths.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger keeps paper and live trading data in one database, separated by
+          a mode column.
+        - 'Paper and live trading share Ledger''s query paths without interfering.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-drawdown-halts
+      claim: >-
+        Ledger enforces automatic drawdown halts at both the per-strategy and
+        portfolio level, using tracked peak equity rather than a static
+        reference point.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger halts strategies automatically on drawdown, at both the
+          per-strategy and portfolio level.
+        - 'Drawdown halts in Ledger track real peak equity, not a fixed baseline.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-drawdown-normalization
+      claim: >-
+        Ledger normalizes legacy drawdown configuration values expressed as
+        percentages (greater than 1.0) into fractions automatically, logging a
+        warning rather than failing or silently misinterpreting the value.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger auto-normalizes legacy percentage-style drawdown values and
+          warns rather than failing silently.
+        - 'Malformed legacy drawdown config in Ledger is normalized, not rejected.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-staged-pipeline
+      claim: >-
+        Ledger's pipeline is explicitly staged — LLM-driven strategy discovery,
+        then numerical optimization, then out-of-sample validation, then
+        stability and regime analysis, then a human-reviewed scoreboard —
+        before any refinement or deployment step runs.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger stages discovery, optimization, validation, and human review
+          before any deployment step.
+        - 'A strategy passes five distinct pipeline stages before a human reviews it.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-halt-not-kill
+      claim: >-
+        Ledger distinguishes "halt" from "kill": a halted strategy stops sending
+        new signals but the orchestrator loop keeps running, prices keep
+        logging, and the strategy can resume without a process restart.
+      status: shipped
+      safe_phrasings:
+        - >-
+          A halted Ledger strategy stops trading but the orchestrator keeps
+          running so it can resume.
+        - 'Halting a Ledger strategy does not stop the orchestrator process.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-stale-intent-quarantine
+      claim: >-
+        Ledger quarantines pending order intents older than a configurable TTL
+        at startup instead of resubmitting them, preventing stale pre-crash
+        intents from re-executing market orders after a restart.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger quarantines stale pending order intents at startup instead of
+          resubmitting them after a crash.
+        - 'A configurable TTL prevents pre-crash Ledger order intents from re-firing on restart.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-durable-safety-events
+      claim: >-
+        Ledger records safety-relevant runtime events (flatten skipped,
+        drawdown-unit normalization, local-flat-with-venue-exposure retained)
+        as durable StrategyEvent ledger rows, while startup-only reconciliation
+        events are logged structurally without a persisted row.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger persists safety-relevant runtime events to a durable ledger,
+          distinct from startup-only structured logs.
+        - 'Not every Ledger safety event is persisted the same way — runtime vs. startup events differ.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-ledger-lifecycle-state-machine
+      claim: >-
+        Ledger strategies move through an explicit, validated lifecycle state
+        machine (discovered, optimizing, validated_is, validated_oos,
+        post_validated, scored, paper_trading, live, with failed, rejected, and
+        retired exits); illegal phase transitions are rejected and every
+        transition is timestamped with a reason.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Ledger strategies follow a validated lifecycle state machine that
+          rejects illegal phase jumps.
+        - 'Every Ledger strategy phase transition is timestamped with a reason.'
+      evidence_ids:
+        - evidence-ledger-readme
+    - id: fact-scout-dossier-fail-closed
+      claim: >-
+        Scout's dossier-grounded engagement pipeline resolves every project's
+        dossier from a pinned, clean git revision before any drafted reply can
+        reach a gate check; an ungrounded or stale dossier blocks engagement
+        instead of falling back to ungrounded drafting.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Scout blocks engagement rather than drafting without a grounded,
+          pinned dossier.
+        - 'A stale or missing Scout dossier fails closed, not open.'
+      evidence_ids:
+        - evidence-scout-dossier-resolver
+    - id: fact-scout-shared-state-manager
+      claim: >-
+        Scout persists inbound scan state, evaluation outcomes, and outbound
+        content-engine state in one shared SQLite-backed StateManager, rather
+        than separate stores per surface.
+      status: shipped
+      safe_phrasings:
+        - 'Scout uses one shared state store across its inbound and outbound surfaces.'
+        - 'A single StateManager backs both of Scout''s product surfaces.'
+      evidence_ids:
+        - evidence-scout-state-manager
+    - id: fact-scout-tracing-both-surfaces
+      claim: >-
+        Scout's outbound content drafting and inbound scan scoring both route
+        through jig's tracing, so every agent call from either surface lands a
+        trace under the same schema.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Every Scout agent call, inbound or outbound, lands a trace under the
+          same jig schema.
+        - 'Scout''s two surfaces share one tracing schema via jig.'
+      evidence_ids:
+        - evidence-scout-state-manager
+        - evidence-jig-pinned-in-scout
+    - id: fact-agent-compute-routed-across-fleet
+      claim: >-
+        Compute for Rank One Labs agent workloads is routed across a small
+        owned GPU fleet rather than a single machine, tiered by model size and
+        workload type.
+      status: shipped
+      safe_phrasings:
+        - 'Agent compute is tiered across a small owned GPU fleet, not one machine.'
+        - 'Workload-type and model-size tiering routes agent compute across owned hardware.'
+      evidence_ids:
+        - evidence-compute-routing-entry
+  resources:
+    - id: res-jig-repo
+      label: jig (GitHub repository)
+      canonical_url: https://github.com/rankonelabs/jig
+      purpose: Shared execution framework underlying both Scout and Ledger.
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+        - evidence-jig-path-dep-in-ledger
+    - id: res-scout-repo
+      label: Scout (GitHub repository)
+      canonical_url: https://github.com/example-org/scout
+      purpose: Production inbound/outbound engagement agent.
+      evidence_ids:
+        - evidence-scout-state-manager
+    - id: res-scout-jig-pin-file
+      label: 'Scout''s pinned jig dependency (uv.lock)'
+      canonical_url: https://github.com/example-org/scout/blob/7260b2945a1893f302ba4e1cc903c6a395c12ab5/uv.lock
+      purpose: Exact file showing Scout's pinned jig git revision.
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+    - id: res-scout-dossier-resolver-file
+      label: 'Scout''s canonical dossier resolver (dossier.py)'
+      canonical_url: https://github.com/example-org/scout/blob/a1e276c7d5f21cafb016785774f309ee635dd388/dossier.py
+      purpose: Source of the fail-closed dossier resolution contract.
+      evidence_ids:
+        - evidence-scout-dossier-resolver
+    - id: res-ledger-repo
+      label: Ledger (GitHub repository)
+      canonical_url: https://github.com/example-org/ledger
+      purpose: Production trading strategy discovery, backtesting, and deployment agent.
+      evidence_ids:
+        - evidence-jig-path-dep-in-ledger
+    - id: res-ledger-jig-pin-file
+      label: 'Ledger''s jig path dependency (agents/pyproject.toml)'
+      canonical_url: https://github.com/example-org/ledger/blob/5800f8ce3a319acc424af49e65d130c7f7593326/agents/pyproject.toml
+      purpose: Exact file showing Ledger's local path dependency on jig.
+      evidence_ids:
+        - evidence-jig-path-dep-in-ledger
+    - id: res-ledger-readme-file
+      label: 'Ledger README (risk management, lifecycle, dashboard)'
+      canonical_url: https://github.com/example-org/ledger/blob/5800f8ce3a319acc424af49e65d130c7f7593326/README.md
+      purpose: Source of Ledger's staged pipeline, risk management, and lifecycle facts.
+      evidence_ids:
+        - evidence-ledger-readme
+  prohibitions:
+    - id: proh-no-guaranteed-returns
+      normalized_phrase: guaranteed returns
+      forbidden_phrasings:
+        - 'Ledger guarantees profitable trades.'
+        - 'Ledger delivers guaranteed returns.'
+      evidence_ids:
+        - evidence-ledger-readme
+      resource_ids: []
+    - id: proh-no-zero-risk-trading
+      normalized_phrase: zero risk
+      forbidden_phrasings:
+        - 'Ledger trading carries zero risk.'
+        - 'Ledger''s drawdown halts eliminate all trading risk.'
+      evidence_ids:
+        - evidence-ledger-readme
+      resource_ids: []
+    - id: proh-no-fully-autonomous-no-oversight
+      regex: "fully autonomous.{0,20}no (human )?(oversight|review)"
+      flags: i
+      forbidden_phrasings:
+        - 'Ledger is fully autonomous with no human oversight.'
+        - 'Agent deployments require no human review at any stage.'
+      evidence_ids:
+        - evidence-ledger-readme
+      resource_ids: []
+  known_gaps:
+    - id: gap-live-trading-maturity
+      question: >-
+        Has any Ledger strategy actually gone live, or is production experience
+        so far limited to paper trading?
+      related_fact_ids:
+        - fact-ledger-lifecycle-state-machine
+        - fact-ledger-paper-live-separation
+      related_resource_ids:
+        - res-ledger-readme-file
+    - id: gap-unified-monitoring
+      question: >-
+        Is there any monitoring or alerting that spans jig-based agents, or does
+        each agent (Scout, Ledger) currently rely on its own ad hoc logging?
+      related_fact_ids:
+        - fact-two-agents-share-jig
+      related_resource_ids:
+        - res-jig-repo
+    - id: gap-scout-halt-equivalent
+      question: >-
+        Does Scout have an equivalent to Ledger's halt-not-kill pattern for its
+        own failure modes, or is that pattern specific to trading risk controls?
+      related_fact_ids:
+        - fact-ledger-halt-not-kill
+        - fact-scout-dossier-fail-closed
+      related_resource_ids:
+        - res-scout-dossier-resolver-file

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "origin", "case_kind", "reserved_phase2_rail", "tags", "project_key", "dossier_summary_id", "dossier_revision", "required_memory"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^phase1-[0-9]{4}$"},
+    "origin": {"enum": ["real_graded", "synthetic"]},
+    "case_kind": {"enum": ["scout_response", "dossier_bad_write"]},
+    "reserved_phase2_rail": {"type": "boolean"},
+    "tags": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "project_key": {"enum": ["gateway", "zk-extension"]},
+    "dossier_summary_id": {"enum": ["gateway-dossier", "zk-extension-dossier"]},
+    "dossier_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "required_memory": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["source_post", "immediate_parent", "canonical_facts", "approved_resources", "explicit_absences", "relationship_history", "none"]}},
+    "provenance": {"type": "object", "required": ["grade_id", "evaluation_id"], "additionalProperties": false, "properties": {"grade_id": {"type": "integer"}, "evaluation_id": {"type": "integer"}}},
+    "source": {"$ref": "#/$defs/source"},
+    "expected_source_relevant": {"type": "boolean"},
+    "expected_posture": {"$ref": "https://scout.internal/schemas/grading.schema.json#/$defs/posture"},
+    "expected_terminal_status": {"enum": ["not_relevant", "abstained", "surfaced", "gate_blocked", "critic_rejected", "drafting_failed"]},
+    "observed_draft": {"type": ["string", "null"]},
+    "required_fact_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^fact-"}},
+    "required_resource_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^res-"}},
+    "required_prohibition_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^proh-"}},
+    "prohibited_claims": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "acceptable_response_characteristics": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "counterfactual_without_parent": {"type": "object", "required": ["expected_source_relevant", "expected_posture"], "additionalProperties": false, "properties": {"expected_source_relevant": {"type": "boolean"}, "expected_posture": {"$ref": "https://scout.internal/schemas/grading.schema.json#/$defs/posture"}}},
+    "pair_id": {"type": "string", "minLength": 1},
+    "resource_state": {"enum": ["available", "unavailable"]},
+    "grade": {"$ref": "https://scout.internal/schemas/grading.schema.json#/$defs/gradePayload"},
+    "proposed_bad_write": {"type": "object", "required": ["operation", "payload"], "additionalProperties": false, "properties": {"operation": {"type": "string", "minLength": 1}, "payload": {"type": "object"}}},
+    "expected_rail_violations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  },
+  "allOf": [
+    {"if": {"properties": {"origin": {"const": "real_graded"}}}, "then": {"required": ["provenance"]}, "else": {"not": {"required": ["provenance"]}}},
+    {"if": {"properties": {"case_kind": {"const": "scout_response"}}}, "then": {"required": ["source", "expected_source_relevant", "expected_posture", "expected_terminal_status", "observed_draft", "required_fact_ids", "required_resource_ids", "required_prohibition_ids", "prohibited_claims", "acceptable_response_characteristics", "grade"], "properties": {"reserved_phase2_rail": {"const": false}}}, "else": {"required": ["proposed_bad_write", "expected_rail_violations"], "properties": {"reserved_phase2_rail": {"const": true}}}},
+    {"if": {"properties": {"expected_posture": {"const": "abstain"}}, "required": ["expected_posture"]}, "then": {"properties": {"expected_terminal_status": {"const": "abstained"}}}},
+    {"if": {"allOf": [{"properties": {"expected_source_relevant": {"const": false}}, "required": ["expected_source_relevant"]}, {"not": {"properties": {"expected_posture": {"const": "abstain"}}, "required": ["expected_posture"]}}]}, "then": {"properties": {"expected_terminal_status": {"const": "not_relevant"}}}},
+    {"if": {"required": ["counterfactual_without_parent"]}, "then": {"properties": {"source": {"required": ["parent"]}}}},
+    {"if": {"required": ["resource_state"]}, "then": {"required": ["pair_id"]}}
+  ],
+  "$defs": {
+    "author": {"type": "object", "required": ["id", "name"], "additionalProperties": false, "properties": {"id": {"type": "string"}, "name": {"type": "string"}}},
+    "source": {"type": "object", "required": ["platform", "content"], "additionalProperties": false, "properties": {"platform": {"enum": ["discord", "bluesky", "farcaster", "slack"]}, "channel": {"type": ["string", "null"]}, "content": {"type": "string", "minLength": 1}, "parent": {"type": "object", "required": ["id", "author", "text", "url"], "additionalProperties": false, "properties": {"id": {"type": "string"}, "author": {"$ref": "#/$defs/author"}, "text": {"type": "string", "minLength": 1}, "url": {"type": "string", "format": "uri"}}}}}
+  }
+}

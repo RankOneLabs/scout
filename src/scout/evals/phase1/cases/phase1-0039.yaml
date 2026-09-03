@@ -1,0 +1,40 @@
+id: phase1-0039
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- resource_unavailable
+- clear_non_relevant
+- abstain_correct
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: gaming
+  content: 'Anyone else using Zelda: Kingdom Tears for inspiration on open-world exploration design? The way they
+    handle ZK dungeon unlocks is so clever — solve one puzzle to prove you have the skill for the next.
+
+    '
+expected_source_relevant: true
+expected_posture: abstain
+expected_terminal_status: abstained
+observed_draft: null
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: accept
+pair_id: zk-extension-resource-pair
+resource_state: unavailable

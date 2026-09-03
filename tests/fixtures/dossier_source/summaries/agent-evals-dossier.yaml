@@ -1,0 +1,346 @@
+id: agent-evals-dossier
+type: summary
+topic: Agent Evals — jig, the shared agent execution and eval framework
+status: active
+summary: >
+  Canonical operator-reviewed dossier for the agent-evals project: jig, the shared
+  Python framework (five interfaces plus one run_agent function) that lets any
+  Rank One Labs agent swap models, prompts, memory backends, and graders while
+  measuring output-quality impact. Already consumed in production by Scout (pinned
+  git dependency) and Ledger (path dependency across five packages). Young — designed
+  and implemented starting 2026-03-18 — so claims here are scoped to what has
+  actually shipped, not aspirational roadmap.
+tags:
+  - jig
+  - agent-evals
+  - rank-one-labs
+  - agents
+  - dossier
+dossier:
+  project_key: agent-evals
+  last_reviewed: '2026-07-13'
+  reviewer:
+    id: reviewer
+    display_name: Example Reviewer
+  evidence:
+    - id: evidence-jig-ideation-entry
+      kind: git-blob
+      locator: 'example-org/content-source @ 5e7de23: entries/2026-03-18-jig-ideation.yaml'
+      immutable_ref: 4aa79378aa1165fee23010ea1554475560278290
+    - id: evidence-jig-data-passing-entry
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ 5e7de23:
+        entries/2026-03-18-jig-data-passing-model.yaml
+      immutable_ref: d4fd62a10cdd0daf7db6b2a69f0258314ac7c9d5
+    - id: evidence-closed-common-open-exceptional-entry
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ 5e7de23:
+        entries/2026-03-18-closed-common-open-exceptional.yaml
+      immutable_ref: fb322253559d710db73a5d442fbc7f0c0c559a17
+    - id: evidence-jig-pinned-in-scout
+      kind: git-blob
+      locator: 'example-org/scout @ 7260b29: uv.lock'
+      immutable_ref: 6c77df2a69a230c953d8da47a3bfa2602b36ec58
+    - id: evidence-jig-path-dep-in-ledger
+      kind: git-blob
+      locator: 'example-org/ledger @ 5800f8c: agents/pyproject.toml'
+      immutable_ref: 4a98fc6d2b39f7110b50b77834595dd631d287be
+  facts:
+    - id: fact-jig-five-interfaces
+      claim: >-
+        jig defines five shared interfaces — LLMClient, AgentMemory, FeedbackLoop,
+        TracingLogger, and ToolRegistry — plus one run_agent function as its
+        complete agent execution model.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig defines five shared interfaces plus one run_agent function as its
+          complete agent execution model.
+        - 'jig''s execution model is five interfaces and a single run_agent call.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-plugs-not-pieces
+      claim: >-
+        jig deliberately defines plugs, not pieces — it takes no position on
+        concrete implementations behind its interfaces.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig defines plugs, not pieces — it has no opinion on what implements
+          its interfaces.
+        - 'jig is an interface layer, not an opinionated implementation.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-cross-agent-harness-goal
+      claim: >-
+        jig was designed as a shared test/experiment harness across multiple
+        agents (Scout, a trading bot, and future agents), letting models, prompts,
+        memory backends, and graders be swapped and measured independently.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig was designed so multiple agents could share one harness for swapping
+          and measuring models, prompts, memory, and graders.
+        - 'jig''s goal is a cross-agent eval harness, not a single-agent tool.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-gsd2-rejected
+      claim: >-
+        Before designing jig, an autonomous coding tool (GSD-2, built on the Pi
+        SDK) was evaluated and rejected because it wrapped patterns Claude Code
+        already provides natively (fresh context per task via /clear).
+      status: shipped
+      safe_phrasings:
+        - >-
+          GSD-2 was evaluated and rejected before jig, since it duplicated
+          patterns Claude Code already provides.
+        - 'jig''s design followed a rejected evaluation of GSD-2 as unnecessary.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-selected-promptfoo
+      claim: >-
+        jig selected promptfoo as its downstream eval tool after surveying
+        Braintrust, LangSmith, DeepEval, and Langfuse.
+      status: shipped
+      safe_phrasings:
+        - 'jig selected promptfoo after surveying Braintrust, LangSmith, DeepEval, and Langfuse.'
+        - 'promptfoo is jig''s chosen eval tool, selected after a landscape survey.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-anthropic-uses-promptfoo
+      claim: 'Anthropic uses promptfoo internally for its own product evals.'
+      status: shipped
+      safe_phrasings:
+        - 'Anthropic uses promptfoo internally for product evals.'
+        - 'promptfoo has internal adoption at Anthropic for product evals.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-two-speed-feedback
+      claim: >-
+        jig's feedback loop runs at two speeds: fast per-request context
+        enrichment, and slow batch export to promptfoo for eval-set curation.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig's feedback loop has a fast per-request path and a slow batch-export
+          path to promptfoo.
+        - 'jig bridges production and eval via a two-speed feedback loop.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-python-rationale
+      claim: >-
+        jig is implemented in Python, chosen for ecosystem alignment with the
+        Anthropic, OpenAI, and Ollama SDKs, promptfoo's Python providers, and
+        uv tooling.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig is written in Python for SDK and tooling ecosystem alignment.
+        - 'Python was chosen for jig over Rust or TypeScript for ecosystem fit.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-excludes-langchain
+      claim: >-
+        jig's design explicitly excludes LangChain, citing its abstraction over
+        capabilities already native to provider SDKs and its obscuring of raw
+        request/response data needed for security review.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig does not use LangChain, citing obscured request/response data and
+          redundant abstraction over native provider SDKs.
+        - 'LangChain was deliberately excluded from jig''s design.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-completion-params
+      claim: >-
+        jig's LLMClient passes provider-specific parameters through a
+        CompletionParams object: typed core fields (messages, system, tools,
+        temperature, max_tokens) plus a named, untyped provider_params escape
+        hatch.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig's LLMClient uses typed core fields plus a named provider_params
+          escape hatch for provider-specific parameters.
+        - 'CompletionParams is jig''s typed-core-plus-escape-hatch parameter model.'
+      evidence_ids:
+        - evidence-jig-data-passing-entry
+    - id: fact-jig-adapter-contract
+      claim: >-
+        jig's adapter contract requires each provider adapter to use its typed
+        fields, forward provider_params to the underlying SDK call, and silently
+        ignore unknown keys.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig adapters forward provider_params to the SDK and ignore unknown keys.
+        - 'Provider adapters in jig follow a defined forward-and-ignore contract.'
+      evidence_ids:
+        - evidence-jig-data-passing-entry
+    - id: fact-jig-completion-params-avoids-two-failure-modes
+      claim: >-
+        The CompletionParams pattern was adopted specifically to avoid two
+        failure modes: a base type bloated with every provider's parameters,
+        and an untyped dict that loses type safety and discoverability.
+      status: shipped
+      safe_phrasings:
+        - >-
+          CompletionParams avoids both a bloated base type and an untyped,
+          unsafe parameter dict.
+        - 'jig''s parameter design was chosen to avoid two specific failure modes.'
+      evidence_ids:
+        - evidence-jig-data-passing-entry
+    - id: fact-jig-pattern-is-general
+      claim: >-
+        jig's named-escape-hatch pattern (provider_params) is recognized as one
+        instance of a general API design principle also seen in HTTP (typed
+        headers plus opaque body), GraphQL (typed query plus untyped
+        extensions), and ERC-4337 (typed fields plus opaque callData).
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig's escape-hatch parameter pattern mirrors a general design principle
+          also seen in HTTP, GraphQL, and ERC-4337.
+        - 'The provider_params pattern is an instance of a wider, recognized API design principle.'
+      evidence_ids:
+        - evidence-closed-common-open-exceptional-entry
+    - id: fact-jig-adapter-separation
+      claim: >-
+        jig's adapter pattern cleanly separates provider-specific translation
+        from agent logic.
+      status: shipped
+      safe_phrasings:
+        - 'jig separates provider-specific translation from agent logic via its adapter pattern.'
+        - 'Agent logic in jig does not need to know provider-specific translation details.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-implementable-from-spec
+      claim: >-
+        jig's specification was thin enough that Claude Code could implement
+        the framework directly from the spec, without additional design
+        iteration.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig''s spec was implementable directly by Claude Code without further
+          design iteration.
+        - 'jig''s five-interface spec was thin enough to implement as written.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: fact-jig-production-consumers
+      claim: >-
+        jig is consumed as a pinned git dependency by Scout's inbound/outbound
+        engagement pipeline and as a path dependency across five packages
+        (agents, execution, ingest, orchestrator, decision) of Ledger's trading
+        strategy pipeline.
+      status: shipped
+      safe_phrasings:
+        - >-
+          jig is used in production by both Scout (pinned git dependency) and
+          Ledger (path dependency across five packages).
+        - 'Two production agents currently depend on jig.'
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+        - evidence-jig-path-dep-in-ledger
+  resources:
+    - id: res-jig-repo
+      label: jig (GitHub repository)
+      canonical_url: https://github.com/rankonelabs/jig
+      purpose: Source repository for the jig framework.
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: res-jig-pinned-commit
+      label: jig — commit pinned by Scout's production dependency lock
+      canonical_url: https://github.com/rankonelabs/jig/commit/28374dc38350b44ef691ad02c66214d4baa3b7be
+      purpose: Exact jig revision Scout's uv.lock resolves to in production.
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+    - id: res-gsd2-repo
+      label: 'GSD-2 (evaluated and rejected)'
+      canonical_url: https://github.com/gsd-build/gsd-2
+      purpose: Spec-driven autonomous coding tool evaluated and rejected ahead of jig's design.
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: res-promptfoo-repo
+      label: promptfoo (selected eval tool)
+      canonical_url: https://github.com/promptfoo/promptfoo
+      purpose: LLM eval and red-teaming CLI selected as jig's downstream eval tool.
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: res-anthropic-evals-blog
+      label: 'Anthropic — Demystifying Evals for AI Agents'
+      canonical_url: https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents
+      purpose: Reference cited for Anthropic's own internal promptfoo usage and agent eval harness design.
+      evidence_ids:
+        - evidence-jig-ideation-entry
+    - id: res-scout-repo
+      label: Scout (GitHub repository)
+      canonical_url: https://github.com/example-org/scout
+      purpose: Production consumer of jig for inbound/outbound engagement.
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+    - id: res-scout-jig-pin-file
+      label: 'Scout''s pinned jig dependency (uv.lock)'
+      canonical_url: https://github.com/example-org/scout/blob/7260b2945a1893f302ba4e1cc903c6a395c12ab5/uv.lock
+      purpose: Exact file showing Scout's pinned jig git revision.
+      evidence_ids:
+        - evidence-jig-pinned-in-scout
+    - id: res-ledger-repo
+      label: Ledger (GitHub repository)
+      canonical_url: https://github.com/example-org/ledger
+      purpose: Production consumer of jig for trading strategy discovery, backtesting, and deployment.
+      evidence_ids:
+        - evidence-jig-path-dep-in-ledger
+    - id: res-ledger-jig-pin-file
+      label: 'Ledger''s jig path dependency (agents/pyproject.toml)'
+      canonical_url: https://github.com/example-org/ledger/blob/5800f8ce3a319acc424af49e65d130c7f7593326/agents/pyproject.toml
+      purpose: Exact file showing Ledger's local path dependency on jig.
+      evidence_ids:
+        - evidence-jig-path-dep-in-ledger
+  prohibitions:
+    - id: proh-no-battle-tested-at-scale
+      normalized_phrase: battle-tested at scale
+      forbidden_phrasings:
+        - 'jig is battle-tested at scale.'
+        - 'jig has been proven in production at high volume.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+      resource_ids: []
+    - id: proh-no-eliminates-human-review
+      normalized_phrase: eliminates the need for human review
+      forbidden_phrasings:
+        - 'jig eliminates the need for human review of agent output.'
+        - 'jig makes manual evaluation unnecessary.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+      resource_ids: []
+    - id: proh-no-solves-agent-evals
+      regex: "solves? agent eval(uation)?s?"
+      flags: i
+      forbidden_phrasings:
+        - 'jig solves agent evaluation.'
+        - 'jig has solved the agent eval problem.'
+      evidence_ids:
+        - evidence-jig-ideation-entry
+      resource_ids: []
+  known_gaps:
+    - id: gap-third-agent-adoption
+      question: >-
+        Has any agent beyond Scout and Ledger adopted jig, or is cross-agent reuse
+        still limited to these two?
+      related_fact_ids:
+        - fact-jig-production-consumers
+      related_resource_ids:
+        - res-jig-repo
+    - id: gap-eval-set-maturity
+      question: >-
+        How large and representative are the eval sets currently exported to
+        promptfoo via jig's slow feedback path, versus what would be needed for
+        confident regression detection?
+      related_fact_ids:
+        - fact-jig-two-speed-feedback
+      related_resource_ids:
+        - res-promptfoo-repo

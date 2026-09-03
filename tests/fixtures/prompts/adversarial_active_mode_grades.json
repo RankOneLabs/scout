@@ -1,0 +1,63 @@
+{
+  "description": "Adversarial and valid grade specs for active-mode evaluation-feedback/v1 phase-isolation tests (tests/test_scan_runner.py). Each entry's `sentinel` is a unique marker embedded as the grade's failure_note; the test seeds one grade per entry with the shape its `exclusion_kind` requires, then asserts every excluded sentinel is absent from all three phase prompts while each valid sentinel appears only in its intended phase(s).",
+  "grades": [
+    {
+      "sentinel": "SCHEMA_V1_SENTINEL_a1f9",
+      "exclusion_kind": "schema_version",
+      "platform_id": "adv-schema-v1",
+      "relevance_judgment": "false_positive",
+      "action_judgment": "fail",
+      "dimensions": ["usefulness"]
+    },
+    {
+      "sentinel": "NEEDS_REGRADE_SENTINEL_b2e8",
+      "exclusion_kind": "needs_regrade",
+      "platform_id": "adv-needs-regrade",
+      "relevance_judgment": "correct",
+      "action_judgment": "fail",
+      "dimensions": ["tone"]
+    },
+    {
+      "sentinel": "CONTRACT_INVALID_SENTINEL_c3d7",
+      "exclusion_kind": "shared_contract_invalid",
+      "platform_id": "adv-contract-invalid",
+      "relevance_judgment": "correct",
+      "action_judgment": "fail",
+      "dimensions": ["tone"],
+      "evaluation_project_key": "proj-a",
+      "draft_project_key": "proj-b"
+    },
+    {
+      "sentinel": "BROKEN_LINK_SENTINEL_d4c6",
+      "exclusion_kind": "missing_evaluation_linkage",
+      "platform_id": "adv-broken-link",
+      "relevance_judgment": "false_positive",
+      "action_judgment": "fail",
+      "dimensions": ["usefulness"]
+    },
+    {
+      "sentinel": "MANUAL_EXCLUDE_SENTINEL_e5b5",
+      "exclusion_kind": "manual_exclude",
+      "platform_id": "adv-manual-exclude",
+      "relevance_judgment": "correct",
+      "action_judgment": "fail",
+      "dimensions": ["tone"]
+    },
+    {
+      "sentinel": "RELEVANCE_ONLY_SENTINEL_f6a4",
+      "exclusion_kind": "relevance_only",
+      "platform_id": "valid-relevance-only",
+      "relevance_judgment": "false_positive",
+      "action_judgment": "fail",
+      "dimensions": ["usefulness"]
+    },
+    {
+      "sentinel": "DRAFT_QUALITY_SENTINEL_g7d3",
+      "exclusion_kind": "draft_quality",
+      "platform_id": "valid-draft-quality",
+      "relevance_judgment": "correct",
+      "action_judgment": "fail",
+      "dimensions": ["tone"]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+id: phase1-0030
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- explicit_no_community
+- unsupported_implication
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+- explicit_absences
+source:
+  platform: discord
+  channel: ethereum
+  content: 'We want to add ZK proofs to an existing Polygon app without a full rollup migration. Is there a way
+    to bolt on proof verification to specific transactions only?
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'ZK-Extension is designed for exactly this kind of selective integration — you add the verifier
+  contract to your existing deployment and call it only where you need the ZK guarantee. No full rollup needed;
+  works on any EVM chain including Polygon.
+
+  '
+required_fact_ids:
+- fact-zkext-no-community
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: The response presents capabilities or experience absent from the pinned dossier.
+  implication_implied_claim: ZK-Extension is designed for exactly this kind of selective integration — you add the
+    verifier contract to your existing deployment and call it only where you need the ZK guarantee
+  implication_missing_support: unsupported

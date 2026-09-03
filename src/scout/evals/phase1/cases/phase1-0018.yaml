@@ -1,0 +1,39 @@
+id: phase1-0018
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- explicit_no_site
+- clear_non_relevant
+- abstain_correct
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+- explicit_absences
+source:
+  platform: discord
+  channel: security
+  content: 'Genuinely curious how you''d approach defending an API that serves both legitimate automation (partner
+    integrations) and user traffic, where distinguishing good bots from bad is really the core challenge.
+
+    '
+expected_source_relevant: true
+expected_posture: abstain
+expected_terminal_status: abstained
+observed_draft: null
+required_fact_ids:
+- fact-gateway-no-site
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: accept

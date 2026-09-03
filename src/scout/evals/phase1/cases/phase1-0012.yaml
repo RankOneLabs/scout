@@ -1,0 +1,54 @@
+id: phase1-0012
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- resource_available
+- unsupported_implication
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+- approved_resources
+source:
+  platform: discord
+  channel: startup-tools
+  content: 'Bootstrapped SaaS here, can''t afford enterprise bot protection pricing. Any solutions that have a startup-friendly
+    tier?
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'Gateway has a free tier up to 1M requests per month — more than enough for early stage. Paid plans
+  start at $49/month. Startup-friendly by design.
+
+  '
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids:
+- res-x402-site
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: 'Draft states specific pricing ($49/month, free tier at 1M req/month). No pricing information exists
+    in the dossier; presenting fabricated pricing would damage trust if the reader checks.
+
+    '
+  implication_implied_claim: Gateway offers a free tier up to 1M req/month and paid plans starting at $49/month
+  implication_missing_support: 'Dossier has no pricing information or tier structure documented.
+
+    '
+pair_id: gateway-resource-pair
+resource_state: available

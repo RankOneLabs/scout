@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, "epic/**"]
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - run: uv python install 3.12
+
+      - run: uv sync --dev
+
+      - run: uv run ruff check .
+
+      - run: uv run mypy .
+
+      - run: uv run pytest
+
+      - run: uv run python scripts/generate_paa_reference_evidence.py --check
+
+  web:
+    name: Web tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # sidecar-e2e.test.ts launches the real Python sidecar with `uv run`.
+      # The web job is an isolated runner, so it needs its own uv/Python setup
+      # even though the separate Python job performs the same bootstrap.
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - run: uv python install 3.12
+        working-directory: .
+
+      - run: uv sync --dev
+        working-directory: .
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm test
+
+      - run: npm run build

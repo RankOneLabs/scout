@@ -1,0 +1,74 @@
+task: inbound_reply_surfacing
+version: 1
+description: Admit an evaluated inbound reply candidate into Scout's surfaced-event and operator-digest flow.
+
+boundary:
+  input: scout.inbound_candidate
+  output: scout.surfaced_event
+
+initial_position: hitl
+deployment: shadow
+
+evaluators:
+  - property: content_invariants
+    target: output
+    technique: deterministic
+    evaluation_basis:
+      kind: invariant
+      ref: content_invariants
+    epistemic_status: ground_truth
+    version: "1"
+    authority: blocking
+
+  - property: author_rate
+    target: process
+    technique: deterministic
+    evaluation_basis:
+      kind: invariant
+      ref: author_rate
+    epistemic_status: ground_truth
+    version: "1"
+    authority: blocking
+
+  - property: response_quality
+    target: output
+    technique: llm_judge
+    evaluation_basis:
+      kind: rubric
+      ref: response_quality_rubric
+    epistemic_status: proxy
+    version: "1"
+    authority: advisory
+
+  - property: response_quality
+    target: output
+    technique: human
+    evaluation_basis:
+      kind: human_gold
+      ref: response_quality_human_gold
+    epistemic_status: ground_truth
+    version: "3"
+    authority: advisory
+
+position_policy:
+  manual: offline
+  hitl: blocking
+  hotl: async
+  autonomous: offline
+
+promotion:
+  from: hitl
+  to: hotl
+  report: phase1_audit
+  window:
+    kind: duration
+    size: P14D
+  execution: operator_approval
+
+demotion:
+  from: hotl
+  to: hitl
+  trigger: operator_decision_or_policy_failure
+  window:
+    kind: cases
+    size: 1

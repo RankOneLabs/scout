@@ -1,0 +1,37 @@
+id: phase1-0023
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- implied_resource
+- ask_correct
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: privacy-tech
+  content: 'Building a voting system that needs to prove a user is eligible without revealing their identity. ZK
+    proofs seem like the right tool but I''m not sure where to start implementation-wise.
+
+    '
+expected_source_relevant: true
+expected_posture: ask
+expected_terminal_status: surfaced
+observed_draft: Could you share which part of the problem you want to explore?
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: accept

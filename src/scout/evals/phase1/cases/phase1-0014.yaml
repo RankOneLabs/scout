@@ -1,0 +1,50 @@
+id: phase1-0014
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- clear_relevant
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: devops
+  content: 'We deployed Gateway last week — still tuning the thresholds but it''s already cut our bot traffic by
+    about 60%. The docs are pretty clear once you get past the initial setup. Anyone else running it in shadow mode
+    before going live?
+
+    '
+expected_source_relevant: false
+expected_posture: answer
+expected_terminal_status: not_relevant
+observed_draft: 'Gateway has bot detection and rate limiting built into a single layer — if you''re evaluating solutions,
+  it''s worth checking out. The behavioral engine works well for scraping and credential stuffing scenarios.
+
+  '
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: false_positive
+  action_judgment: fail
+  dimensions:
+  - contextual_understanding
+  failure_note: 'Post author is already a Gateway customer sharing deployment progress. Scout drafted a product
+    introduction pitch to someone who is already using the product — this is a fundamental context error.
+
+    '
+  context_missing_input: 'Post explicitly states "We deployed Gateway last week" — the author is an existing customer,
+    not a prospect.
+
+    '

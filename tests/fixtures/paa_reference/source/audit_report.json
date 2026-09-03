@@ -1,0 +1,29 @@
+{
+  "schema_version": 4,
+  "gate_blocks": {
+    "qualifying": [
+      { "id": 1, "evaluation_id": 1 }
+    ]
+  },
+  "dossiers": [
+    {
+      "summary_id": "gateway-dossier",
+      "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "approval": {
+        "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reference": "REFERENCE-FIXTURE-APPROVAL-REF-0001"
+      }
+    }
+  ],
+  "criteria": {},
+  "window": {
+    "from": "2026-01-01T00:00:00+00:00",
+    "to": "2026-01-15T00:00:00+00:00",
+    "interval": "[from,to)"
+  },
+  "counts": {
+    "production_live_scans": 1,
+    "evaluations": 1,
+    "excluded_scans": {}
+  }
+}

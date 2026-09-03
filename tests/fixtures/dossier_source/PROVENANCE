@@ -1,0 +1,21 @@
+dossier-source source revision: a1eeefb350d13f478994b6678e415550ac61ed5d
+contract: dossier-source index version 1.0.0
+
+The fixture was derived from the source revision above, then generalized to
+remove personal names and replace original/private repository coordinates with
+example values. It is test data, not a byte-for-byte source export.
+
+  git rev-parse HEAD
+  # a1eeefb350d13f478994b6678e415550ac61ed5d
+
+  git show a1eeefb350d13f478994b6678e415550ac61ed5d:index.yaml
+  # index.yaml here is a script-trimmed subset of the producer's real index:
+  # only the entries below are kept. The
+  # producer's real index.yaml also lists other summary/entry records this
+  # fixture does not reference.
+
+  git show a1eeefb350d13f478994b6678e415550ac61ed5d:summaries/gateway-dossier.yaml
+  git show a1eeefb350d13f478994b6678e415550ac61ed5d:summaries/zk-extension-dossier.yaml
+  git show a1eeefb350d13f478994b6678e415550ac61ed5d:summaries/agent-evals-dossier.yaml
+  git show a1eeefb350d13f478994b6678e415550ac61ed5d:summaries/agent-ops-dossier.yaml
+  # each was subsequently generalized for use as public test data.

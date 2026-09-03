@@ -1,0 +1,50 @@
+id: phase1-0037
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- unsupported_implication
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: solana
+  content: 'Anyone building ZK applications on Solana? Curious if there''s decent tooling for proof verification
+    in Solana programs.
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'ZK-Extension has a Solana SDK with native program support — you can verify proofs in a Solana program
+  using our Rust crate. We integrate with the Solana BPF runtime and have been tested on Devnet and Mainnet-Beta.
+
+  '
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: 'Draft claims a Solana SDK, Rust crate, BPF runtime integration, and mainnet testing. Dossier makes
+    no mention of Solana support — all dossier content describes EVM-based deployment.
+
+    '
+  implication_implied_claim: ZK-Extension supports Solana with a Rust crate and BPF runtime integration
+  implication_missing_support: 'Dossier describes only EVM chain deployment (Solidity verifiers). No Rust crate,
+    Solana SDK, or non-EVM support is documented.
+
+    '

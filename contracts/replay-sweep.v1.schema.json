@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scout.internal/contracts/replay-sweep.v1.schema.json",
+  "title": "Scout replay sweep v1",
+  "description": "A named, versioned, one-axis batch-replay sweep: either every variant shares one candidate model and varies only its system prompt (axis: prompt), or every variant shares one candidate system prompt and varies only its model (axis: model). At least two named variants are required, and a variant may only carry the field matching the declared axis.",
+  "type": "object",
+  "required": ["version", "name", "axis", "variants"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "axis": { "enum": ["prompt", "model"] },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shared candidate model for every variant of a prompt-axis sweep. Omit to reuse each baseline case's own recorded model."
+    },
+    "prompt_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shared candidate system-prompt file (UTF-8, resolved relative to the sweep document's own directory) for every variant of a model-axis sweep. Omit to reuse each baseline case's own recorded system prompt."
+    },
+    "variants": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "model": { "type": "string", "minLength": 1 },
+          "prompt_file": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["axis"], "properties": { "axis": { "const": "prompt" } } },
+      "then": {
+        "not": { "required": ["prompt_file"] },
+        "properties": {
+          "variants": {
+            "items": {
+              "type": "object",
+              "required": ["name", "prompt_file"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "prompt_file": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["axis"], "properties": { "axis": { "const": "model" } } },
+      "then": {
+        "not": { "required": ["model"] },
+        "properties": {
+          "variants": {
+            "items": {
+              "type": "object",
+              "required": ["name", "model"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "model": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

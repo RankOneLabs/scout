@@ -1,0 +1,55 @@
+{
+  "description": "Reply post where parent context changes evaluation outcome. Without parent, 'SDK is confusing' looks relevant to a developer-tool project. With parent revealing the thread is about Python packaging managers, the post is off-topic.",
+  "child_post": {
+    "platform": "bluesky",
+    "platform_id": "at://did:plc:abcdef123456/app.bsky.feed.post/3kzreply001",
+    "channel_name": "bluesky",
+    "channel_id": "bluesky",
+    "author_name": "devuser.bsky.social",
+    "author_id": "did:plc:devuser9999",
+    "content": "Yeah the SDK is so confusing at first, especially the dependency resolution. Took me forever to figure out why my installs kept breaking.",
+    "url": "https://bsky.app/profile/devuser.bsky.social/post/3kzreply001",
+    "parent_lookup_status_without_parent": "not_applicable",
+    "parent_lookup_status_with_parent": "resolved"
+  },
+  "parent_post": {
+    "id": "at://did:plc:parentauthor001/app.bsky.feed.post/3kzparent001",
+    "author_id": "did:plc:parentauthor001",
+    "author_name": "pypackager.bsky.social",
+    "text": "Anyone else find poetry's lockfile format more confusing than pip-tools? The resolver is a black box and the SDK docs don't explain the constraint algorithm at all.",
+    "url": "https://bsky.app/profile/pypackager.bsky.social/post/3kzparent001"
+  },
+  "eval_cases": {
+    "without_parent": {
+      "label": "expected_without_parent",
+      "formatted_input": "Evaluate this message.\n\n## Source post\n\n- **Platform:** bluesky\n- **Author:** devuser.bsky.social\n- **Channel:** #bluesky\n- **Content:** Yeah the SDK is so confusing at first, especially the dependency resolution. Took me forever to figure out why my installs kept breaking.",
+      "expected_relevant": true,
+      "rationale": "Without parent context, 'SDK' and 'dependency resolution' look like developer-tool pain points that could match a Gateway/SDK product."
+    },
+    "with_parent": {
+      "label": "expected_with_parent",
+      "formatted_input": "Evaluate this message.\n\n## Source post\n\n- **Platform:** bluesky\n- **Author:** devuser.bsky.social\n- **Channel:** #bluesky\n- **Content:** Yeah the SDK is so confusing at first, especially the dependency resolution. Took me forever to figure out why my installs kept breaking.\n\n## Immediate parent\n\n- **Author:** pypackager.bsky.social\n- **Content:** Anyone else find poetry's lockfile format more confusing than pip-tools? The resolver is a black box and the SDK docs don't explain the constraint algorithm at all.\n- **Link:** https://bsky.app/profile/pypackager.bsky.social/post/3kzparent001",
+      "expected_relevant": false,
+      "rationale": "With parent context, the thread is clearly about Python packaging managers (poetry, pip-tools). The 'SDK' reference is poetry's own docs, not a developer-tool product. Not relevant."
+    }
+  },
+  "raw_bsky_getPosts_response": {
+    "posts": [
+      {
+        "uri": "at://did:plc:parentauthor001/app.bsky.feed.post/3kzparent001",
+        "cid": "bafyreicidparent001",
+        "author": {
+          "did": "did:plc:parentauthor001",
+          "handle": "pypackager.bsky.social",
+          "displayName": "Python Packager"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "Anyone else find poetry's lockfile format more confusing than pip-tools? The resolver is a black box and the SDK docs don't explain the constraint algorithm at all.",
+          "createdAt": "2026-07-10T14:00:00.000Z"
+        },
+        "indexedAt": "2026-07-10T14:00:05.000Z"
+      }
+    ]
+  }
+}

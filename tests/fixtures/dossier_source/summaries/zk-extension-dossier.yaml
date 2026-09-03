@@ -1,0 +1,343 @@
+id: zk-extension-dossier
+type: summary
+topic: ZK Extension — Privacy Layer for x402 Payment Protocol
+status: active
+summary: >
+  Canonical operator-reviewed dossier for the zk-extension project: a ZK privacy
+  extension to the x402 payment protocol that hides payment amounts and wallet
+  addresses from on-chain observers using session-based Pedersen commitments and
+  Schnorr proofs over BN254. The spec was near PR-ready as of February 2026.
+  No production deployment exists as of the reviewed date.
+tags:
+  - zk-extension
+  - x402
+  - zk
+  - privacy
+  - noir
+  - dossier
+dossier:
+  project_key: zk-extension
+  last_reviewed: '2026-07-11'
+  reviewer:
+    id: reviewer
+    display_name: Example Reviewer
+  evidence:
+    - id: evidence-zk-session-issuance-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-01-27-x402-zk-session-issuance-protocol.yaml
+      immutable_ref: 9e4458435daa0c896c5bc082402a57be10db81b5
+    - id: evidence-zk-session-impl-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-01-28-x402-zk-session-implementation-spec.yaml
+      immutable_ref: 15e412670dfd7ae83fceb47492fd185df0d1fda9
+    - id: evidence-zk-session-circuits-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-01-27-x402-zk-session-circuit-architectures.yaml
+      immutable_ref: b6e491483346a62413b558dbdc038bd4aa283918
+    - id: evidence-zk-session-privacy-budget-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-01-28-x402-zk-session-privacy-budget-design.yaml
+      immutable_ref: 2a5ba7ae1ab1526622e5d5c8d44a47b42617d087
+    - id: evidence-weekly-checkin-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-02-18-weekly-checkin-multi-front-progress.yaml
+      immutable_ref: ec921031821a76e3d909af9be7f08c2cd5c896ea
+    - id: evidence-x402-protocol-summary-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        summaries/x402-protocol.yaml
+      immutable_ref: 5a64c324ed2f05cb9d1ef3fe3999a4e75f502624
+    - id: evidence-pr-strategy-blob
+      kind: git-blob
+      locator: >-
+        example-org/content-source @ b6db208:
+        entries/2026-02-14-kite-ai-discovery-x402-pr-strategy.yaml
+      immutable_ref: 83f162db3426e2fb9f91ae9ec8baaf4300d6f122
+  facts:
+    - id: fact-zkext-extends-x402
+      claim: >-
+        The ZK extension adds a privacy layer to x402 that hides payment
+        details from on-chain observers by generating cryptographic proofs
+        instead of broadcasting amounts and addresses directly.
+      status: experimental
+      safe_phrasings:
+        - >-
+          The ZK extension adds a privacy layer to x402 that hides payment
+          details from on-chain observers.
+        - >-
+          ZK extension wraps x402 payments in cryptographic proofs to prevent
+          on-chain observers from reading amounts and addresses.
+      evidence_ids:
+        - evidence-zk-session-issuance-blob
+    - id: fact-zkext-hides-amounts
+      claim: 'The extension hides payment amounts from on-chain transparency.'
+      status: experimental
+      safe_phrasings:
+        - 'The extension hides payment amounts from on-chain transparency.'
+        - 'Payment amounts are concealed from the public blockchain ledger by the ZK extension.'
+      evidence_ids:
+        - evidence-zk-session-impl-blob
+    - id: fact-zkext-hides-addresses
+      claim: 'The extension hides wallet addresses from on-chain transparency.'
+      status: experimental
+      safe_phrasings:
+        - 'The extension hides wallet addresses from on-chain transparency.'
+        - 'Wallet addresses are not revealed on-chain when the ZK extension is used.'
+      evidence_ids:
+        - evidence-zk-session-impl-blob
+    - id: fact-zkext-experimental-status
+      claim: >-
+        The ZK extension is experimental; it has not been shipped to
+        production or merged into the x402 repository.
+      status: experimental
+      safe_phrasings:
+        - >-
+          The ZK extension is experimental; it has not been shipped to
+          production or merged into the x402 repository.
+        - >-
+          ZK extension is in experimental stage — no production deployment
+          or upstream merge has occurred.
+      evidence_ids:
+        - evidence-weekly-checkin-blob
+    - id: fact-zkext-pr-near-ready
+      claim: >-
+        As of February 2026, the ZK credential extension spec was near
+        PR-ready for submission to the x402 repository.
+      status: experimental
+      safe_phrasings:
+        - >-
+          As of February 2026, the ZK credential extension spec was near
+          PR-ready for submission to the x402 repository.
+        - >-
+          The ZK extension was essentially ready for PR submission to x402
+          as of February 2026.
+      evidence_ids:
+        - evidence-weekly-checkin-blob
+        - evidence-pr-strategy-blob
+    - id: fact-zkext-session-approach
+      claim: >-
+        The extension uses a session-based approach that allows a single ZK
+        proof to cover multiple payments, reducing per-request proving overhead.
+      status: experimental
+      safe_phrasings:
+        - >-
+          The extension uses a session-based approach that allows a single ZK
+          proof to cover multiple payments.
+        - >-
+          ZK extension batches payment proofs through a session mechanism to
+          reduce per-request overhead.
+      evidence_ids:
+        - evidence-zk-session-issuance-blob
+        - evidence-zk-session-circuits-blob
+    - id: fact-zkext-pedersen
+      claim: >-
+        The extension uses Pedersen commitments to cryptographically blind
+        payment values in the session proof.
+      status: experimental
+      safe_phrasings:
+        - >-
+          The extension uses Pedersen commitments to blind payment values.
+        - >-
+          ZK extension employs Pedersen commitments for value blinding in the
+          session proof construction.
+      evidence_ids:
+        - evidence-zk-session-impl-blob
+    - id: fact-zkext-schnorr
+      claim: 'The extension uses Schnorr signature proofs in its circuit design.'
+      status: experimental
+      safe_phrasings:
+        - 'The extension uses Schnorr signature proofs in its circuit design.'
+        - 'ZK extension circuit relies on Schnorr signatures for proof generation.'
+      evidence_ids:
+        - evidence-zk-session-circuits-blob
+    - id: fact-zkext-bn254
+      claim: >-
+        The ZK circuit is implemented over the BN254 elliptic curve (used
+        by Noir and the Ethereum precompiles).
+      status: experimental
+      safe_phrasings:
+        - >-
+          The ZK circuit is implemented over the BN254 elliptic curve.
+        - >-
+          ZK extension uses BN254 as the elliptic curve, compatible with
+          Ethereum precompiles and Noir.
+      evidence_ids:
+        - evidence-zk-session-circuits-blob
+    - id: fact-zkext-noir
+      claim: 'The ZK circuit is written in the Noir language.'
+      status: experimental
+      safe_phrasings:
+        - 'The ZK circuit is written in the Noir language.'
+        - 'Noir is the ZK circuit language used by the extension.'
+      evidence_ids:
+        - evidence-zk-session-impl-blob
+    - id: fact-zkext-privacy-budget
+      claim: >-
+        A privacy budget constrains how many payments can share a session
+        proof without risking re-identification of the payer.
+      status: experimental
+      safe_phrasings:
+        - >-
+          A privacy budget constrains how many payments can share a session
+          proof without risking re-identification.
+        - >-
+          ZK extension includes a privacy budget design that limits proof
+          reuse to protect payer anonymity.
+      evidence_ids:
+        - evidence-zk-session-privacy-budget-blob
+    - id: fact-zkext-x402-v2-basis
+      claim: >-
+        The extension targets x402 V2, which introduced session-based
+        access in December 2025.
+      status: experimental
+      safe_phrasings:
+        - >-
+          The extension targets x402 V2, which introduced session-based
+          access in December 2025.
+        - >-
+          ZK extension builds on x402 V2 session support added in
+          December 2025.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: fact-zkext-no-community
+      claim: >-
+        ZK extension has no established community (no forum, Discord, or
+        public channel) as of the reviewed date.
+      status: shipped
+      safe_phrasings:
+        - >-
+          ZK extension has no established community as of the reviewed
+          date.
+        - 'No community exists for the ZK extension project at this time.'
+      evidence_ids:
+        - evidence-weekly-checkin-blob
+    - id: fact-zkext-no-site
+      claim: >-
+        ZK extension has no public website or landing page as of the
+        reviewed date.
+      status: shipped
+      safe_phrasings:
+        - >-
+          ZK extension has no public website or landing page as of the
+          reviewed date.
+        - 'No public site exists for the ZK extension project at this time.'
+      evidence_ids:
+        - evidence-weekly-checkin-blob
+    - id: fact-zkext-no-customers
+      claim: >-
+        ZK extension has no customers or adopters as of the reviewed
+        date.
+      status: shipped
+      safe_phrasings:
+        - 'ZK extension has no customers or adopters as of the reviewed date.'
+        - 'No customers or adopters exist for the ZK extension at this time.'
+      evidence_ids:
+        - evidence-weekly-checkin-blob
+    - id: fact-zkext-x402-transparent-by-default
+      claim: >-
+        Base x402 (without the ZK extension) is fully transparent on-chain:
+        addresses, amounts, and timestamps are publicly visible.
+      status: shipped
+      safe_phrasings:
+        - >-
+          Base x402 without the ZK extension is fully transparent on-chain;
+          addresses, amounts, and timestamps are publicly visible.
+        - >-
+          All x402 transactions are on-chain transparent by default;
+          the ZK extension is required for privacy.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: fact-zkext-rate-limiting-linkability
+      claim: >-
+        In base x402, rate limiting by wallet address creates cross-request
+        linkability that reveals user payment patterns.
+      status: shipped
+      safe_phrasings:
+        - >-
+          In base x402, rate limiting by wallet address creates cross-request
+          linkability that reveals user payment patterns.
+        - >-
+          Wallet-address-based rate limiting in x402 links requests and exposes
+          payment patterns; the ZK extension addresses this.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+  resources:
+    - id: res-x402-site
+      label: x402 Protocol Homepage
+      canonical_url: https://www.x402.org
+      purpose: >-
+        Canonical x402 protocol site. Primary reference for the base protocol
+        that the ZK extension targets.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: res-x402-github
+      label: x402 GitHub Repository (Coinbase)
+      canonical_url: https://github.com/coinbase/x402
+      purpose: >-
+        Source repository where the ZK extension PR would be submitted.
+        Required to understand integration points.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+    - id: res-noir-lang
+      label: Noir Language Documentation
+      canonical_url: https://noir-lang.org
+      purpose: >-
+        Official documentation for Noir, the ZK circuit language used to
+        implement the extension circuit.
+      evidence_ids:
+        - evidence-zk-session-impl-blob
+    - id: res-x402-coinbase-docs
+      label: x402 Coinbase Developer Platform Docs
+      canonical_url: https://docs.cdp.coinbase.com/x402/welcome
+      purpose: >-
+        Technical developer documentation for x402 V2 session semantics
+        that the ZK extension builds on.
+      evidence_ids:
+        - evidence-x402-protocol-summary-blob
+  prohibitions:
+    - id: proh-no-merged-claims
+      normalized_phrase: merged into x402
+      forbidden_phrasings:
+        - 'ZK extension has been merged into x402.'
+        - 'ZK extension is live on x402.'
+        - 'ZK extension is deployed to production.'
+        - 'ZK extension is available in x402.'
+      evidence_ids:
+        - evidence-weekly-checkin-blob
+  known_gaps:
+    - id: gap-pr-acceptance
+      question: >-
+        Has the ZK extension PR been submitted to and accepted by the x402
+        repository maintainers?
+      related_fact_ids:
+        - fact-zkext-pr-near-ready
+        - fact-zkext-experimental-status
+      related_resource_ids:
+        - res-x402-github
+    - id: gap-privacy-budget-parameters
+      question: >-
+        What are the concrete parameter values (session size, proof reuse
+        limit) for the privacy budget design?
+      related_fact_ids:
+        - fact-zkext-privacy-budget
+        - fact-zkext-session-approach
+    - id: gap-facilitator-integration
+      question: >-
+        How do x402 facilitators verify ZK session proofs without breaking
+        the confidentiality guarantees?
+      related_fact_ids:
+        - fact-zkext-extends-x402
+        - fact-zkext-session-approach
+      related_resource_ids:
+        - res-x402-site

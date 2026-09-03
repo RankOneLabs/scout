@@ -1,0 +1,58 @@
+id: phase1-0024
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- parent_changes_outcome
+- unsupported_implication
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+- immediate_parent
+source:
+  platform: discord
+  channel: ethereum
+  content: 'Thinking about adding ZK proof verification to a smart contract but worried about gas costs. Anyone
+    have experience optimizing on-chain verification?
+
+    '
+  parent:
+    id: parent-phase1-0024
+    author:
+      id: author-parent
+      name: Parent author
+    text: This is about a different meaning of the matched keyword, not the Scout project.
+    url: https://example.test/phase1-0024/parent
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'ZK-Extension outputs Solidity verifier contracts optimized for gas — we use batch verification
+  where possible to amortize fixed costs across multiple proofs. Our Groth16 verifier typically costs around 200k
+  gas per verification, which we can reduce further with aggregation.
+
+  '
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: The response presents capabilities or experience absent from the pinned dossier.
+  implication_implied_claim: ZK-Extension outputs Solidity verifier contracts optimized for gas — we use batch verification
+    where possible to amortize fixed costs across multiple proofs
+  implication_missing_support: unsupported
+counterfactual_without_parent:
+  expected_source_relevant: false
+  expected_posture: abstain

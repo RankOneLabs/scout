@@ -1,0 +1,82 @@
+[project]
+name = "scout"
+version = "0.1.0"
+description = "Contract-governed inbound relevance scanning (Discord, Farcaster, Bluesky) with drafted replies"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py>=2.3.0",
+    "python-dotenv>=1.0.0",
+    "jig[anthropic,openrouter] @ git+https://github.com/rankonelabs/jig.git@4fae89bb04768d57be6db4cd2bdef859d1e17322",
+    "paa-runtime==0.3.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pyyaml>=6.0",
+    "jsonschema>=4.23",
+]
+
+[project.scripts]
+scout = "scout.cli.main:main"
+scout-grading-api = "scout.cli.grading_api:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel.force-include]
+"contracts" = "scout/contracts"
+"scripts" = "scripts"
+"web/grading_schema.json" = "scout/web/grading_schema.json"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml>=6.0.12.20260518",
+    "types-jsonschema>=4.26.0.20260518",
+    # The published contract artifacts the declarations are validated
+    # against. Dev-only on purpose: nothing in Scout loads a JSON schema at
+    # runtime, so the image (built --no-dev) does not carry it.
+    "paa-contracts==0.1.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "scout",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+# Application and operator code is strict. Tests are executed by pytest and
+# intentionally excluded from the production type-safety gate; their dynamic
+# fixtures and SQLite assertions otherwise dominate the signal.
+exclude = ["tests/", "scripts/check_dossiers\\.py"]
+
+[[tool.mypy.overrides]]
+module = ["jig", "jig.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["yaml", "jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]

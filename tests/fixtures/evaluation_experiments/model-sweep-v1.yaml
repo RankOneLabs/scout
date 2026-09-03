@@ -1,0 +1,8 @@
+version: 1
+name: reply-draft-model-tune
+axis: model
+variants:
+  - name: haiku
+    model: claude-haiku-4-5-20251001
+  - name: sonnet
+    model: claude-sonnet-4-20250514

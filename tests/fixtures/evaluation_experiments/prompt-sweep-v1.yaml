@@ -1,0 +1,9 @@
+version: 1
+name: reply-draft-prompt-tune
+axis: prompt
+model: claude-haiku-4-5-20251001
+variants:
+  - name: control
+    prompt_file: prompt-sweep-v1/control.txt
+  - name: treatment-a
+    prompt_file: prompt-sweep-v1/treatment_a.txt

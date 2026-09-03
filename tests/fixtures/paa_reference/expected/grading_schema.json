@@ -1,0 +1,619 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scout.internal/schemas/grading.schema.json",
+  "title": "Scout grading contract",
+  "description": "Sole cross-runtime source of truth for v3 causal grade validation. Consumed directly (as the validationEnvelope schema, via the top-level $ref) by Python (config.py/grading.py/state_manager.py), the FastAPI sidecar, TypeScript route validation (web/lib/grade-validation.ts via Ajv2020), and the evals/phase1 case schema (by $ref to this document's canonical $id).",
+  "$ref": "#/$defs/validationEnvelope",
+  "$defs": {
+    "relevanceJudgment": {
+      "enum": [
+        "correct",
+        "false_positive",
+        "false_negative"
+      ]
+    },
+    "actionJudgment": {
+      "enum": [
+        "accept",
+        "fail"
+      ]
+    },
+    "failureDimension": {
+      "enum": [
+        "contextual_understanding",
+        "factual_support",
+        "unsupported_implication",
+        "posture",
+        "tone",
+        "wording",
+        "usefulness"
+      ]
+    },
+    "posture": {
+      "enum": [
+        "answer",
+        "engage",
+        "ask",
+        "abstain"
+      ]
+    },
+    "factualDisposition": {
+      "enum": [
+        "unsupported",
+        "contradicted"
+      ]
+    },
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "gradePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relevance_judgment",
+        "action_judgment"
+      ],
+      "properties": {
+        "relevance_judgment": {
+          "$ref": "#/$defs/relevanceJudgment"
+        },
+        "action_judgment": {
+          "$ref": "#/$defs/actionJudgment"
+        },
+        "dimensions": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/failureDimension"
+              }
+            }
+          ]
+        },
+        "failure_note": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        },
+        "factual_offending_claim": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        },
+        "factual_disposition": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/factualDisposition"
+            }
+          ]
+        },
+        "factual_contradicting_evidence": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        },
+        "context_missing_input": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        },
+        "posture_should_have_been": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/posture"
+            }
+          ]
+        },
+        "implication_implied_claim": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        },
+        "implication_missing_support": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        },
+        "edited_text": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/nonBlankString"
+            }
+          ]
+        }
+      },
+      "dependentSchemas": {
+        "factual_disposition": {
+          "if": {
+            "properties": {
+              "factual_disposition": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "factual_contradicting_evidence": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "factual_disposition": {
+                  "const": "contradicted"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "factual_offending_claim",
+                "factual_contradicting_evidence"
+              ],
+              "properties": {
+                "factual_offending_claim": {
+                  "$ref": "#/$defs/nonBlankString"
+                },
+                "factual_contradicting_evidence": {
+                  "$ref": "#/$defs/nonBlankString"
+                }
+              }
+            }
+          }
+        },
+        "implication_implied_claim": {
+          "if": {
+            "required": [
+              "implication_implied_claim"
+            ],
+            "properties": {
+              "implication_implied_claim": {
+                "$ref": "#/$defs/nonBlankString"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "implication_missing_support"
+            ],
+            "properties": {
+              "implication_missing_support": {
+                "$ref": "#/$defs/nonBlankString"
+              }
+            }
+          }
+        },
+        "implication_missing_support": {
+          "if": {
+            "required": [
+              "implication_missing_support"
+            ],
+            "properties": {
+              "implication_missing_support": {
+                "$ref": "#/$defs/nonBlankString"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "implication_implied_claim"
+            ],
+            "properties": {
+              "implication_implied_claim": {
+                "$ref": "#/$defs/nonBlankString"
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "action_judgment"
+            ],
+            "properties": {
+              "action_judgment": {
+                "const": "accept"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "relevance_judgment": {
+                "const": "correct"
+              },
+              "dimensions": {
+                "type": "null"
+              },
+              "failure_note": {
+                "type": "null"
+              },
+              "factual_offending_claim": {
+                "type": "null"
+              },
+              "factual_disposition": {
+                "type": "null"
+              },
+              "factual_contradicting_evidence": {
+                "type": "null"
+              },
+              "context_missing_input": {
+                "type": "null"
+              },
+              "posture_should_have_been": {
+                "type": "null"
+              },
+              "implication_implied_claim": {
+                "type": "null"
+              },
+              "implication_missing_support": {
+                "type": "null"
+              },
+              "edited_text": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "dimensions"
+            ],
+            "properties": {
+              "dimensions": {
+                "type": "array"
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "failure_note"
+                ],
+                "properties": {
+                  "failure_note": {
+                    "$ref": "#/$defs/nonBlankString"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "edited_text"
+                ],
+                "properties": {
+                  "edited_text": {
+                    "$ref": "#/$defs/nonBlankString"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "dimensions": {
+                    "type": "array",
+                    "contains": {
+                      "enum": [
+                        "contextual_understanding",
+                        "factual_support",
+                        "posture",
+                        "unsupported_implication"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "dimensions": {
+                      "contains": {
+                        "const": "factual_support"
+                      },
+                      "type": "array"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "factual_offending_claim",
+                    "factual_disposition"
+                  ],
+                  "properties": {
+                    "factual_offending_claim": {
+                      "$ref": "#/$defs/nonBlankString"
+                    },
+                    "factual_disposition": {
+                      "$ref": "#/$defs/factualDisposition"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "factual_offending_claim": {
+                      "type": "null"
+                    },
+                    "factual_disposition": {
+                      "type": "null"
+                    },
+                    "factual_contradicting_evidence": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "dimensions": {
+                      "contains": {
+                        "const": "contextual_understanding"
+                      },
+                      "type": "array"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "context_missing_input"
+                  ],
+                  "properties": {
+                    "context_missing_input": {
+                      "$ref": "#/$defs/nonBlankString"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "context_missing_input": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "dimensions": {
+                      "contains": {
+                        "const": "posture"
+                      },
+                      "type": "array"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "posture_should_have_been"
+                  ],
+                  "properties": {
+                    "posture_should_have_been": {
+                      "$ref": "#/$defs/posture"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "posture_should_have_been": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "dimensions": {
+                      "contains": {
+                        "const": "unsupported_implication"
+                      },
+                      "type": "array"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "implication_implied_claim",
+                    "implication_missing_support"
+                  ],
+                  "properties": {
+                    "implication_implied_claim": {
+                      "$ref": "#/$defs/nonBlankString"
+                    },
+                    "implication_missing_support": {
+                      "$ref": "#/$defs/nonBlankString"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "implication_implied_claim": {
+                      "type": "null"
+                    },
+                    "implication_missing_support": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "validationEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grade",
+        "evaluation_posture"
+      ],
+      "properties": {
+        "grade": {
+          "$ref": "#/$defs/gradePayload"
+        },
+        "evaluation_posture": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/posture"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evaluation_posture": {
+                "const": "answer"
+              }
+            },
+            "required": [
+              "evaluation_posture"
+            ]
+          },
+          "then": {
+            "properties": {
+              "grade": {
+                "properties": {
+                  "posture_should_have_been": {
+                    "not": {
+                      "const": "answer"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_posture": {
+                "const": "engage"
+              }
+            },
+            "required": [
+              "evaluation_posture"
+            ]
+          },
+          "then": {
+            "properties": {
+              "grade": {
+                "properties": {
+                  "posture_should_have_been": {
+                    "not": {
+                      "const": "engage"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_posture": {
+                "const": "ask"
+              }
+            },
+            "required": [
+              "evaluation_posture"
+            ]
+          },
+          "then": {
+            "properties": {
+              "grade": {
+                "properties": {
+                  "posture_should_have_been": {
+                    "not": {
+                      "const": "ask"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_posture": {
+                "const": "abstain"
+              }
+            },
+            "required": [
+              "evaluation_posture"
+            ]
+          },
+          "then": {
+            "properties": {
+              "grade": {
+                "properties": {
+                  "posture_should_have_been": {
+                    "not": {
+                      "const": "abstain"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

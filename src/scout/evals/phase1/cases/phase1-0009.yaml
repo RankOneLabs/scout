@@ -1,0 +1,50 @@
+id: phase1-0009
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- implied_community
+- unsupported_implication
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: backend
+  content: 'We process about 50M API calls per day and bot traffic has been growing. Looking for something that
+    can handle that scale without adding latency.
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'Gateway runs sub-millisecond decision latency at that volume — we handle over 500M requests per
+  day for customers like Stripe and Brex with p99 under 2ms added overhead.
+
+  '
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: 'Draft claims 500M req/day capacity and names Stripe and Brex as customers. Neither claim appears
+    in the dossier — no capacity benchmarks or named customers are documented.
+
+    '
+  implication_implied_claim: Gateway handles 500M+ req/day for Stripe and Brex
+  implication_missing_support: 'Dossier has no documented capacity benchmarks or named customer references.
+
+    '

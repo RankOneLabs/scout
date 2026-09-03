@@ -1,0 +1,23 @@
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+digests/
+__pycache__/
+.venv/
+*.pyc
+.claude/
+.mcp.json
+/projects/
+evidence/paa/*
+!evidence/paa/.gitkeep
+# evidence/paa/reference/ is generated, publication-safe reference
+# evidence and is checked in on purpose — only the content-addressed
+# runtime motion evidence at evidence/paa/<sha256>/ stays ignored.
+!evidence/paa/reference
+!evidence/paa/reference/**
+comms/*
+!comms/eval-baseline-grade-corpus-audit.md
+!tests/fixtures/grade_corpus_audit.db

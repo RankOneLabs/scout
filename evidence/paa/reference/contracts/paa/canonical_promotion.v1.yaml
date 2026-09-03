@@ -1,0 +1,54 @@
+task: canonical_promotion
+version: 1
+description: Approve a candidate observation for inclusion in a versioned canonical dossier.
+
+boundary:
+  input: scout.promotion_candidate
+  output: scout.approved_canonical_change
+
+initial_position: hitl
+deployment: disabled
+
+evaluators:
+  - property: claim_admissibility
+    target: input
+    technique: deterministic
+    evaluation_basis:
+      kind: invariant
+      ref: claim_admissibility
+    epistemic_status: ground_truth
+    version: "1"
+    authority: blocking
+
+  - property: canonical_truth
+    target: output
+    technique: human
+    evaluation_basis:
+      kind: human_gold
+      ref: canonical_truth_human_gold
+    epistemic_status: ground_truth
+    version: "1"
+    authority: blocking
+
+position_policy:
+  manual: offline
+  hitl: blocking
+  hotl: async
+  autonomous: offline
+
+promotion:
+  from: hitl
+  to: hotl
+  report: canonical_promotion_report
+  window:
+    kind: cases
+    size: 50
+  execution: operator_approval
+
+demotion:
+  from: hotl
+  to: hitl
+  trigger: operator_decision_or_policy_failure
+  window:
+    kind: cases
+    size: 1

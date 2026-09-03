@@ -1,0 +1,37 @@
+id: phase1-0001
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- clear_relevant
+- ask_correct
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: python-help
+  content: 'Has anyone found a good library for detecting credential stuffing attacks on a Flask login endpoint?
+    We''re getting hammered and rate limiting alone isn''t cutting it.
+
+    '
+expected_source_relevant: true
+expected_posture: ask
+expected_terminal_status: surfaced
+observed_draft: Could you share which part of the problem you want to explore?
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: accept

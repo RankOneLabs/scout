@@ -1,0 +1,51 @@
+id: phase1-0010
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- implied_resource
+- unsupported_implication
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: security
+  content: 'What''s the false positive rate for bot detection tools you''ve used? Our previous solution was blocking
+    real users too often and we lost conversions.
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'Gateway averages a 0.03% false positive rate on human traffic — we''ve tuned the model heavily
+  to protect conversion funnels. You can also set a conservative mode that reduces false positives further at the
+  cost of slightly lower bot recall.
+
+  '
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: 'Draft states a specific 0.03% false positive rate. No such benchmark is present in the dossier;
+    citing it as fact would mislead the reader.
+
+    '
+  implication_implied_claim: Gateway has a 0.03% false positive rate on human traffic
+  implication_missing_support: 'Dossier contains no false positive rate benchmarks or model accuracy metrics.
+
+    '

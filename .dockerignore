@@ -1,0 +1,49 @@
+# Secrets and credentials
+.env
+.env.*
+
+# Scout runtime databases (host-local, mutable state)
+scout.db
+scout_traces.db
+scout_feedback.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Digests (runtime output artifacts)
+digests/
+
+# Git metadata
+.git
+.gitignore
+.gitmodules
+
+# Python dependency and cache directories
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node dependencies and build output (web subdirectory)
+node_modules/
+web/node_modules/
+.next/
+web/.next/
+web/tsconfig.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build and tool artifacts
+.codex/
+.claude/
+comms/
+
+# Runtime state directories
+projects/

@@ -1,0 +1,777 @@
+{
+  "description": "Language-neutral fixture matrix proving Python (jsonschema/Draft202012Validator), TypeScript (Ajv2020), and the eval corpus schema agree on every verdict from web/grading_schema.json. Each entry is a full validationEnvelope instance ({grade, evaluation_posture}) plus the expected boolean verdict. Verdict parity is the contract; error text is validator-specific and intentionally not compared here (see decision 14).",
+  "cases": [
+    {
+      "name": "valid_accept_minimal",
+      "tags": ["pass", "valid", "accept"],
+      "valid": true,
+      "envelope": {
+        "grade": { "relevance_judgment": "correct", "action_judgment": "accept" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_accept_explicit_nulls",
+      "tags": ["pass", "valid", "accept", "null-causal-fields"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "accept",
+          "dimensions": null,
+          "failure_note": null,
+          "factual_offending_claim": null,
+          "factual_disposition": null,
+          "factual_contradicting_evidence": null,
+          "context_missing_input": null,
+          "posture_should_have_been": null,
+          "implication_implied_claim": null,
+          "implication_missing_support": null,
+          "edited_text": null
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "invalid_accept_with_edited_text",
+      "tags": ["invalid", "accept", "stale-causal-field", "edited_text"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "accept",
+          "edited_text": "a corrected reply"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_edited_text_whitespace_only",
+      "tags": ["invalid", "fail", "edited_text", "whitespace"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "edited_text": "   "
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_edited_text_without_dimensions",
+      "tags": ["invalid", "fail", "dimensions", "edited_text"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "edited_text": "a corrected reply"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_fail_edited_text_only_no_failure_note",
+      "tags": ["fail", "valid", "tone", "edited_text"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "edited_text": "a less formal rewrite of the draft reply"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_fail_edited_text_and_failure_note_both",
+      "tags": ["fail", "valid", "tone", "edited_text"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "overly formal",
+          "edited_text": "a less formal rewrite of the draft reply"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_fail_causal_detail_only_no_failure_note",
+      "tags": ["fail", "valid", "factual_support", "no-failure-note"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["factual_support"],
+          "factual_offending_claim": "We have 50k users",
+          "factual_disposition": "unsupported"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_fail_posture_causal_detail_only_no_draft",
+      "tags": ["fail", "valid", "posture", "no-failure-note", "no-draft"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "posture_should_have_been": "ask"
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "valid_fail_tone_minimal",
+      "tags": ["fail", "valid", "tone"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "overly formal for a casual forum post"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_fail_usefulness_minimal",
+      "tags": ["fail", "valid", "usefulness"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["usefulness"],
+          "failure_note": "no actionable next step offered"
+        },
+        "evaluation_posture": "engage"
+      }
+    },
+    {
+      "name": "invalid_unknown_field",
+      "tags": ["invalid", "allowlist", "unknown-field"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "accept",
+          "comment_quality": 3
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_unknown_field_on_envelope",
+      "tags": ["invalid", "allowlist", "unknown-field"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "correct", "action_judgment": "accept" },
+        "evaluation_posture": null,
+        "unexpected": true
+      }
+    },
+    {
+      "name": "invalid_false_positive_accept",
+      "tags": ["invalid", "accept", "relevance"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "false_positive", "action_judgment": "accept" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_false_negative_accept",
+      "tags": ["invalid", "accept", "relevance"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "false_negative", "action_judgment": "accept" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_false_positive_fail",
+      "tags": ["fail", "valid", "relevance", "contextual_understanding"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "false_positive",
+          "action_judgment": "fail",
+          "dimensions": ["contextual_understanding"],
+          "failure_note": "scout should not have flagged this",
+          "context_missing_input": "post was asking about a competitor"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_accept_with_dimensions",
+      "tags": ["invalid", "accept", "stale-causal-field"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "accept",
+          "dimensions": ["tone"]
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_accept_with_failure_note",
+      "tags": ["invalid", "accept", "stale-causal-field"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "accept",
+          "failure_note": "some note"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_accept_with_stale_factual_claim",
+      "tags": ["invalid", "accept", "stale-causal-field", "factual_support"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "accept",
+          "factual_offending_claim": "some claim"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_missing_dimensions",
+      "tags": ["invalid", "fail", "dimensions"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "failure_note": "bad"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_empty_dimensions",
+      "tags": ["invalid", "fail", "dimensions", "empty"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": [],
+          "failure_note": "bad"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_duplicate_dimensions",
+      "tags": ["invalid", "fail", "dimensions", "duplicate"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone", "tone"],
+          "failure_note": "bad"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_unknown_dimension",
+      "tags": ["invalid", "fail", "dimensions", "unknown"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["bad_dim"],
+          "failure_note": "bad"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_missing_failure_note",
+      "tags": ["invalid", "fail", "failure_note"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"]
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_fail_whitespace_failure_note",
+      "tags": ["invalid", "fail", "failure_note", "whitespace"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "   "
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_factual_support_missing_claim_and_disposition",
+      "tags": ["invalid", "fail", "factual_support", "missing-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["factual_support"],
+          "failure_note": "wrong fact"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_factual_support_unsupported",
+      "tags": ["fail", "valid", "factual_support", "unsupported"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["factual_support"],
+          "failure_note": "no evidence for claim",
+          "factual_offending_claim": "We have 50k users",
+          "factual_disposition": "unsupported"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_factual_support_unsupported_with_evidence",
+      "tags": ["invalid", "fail", "factual_support", "unsupported"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["factual_support"],
+          "failure_note": "note",
+          "factual_offending_claim": "claim",
+          "factual_disposition": "unsupported",
+          "factual_contradicting_evidence": "some evidence"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_factual_support_contradicted_without_evidence_T004",
+      "tags": ["invalid", "fail", "factual_support", "contradicted", "T-004"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["factual_support"],
+          "failure_note": "note",
+          "factual_offending_claim": "claim",
+          "factual_disposition": "contradicted"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_factual_support_contradicted_with_evidence",
+      "tags": ["fail", "valid", "factual_support", "contradicted"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["factual_support"],
+          "failure_note": "contradicted by docs",
+          "factual_offending_claim": "claim",
+          "factual_disposition": "contradicted",
+          "factual_contradicting_evidence": "docs say otherwise"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_factual_detail_stray_when_dimension_absent",
+      "tags": ["invalid", "fail", "factual_support", "stray-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "note",
+          "factual_offending_claim": "stale claim"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_contextual_understanding_missing_input",
+      "tags": ["invalid", "fail", "contextual_understanding", "missing-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["contextual_understanding"],
+          "failure_note": "missed context"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_contextual_understanding",
+      "tags": ["fail", "valid", "contextual_understanding"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["contextual_understanding"],
+          "failure_note": "missed thread context",
+          "context_missing_input": "original post was a reply to a ZK announcement"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_context_missing_input_stray_when_dimension_absent",
+      "tags": ["invalid", "fail", "contextual_understanding", "stray-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "note",
+          "context_missing_input": "some context"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_posture_missing_should_have_been",
+      "tags": ["invalid", "fail", "posture", "missing-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "wrong posture"
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "valid_posture_correction_differs_from_actual",
+      "tags": ["fail", "valid", "posture"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "should have asked not answered",
+          "posture_should_have_been": "ask"
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "valid_posture_correction_when_actual_posture_unknown",
+      "tags": ["fail", "valid", "posture", "null-evaluation-posture"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "wrong posture",
+          "posture_should_have_been": "ask"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_posture_should_have_been_stray_when_dimension_absent",
+      "tags": ["invalid", "fail", "posture", "stray-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "note",
+          "posture_should_have_been": "ask"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_equal_posture_answer",
+      "tags": ["invalid", "fail", "posture", "posture-inequality"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "wrong posture",
+          "posture_should_have_been": "answer"
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "invalid_equal_posture_engage",
+      "tags": ["invalid", "fail", "posture", "posture-inequality"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "wrong posture",
+          "posture_should_have_been": "engage"
+        },
+        "evaluation_posture": "engage"
+      }
+    },
+    {
+      "name": "invalid_equal_posture_ask",
+      "tags": ["invalid", "fail", "posture", "posture-inequality"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "wrong posture",
+          "posture_should_have_been": "ask"
+        },
+        "evaluation_posture": "ask"
+      }
+    },
+    {
+      "name": "invalid_equal_posture_abstain",
+      "tags": ["invalid", "fail", "posture", "posture-inequality"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "wrong posture",
+          "posture_should_have_been": "abstain"
+        },
+        "evaluation_posture": "abstain"
+      }
+    },
+    {
+      "name": "invalid_implication_missing_claim_and_support",
+      "tags": ["invalid", "fail", "unsupported_implication", "missing-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["unsupported_implication"],
+          "failure_note": "implied without basis"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_implication_missing_support_only",
+      "tags": ["invalid", "fail", "unsupported_implication", "missing-detail", "out-of-order"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["unsupported_implication"],
+          "failure_note": "implied without basis",
+          "implication_implied_claim": "we have an active community"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_implication_missing_claim_only",
+      "tags": ["invalid", "fail", "unsupported_implication", "missing-detail", "out-of-order"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["unsupported_implication"],
+          "failure_note": "implied without basis",
+          "implication_missing_support": "no community fact in dossier"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_unsupported_implication",
+      "tags": ["fail", "valid", "unsupported_implication"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["unsupported_implication"],
+          "failure_note": "claimed community without evidence",
+          "implication_implied_claim": "we have an active community",
+          "implication_missing_support": "no community fact in dossier"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_implication_stray_when_dimension_absent",
+      "tags": ["invalid", "fail", "unsupported_implication", "stray-detail"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "note",
+          "implication_implied_claim": "stale implied claim"
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_implication_implied_claim_explicit_null_pair_absent",
+      "tags": ["valid", "fail", "unsupported_implication", "explicit-null"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "note",
+          "implication_implied_claim": null
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_implication_missing_support_explicit_null_pair_absent",
+      "tags": ["valid", "fail", "unsupported_implication", "explicit-null"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["tone"],
+          "failure_note": "note",
+          "implication_missing_support": null
+        },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "valid_multi_dimension_fail",
+      "tags": ["fail", "valid", "multi-dimension", "contextual_understanding", "posture"],
+      "valid": true,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["contextual_understanding", "posture"],
+          "failure_note": "misread context and wrong posture",
+          "context_missing_input": "parent post was about ZK proofs not ZK snark",
+          "posture_should_have_been": "ask"
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "invalid_relevance_judgment_vocabulary",
+      "tags": ["invalid", "vocabulary", "relevance_judgment"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "wrong", "action_judgment": "accept" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_action_judgment_vocabulary",
+      "tags": ["invalid", "vocabulary", "action_judgment"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "correct", "action_judgment": "wrong" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_posture_should_have_been_vocabulary",
+      "tags": ["invalid", "vocabulary", "posture"],
+      "valid": false,
+      "envelope": {
+        "grade": {
+          "relevance_judgment": "correct",
+          "action_judgment": "fail",
+          "dimensions": ["posture"],
+          "failure_note": "note",
+          "posture_should_have_been": "fly"
+        },
+        "evaluation_posture": "answer"
+      }
+    },
+    {
+      "name": "invalid_missing_relevance_judgment",
+      "tags": ["invalid", "required"],
+      "valid": false,
+      "envelope": {
+        "grade": { "action_judgment": "accept" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_missing_action_judgment",
+      "tags": ["invalid", "required"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "correct" },
+        "evaluation_posture": null
+      }
+    },
+    {
+      "name": "invalid_missing_evaluation_posture_key",
+      "tags": ["invalid", "required", "envelope"],
+      "valid": false,
+      "envelope": {
+        "grade": { "relevance_judgment": "correct", "action_judgment": "accept" }
+      }
+    }
+  ]
+}

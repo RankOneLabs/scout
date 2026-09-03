@@ -1,0 +1,47 @@
+id: phase1-0017
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- explicit_no_community
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+- explicit_absences
+source:
+  platform: discord
+  channel: backend
+  content: 'Anyone have experience with IP reputation databases for bot blocking? Thinking about whether it''s worth
+    integrating one.
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'Check out Gateway — the ultimate solution for all your bot detection needs! We protect thousands
+  of companies and will supercharge your defenses. Sign up today and get started in minutes. It''s a game changer
+  you won''t regret!
+
+  '
+required_fact_ids:
+- fact-gateway-no-community
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - tone
+  failure_note: 'Draft is overly promotional with hype language ("ultimate solution", "supercharge", "game changer").
+    The technical help channel calls for a substantive, peer-to-peer tone — this reads like ad copy.
+
+    '

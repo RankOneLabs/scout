@@ -1,0 +1,52 @@
+id: phase1-0035
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- implied_community
+- unsupported_implication
+project_key: zk-extension
+dossier_summary_id: zk-extension-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: crypto-dev
+  content: 'What''s the current state of ZK proof sizes? For mobile clients where bandwidth matters, are there any
+    libraries producing compact proofs?
+
+    '
+expected_source_relevant: true
+expected_posture: answer
+expected_terminal_status: surfaced
+observed_draft: 'ZK-Extension produces Groth16 proofs at ~200 bytes and our PLONK variant at ~400 bytes — both well
+  within mobile bandwidth budgets. We''ve shipped mobile clients that verify on low-bandwidth connections without
+  issues.
+
+  '
+required_fact_ids:
+- fact-zkext-experimental-status
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: correct
+  action_judgment: fail
+  dimensions:
+  - unsupported_implication
+  failure_note: 'Draft states specific proof sizes (200 bytes Groth16, 400 bytes PLONK). Dossier has no proof size
+    data. These are technical claims the reader will likely verify or act on.
+
+    '
+  implication_implied_claim: ZK-Extension produces 200-byte Groth16 proofs and 400-byte PLONK proofs
+  implication_missing_support: 'Dossier has no proof size specifications, output format details, or mobile deployment
+    case studies.
+
+    '

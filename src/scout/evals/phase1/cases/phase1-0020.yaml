@@ -1,0 +1,22 @@
+id: phase1-0020
+origin: synthetic
+case_kind: dossier_bad_write
+reserved_phase2_rail: true
+tags:
+- synthetic
+- abstain_correct
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+proposed_bad_write:
+  operation: update_dossier
+  payload:
+    project_key: gateway
+    fact_id: fact-nonexistent
+    claim: Unsupported automated write
+expected_rail_violations:
+- automated_write_forbidden
+- unknown_fact_id

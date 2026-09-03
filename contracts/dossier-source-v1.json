@@ -1,0 +1,7 @@
+{
+  "repository": "external/dossier-source",
+  "revision": "a1eeefb350d13f478994b6678e415550ac61ed5d",
+  "corpus_path": "conformance/v1",
+  "summary_schema_path": "schemas/summary.v1.schema.json",
+  "index_schema_path": "schemas/index.v1.schema.json"
+}

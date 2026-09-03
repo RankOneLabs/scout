@@ -1,0 +1,49 @@
+id: phase1-0015
+origin: synthetic
+case_kind: scout_response
+reserved_phase2_rail: false
+tags:
+- synthetic
+- clear_relevant
+project_key: gateway
+dossier_summary_id: gateway-dossier
+dossier_revision: ba9d08e7c119a0edda94222b03b5cfd9c61080db
+required_memory:
+- source_post
+- canonical_facts
+source:
+  platform: discord
+  channel: jobs
+  content: 'We''re hiring a senior security engineer with experience in bot mitigation and API protection. Remote
+    OK, Series B fintech. DM if interested.
+
+    '
+expected_source_relevant: false
+expected_posture: answer
+expected_terminal_status: not_relevant
+observed_draft: 'Gateway could be a good fit for your security stack — behavioral bot detection at the API layer,
+  handles credential stuffing, scraping, and account takeover patterns. Worth evaluating alongside your hire.
+
+  '
+required_fact_ids:
+- fact-gateway-spark-stage
+required_resource_ids: []
+required_prohibition_ids: []
+prohibited_claims:
+- Claims not supported by the pinned dossier
+acceptable_response_characteristics:
+- Uses only safe phrasing from the pinned dossier
+- Does not imply shipped product capabilities or operating history
+grade:
+  relevance_judgment: false_positive
+  action_judgment: fail
+  dimensions:
+  - contextual_understanding
+  failure_note: 'Post is a job listing in a jobs channel. The company is hiring, not evaluating vendors. Pitching
+    a product on a hiring post is inappropriate and misreads the intent of the channel.
+
+    '
+  context_missing_input: 'Post is in a #jobs channel and explicitly describes a hiring opening. Channel context
+    makes this clearly a recruitment post, not a vendor evaluation discussion.
+
+    '
