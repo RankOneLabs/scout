@@ -1,0 +1,46 @@
+task: reply_draft
+version: 1
+description: Generate a draft from a recorded reply input for shadow-only replay measurement; never surface or publish it.
+
+boundary:
+  input: scout.recorded_reply_input
+  output: scout.replay_draft
+
+initial_position: manual
+deployment: shadow
+
+evaluators:
+  - property: correction_distance
+    target: output
+    technique: deterministic
+    evaluation_basis:
+      kind: reference_label
+      ref: pinned_reply_correction
+    epistemic_status: proxy
+    version: normalized_edit_distance/v1
+    authority: advisory
+
+position_policy:
+  manual: offline
+  hitl: blocking
+  hotl: async
+  autonomous: offline
+
+# The current contract requires edges. Neither is reachable from manual;
+# activation requires a new declaration, not an experiment result or cost.
+promotion:
+  from: hitl
+  to: hotl
+  report: reply_draft_activation_review
+  window:
+    kind: cases
+    size: 1
+  execution: operator_approval
+
+demotion:
+  from: hotl
+  to: hitl
+  trigger: operator_decision
+  window:
+    kind: cases
+    size: 1

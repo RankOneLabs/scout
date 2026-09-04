@@ -642,10 +642,13 @@ class TestExecuteReplay:
             )
 
         row = state.conn.execute(
-            "SELECT status, candidate_trace_id, error_detail FROM evaluation_experiments"
+            "SELECT status, candidate_trace_id, candidate_cost, candidate_llm_call_count, "
+            "error_detail FROM evaluation_experiments"
         ).fetchone()
         assert row["status"] == "failed"
-        assert row["candidate_trace_id"] is None
+        assert row["candidate_trace_id"] is not None
+        assert row["candidate_cost"] == pytest.approx(0.003)
+        assert row["candidate_llm_call_count"] == 3
         assert row["error_detail"] == ee._STAGE_MESSAGES["candidate_execution"]
         assert state.conn.execute("SELECT COUNT(*) FROM trace_comparisons").fetchone()[0] == 0
 
@@ -1674,6 +1677,17 @@ class TestBuildBatchPlanClassification:
 
 
 class TestBatchPlanHash:
+    async def test_runtime_configuration_change_requires_new_plan(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        _patch_resolve_dossier(monkeypatch)
+        phase_run_id, _ = await _seed_reply_draft_correction(state, tracer, feedback)
+        kwargs = self._kwargs(state, tracer, phase_run_id)
+        before = await ee.build_batch_plan(**kwargs)
+        monkeypatch.setattr(ee, "JIG_REVISION", "changed-runtime-revision")
+        after = await ee.build_batch_plan(**kwargs)
+        assert before.plan_sha256 != after.plan_sha256
+
     def _kwargs(self, state, tracer, phase_run_id: int, **overrides: Any) -> dict[str, Any]:
         base = dict(
             state=state, tracer=tracer, selector=ee.BatchSelector.by_phase_run_ids([phase_run_id]),

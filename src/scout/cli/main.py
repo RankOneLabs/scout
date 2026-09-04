@@ -417,11 +417,15 @@ def parse_args() -> argparse.Namespace:
         help="One or more experiment_runs parent ids (a sweep's variants share one report)",
     )
     report_p.add_argument(
-        "--format", choices=["markdown", "json"], default="markdown",
+        "--format", choices=["markdown", "json", "paa-json"], default="markdown",
         help="Output format (default: markdown)",
     )
     report_p.add_argument(
         "--out", default=None, help="Write the report to this file instead of stdout",
+    )
+    report_p.add_argument(
+        "--pricing-catalog", default=None,
+        help="Catalog used to price candidate usage in --format paa-json; estimates, not invoices",
     )
 
     return parser.parse_args()

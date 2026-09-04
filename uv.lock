@@ -884,23 +884,23 @@ wheels = [
 
 [[package]]
 name = "paa-contracts"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c1/52/60fa445b7c711ad98126695aba3d5fad2a0d8d29a542b1174f3e3a470813/paa_contracts-0.1.0.tar.gz", hash = "sha256:aa4272d0aae4efcff7c38107aac2d8410443bba16f82cedc6fff47c4645d662b", size = 24930, upload-time = "2026-08-11T20:51:52.534Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0a/27/addf0da7bba0694ec7856e6d2054a491680231d2686e67600a4fed20e2b0/paa_contracts-0.2.0.tar.gz", hash = "sha256:64c8b8b1c15081ad53c7983805ecf1faae9ff2434faa2f2e4a4e098339710865", size = 29857, upload-time = "2026-09-04T22:58:13.519Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/94/ece2484119d40e0201ad1119e1f7be9d7bd88d68676fea06cab53af35fd0/paa_contracts-0.1.0-py3-none-any.whl", hash = "sha256:9b1dc62bea7f82c4bb712d8c0113d6fe90254040b232c929b1b509be61622135", size = 40077, upload-time = "2026-08-11T20:51:51.347Z" },
+    { url = "https://files.pythonhosted.org/packages/69/ed/8769c521e2bb03d4ff3f82a1531c563f75a668d89b747682e0d1ab25b2ab/paa_contracts-0.2.0-py3-none-any.whl", hash = "sha256:fa3aebc0d3484318adfb7b9f8edf2057fc47c3eeb0fc1635d731555fdc0d1f85", size = 48224, upload-time = "2026-09-04T22:58:12.004Z" },
 ]
 
 [[package]]
 name = "paa-runtime"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/5c/c98ce86885fcceaf9326d1b68699b3b88b81d2fbc5e6fbb7a50ca44838d6/paa_runtime-0.3.0.tar.gz", hash = "sha256:ea993cb326155d4f17fb5b36f32a3184be3776b20a80b531bb7d91758b3182e8", size = 173151, upload-time = "2026-08-11T20:54:14.252Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/1c/0fd04353496cc3128d6eda71e4d8a7467402114d53140f012b310d75bfbf/paa_runtime-0.4.0.tar.gz", hash = "sha256:2f21ad0f211ddfb793cbc777a3623f1faaf0c346e169c6a2c9a2d11b3cea7565", size = 186386, upload-time = "2026-09-04T22:58:24.184Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/ef/7bb3dfeb959382fabb441271354ae1eae4a460ca8b2daddb83848a8b3107/paa_runtime-0.3.0-py3-none-any.whl", hash = "sha256:1b05a130e7871ddc85ae1eb0e9e9e30b9f6d066911e7122afd6ffc0799e8ba6c", size = 37858, upload-time = "2026-08-11T20:54:12.718Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/db/8861848e95ae35a87a6bf169b3dfbf470b6c823e84914e1f273daedd0d06/paa_runtime-0.4.0-py3-none-any.whl", hash = "sha256:279376b38580c7ec755df69c1ba83c6fde0f041e26153ed332260484a7593cb3", size = 44372, upload-time = "2026-09-04T22:58:22.863Z" },
 ]
 
 [[package]]
@@ -1360,7 +1360,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "jig", extras = ["anthropic", "openrouter"], git = "https://github.com/rankonelabs/jig.git?rev=4fae89bb04768d57be6db4cd2bdef859d1e17322" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "paa-runtime", specifier = "==0.3.0" },
+    { name = "paa-runtime", specifier = "==0.4.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
@@ -1369,7 +1369,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.13" },
-    { name = "paa-contracts", specifier = "==0.1.0" },
+    { name = "paa-contracts", specifier = "==0.2.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.8" },

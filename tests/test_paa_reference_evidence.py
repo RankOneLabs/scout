@@ -69,6 +69,7 @@ class TestCopiedSources:
         self, rendered: dict[str, bytes]
     ) -> None:
         for name in (
+            "reply_draft.v1.yaml",
             "canonical_promotion.v1.yaml",
             "inbound_reply_surfacing.v1.yaml",
         ):
@@ -373,6 +374,7 @@ class TestPaaLifecycleAndConformance:
     def test_declarations_conform_and_resolve(self) -> None:
         versions = validate_declarations_conform(DECLARATIONS_SOURCE_DIR)
         assert versions == {
+            "reply_draft": 1,
             "canonical_promotion": 1,
             "inbound_reply_surfacing": 1,
         }

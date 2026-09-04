@@ -42,6 +42,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 _DECLARATIONS_DIR = _REPO_ROOT / "contracts" / "paa"
 
 _EXPECTED_DECLARATIONS: dict[str, dict[str, object]] = {
+    "reply_draft": {"version": 1, "deployment": "shadow", "initial_position": "manual"},
     "inbound_reply_surfacing": {"version": 1, "deployment": "shadow", "initial_position": "hitl"},
     "canonical_promotion": {"version": 1, "deployment": "disabled", "initial_position": "hitl"},
 }
@@ -92,11 +93,12 @@ class TestSchemaConformance:
 
 
 class TestDeclarationIdentity:
-    def test_exactly_two_declarations_are_checked_in(self) -> None:
+    def test_exactly_three_declarations_are_checked_in(self) -> None:
         paths = sorted(_DECLARATIONS_DIR.glob("*.yaml"))
         assert [p.name for p in paths] == [
             "canonical_promotion.v1.yaml",
             "inbound_reply_surfacing.v1.yaml",
+            "reply_draft.v1.yaml",
         ]
 
     def test_each_declaration_filename_matches_its_task_and_version(self) -> None:

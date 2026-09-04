@@ -18,6 +18,7 @@ from pathlib import Path
 import scout.replay.experiments as ee
 import scout.replay.reporting as rr
 from scout.config import DB_PATH
+from scout.paa.replay_records import build_replay_paa_export, render_replay_paa_export
 from scout.replay.experiments import (
     ExperimentOutcome,
     ReplayError,
@@ -27,6 +28,7 @@ from scout.replay.experiments import (
 )
 from scout.replay.pricing import PricingCatalog, PricingCatalogError, load_pricing_catalog
 from scout.replay.runtime import replay_runtime
+from scout.result import Err
 
 
 def positive_int(value: str) -> int:
@@ -317,10 +319,22 @@ def report_feedback(args: argparse.Namespace) -> None:
 
     async def _run() -> None:
         async with replay_runtime(db_path=DB_PATH) as rt:
-            report = rr.build_batch_report(rt.state, experiment_run_ids=args.experiment_run_id)
-            rendered = (
-                rr.render_json(report) if args.format == "json" else rr.render_markdown(report)
-            )
+            if args.format == "paa-json":
+                catalog_path = getattr(args, "pricing_catalog", None)
+                catalog = (
+                    load_pricing_catalog(catalog_path) if catalog_path else load_pricing_catalog()
+                )
+                result = await build_replay_paa_export(
+                    rt.state, rt.tracer, experiment_run_ids=args.experiment_run_id, catalog=catalog,
+                )
+                if isinstance(result, Err):
+                    raise rr.ReportError(str(result.error))
+                rendered = render_replay_paa_export(result.value)
+            else:
+                report = rr.build_batch_report(rt.state, experiment_run_ids=args.experiment_run_id)
+                rendered = (
+                    rr.render_json(report) if args.format == "json" else rr.render_markdown(report)
+                )
             if args.out:
                 Path(args.out).write_text(rendered, encoding="utf-8")
                 print(f"wrote {args.format} report to {args.out}")
@@ -329,7 +343,7 @@ def report_feedback(args: argparse.Namespace) -> None:
 
     try:
         asyncio.run(_run())
-    except rr.ReportError as exc:
+    except (rr.ReportError, PricingCatalogError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 

@@ -95,8 +95,8 @@ CANDIDATE_CONFIG_VERSION = 2
 # v2: per-baseline-case provenance (evaluation_experiments.baseline_evidence).
 BASELINE_EVIDENCE_VERSION = 2
 
-# Canonical replay plan v1 (batch/sweep preview + --authorize-plan-sha256).
-PLAN_SCHEMA_VERSION = 1
+# v2 additionally pins the complete controlled worker configuration.
+PLAN_SCHEMA_VERSION = 2
 
 # replay-sweep v1 (contracts/replay-sweep.v1.schema.json).
 SWEEP_SCHEMA_VERSION = 1
@@ -279,6 +279,25 @@ class ReplyCorrectionOracle:
     dossier_summary_id: str
     dossier_revision: str
     dossier: DossierSummary
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayWorkerConfiguration:
+    """Exact controlled replay worker settings, captured before an attempt can spend."""
+
+    phase: str
+    model: str
+    system_prompt_sha256: str
+    output_schema_sha256: str
+    max_tool_calls: int
+    max_llm_calls: int
+    max_parse_retries: int
+    jig_revision: str
+    grader_version: str | None
+    assembler_version: str
+    tools: tuple[str, ...]
+    include_memory_in_prompt: bool
+    include_feedback_in_prompt: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -978,10 +997,6 @@ async def _run_candidate_and_complete(
         state.fail_experiment(experiment_id, error_detail=_STAGE_MESSAGES["candidate_execution"])
         raise CandidateExecutionError(_STAGE_MESSAGES["candidate_execution"]) from exc
 
-    if agent_result.error is not None or agent_result.parsed is None:
-        state.fail_experiment(experiment_id, error_detail=_STAGE_MESSAGES["candidate_execution"])
-        raise CandidateExecutionError(_STAGE_MESSAGES["candidate_execution"])
-
     candidate_trace_id = agent_result.trace_id
     try:
         candidate_spans = await tracer.get_trace(candidate_trace_id)
@@ -1015,6 +1030,12 @@ async def _run_candidate_and_complete(
             experiment_id, error_detail=_STAGE_MESSAGES["candidate_trace_evidence"],
         )
         raise
+
+    # Failed outputs still incur costs. Preserve their verified trace and
+    # per-attempt accounting before closing the attempt as failed.
+    if agent_result.error is not None or agent_result.parsed is None:
+        state.fail_experiment(experiment_id, error_detail=_STAGE_MESSAGES["candidate_execution"])
+        raise CandidateExecutionError(_STAGE_MESSAGES["candidate_execution"])
 
     score_evidence_json: str | None = None
     if oracle is not None:
@@ -1599,7 +1620,7 @@ class SkipPolicy:
 
 
 # ---------------------------------------------------------------------------
-# Canonical plan v1: batch/sweep preview and --authorize-plan-sha256
+# Canonical plan v2: batch/sweep preview and --authorize-plan-sha256
 # ---------------------------------------------------------------------------
 
 
@@ -1610,7 +1631,7 @@ class BatchPlan:
     canonical plan document and its SHA-256, which --authorize-plan-sha256
     pins. Rebuilding this from identical inputs is deterministic; any
     change to the population, a grade pointer, a candidate override, the
-    pricing catalog, or the skip policy changes `plan_sha256`.
+    controlled worker settings, pricing catalog, or skip policy changes `plan_sha256`.
     """
 
     plan_json: str
@@ -1691,6 +1712,7 @@ def _build_canonical_plan_document(
             "classification": pair.classification,
             "reason": pair.reason,
             "candidate_model": pair.plan.candidate_model,
+            "worker_configuration": dataclasses.asdict(replay_worker_configuration(pair.plan)),
             "estimated_usd": pair.price_estimate.estimated_usd if pair.price_estimate else None,
         }
         for pair in sorted(pairs, key=lambda p: (p.phase_run_id, p.variant_name))
@@ -1929,6 +1951,21 @@ def build_batch_candidate_config(
     )
 
 
+def replay_worker_configuration(plan: CandidateReplayPlan) -> ReplayWorkerConfiguration:
+    """Mirror the phase runner settings used by _build_candidate_agent_config."""
+    phase = PHASE_REPLAY_CONFIGS[plan.phase]
+    return ReplayWorkerConfiguration(
+        phase=plan.phase, model=plan.candidate_model,
+        system_prompt_sha256=plan.candidate_prompt_sha256,
+        output_schema_sha256=_sha256_utf8(_canonical_json(phase.output_schema.model_json_schema())),
+        max_tool_calls=phase.max_tool_calls, max_llm_calls=phase.max_llm_calls,
+        max_parse_retries=phase.max_parse_retries, jig_revision=JIG_REVISION,
+        grader_version=NORMALIZED_EDIT_DISTANCE_GRADER_VERSION if plan.grader_attached else None,
+        assembler_version=DRAFT_TEXT_ASSEMBLER_VERSION,
+        tools=(), include_memory_in_prompt=False, include_feedback_in_prompt=False,
+    )
+
+
 def build_batch_case_evidence(
     case: BatchCase,
     plan: CandidateReplayPlan,
@@ -1949,6 +1986,7 @@ def build_batch_case_evidence(
             "baseline_prompt_reused": plan.baseline_prompt_reused,
             "candidate_model": plan.candidate_model,
             "candidate_prompt_sha256": plan.candidate_prompt_sha256,
+            "worker_configuration": dataclasses.asdict(replay_worker_configuration(plan)),
             "estimated_usd": price_estimate.estimated_usd if price_estimate is not None else None,
             "reply_revision_id": oracle.reply_revision_id,
             "correction_sha256": oracle.correction_sha256,

@@ -1,7 +1,7 @@
 """Deterministic generator for evidence/paa/reference/.
 
 Produces one publication-safe, byte-reproducible evidence pack: exact
-copies of the two checked-in PAA task declarations and the grading
+copies of the checked-in PAA task declarations and the grading
 schema, a redacted schema-2 evidence bundle (via
 ``evidence_bundle.create_reference_bundle``), a redacted correction-and-
 prompt document, a redacted offline-replay experiment summary, and a manifest
@@ -79,10 +79,12 @@ FIXTURE_AUDIT_REPORT_PATH = FIXTURE_SOURCE_DIR / "audit_report.json"
 FIXTURE_BEFORE_PATH = FIXTURE_SOURCE_DIR / "before.bin"
 
 DECLARATION_FILENAMES: tuple[str, ...] = (
+    "reply_draft.v1.yaml",
     "canonical_promotion.v1.yaml",
     "inbound_reply_surfacing.v1.yaml",
 )
 DECLARATION_TASKS: tuple[str, ...] = (
+    "reply_draft",
     "canonical_promotion",
     "inbound_reply_surfacing",
 )

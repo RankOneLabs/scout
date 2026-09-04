@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:scout:reply-draft-measurement:1",
+  "title": "Scout reply draft measurement payload",
+  "description": "Payload for a scored correction-distance verdict. It declares no acceptance threshold and is not a full-pipeline qualification result.",
+  "type": "object",
+  "required": ["baseline_distance", "candidate_distance", "correction_sha256", "reply_revision_id", "assembler_version"],
+  "additionalProperties": false,
+  "properties": {
+    "baseline_distance": { "type": "number", "minimum": 0, "maximum": 1 },
+    "candidate_distance": { "type": "number", "minimum": 0, "maximum": 1 },
+    "correction_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reply_revision_id": { "type": "integer", "minimum": 1 },
+    "assembler_version": { "type": "string", "minLength": 1 }
+  }
+}

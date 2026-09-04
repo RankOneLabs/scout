@@ -8,7 +8,7 @@ dependencies = [
     "discord.py>=2.3.0",
     "python-dotenv>=1.0.0",
     "jig[anthropic,openrouter] @ git+https://github.com/rankonelabs/jig.git@4fae89bb04768d57be6db4cd2bdef859d1e17322",
-    "paa-runtime==0.3.0",
+    "paa-runtime==0.4.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pyyaml>=6.0",
@@ -42,7 +42,7 @@ dev = [
     # The published contract artifacts the declarations are validated
     # against. Dev-only on purpose: nothing in Scout loads a JSON schema at
     # runtime, so the image (built --no-dev) does not carry it.
-    "paa-contracts==0.1.0",
+    "paa-contracts==0.2.0",
 ]
 
 [tool.ruff]
