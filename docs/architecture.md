@@ -55,9 +55,12 @@ If you can't draw the data flow as a DAG where each node is a pure-ish transform
 
 Scout takes the PAA contract and its reference control plane from
 [RankOneLabs/paa](https://github.com/RankOneLabs/paa) as pinned
-dependencies (`paa-contracts`, `paa-runtime`) and checks in two
+dependencies (`paa-contracts`, `paa-runtime`) and checks in three
 declarations at `contracts/paa/*.v1.yaml` (`inbound_reply_surfacing`
-shadow/hitl, `canonical_promotion` disabled/hitl). Scout no longer
+shadow/hitl, `canonical_promotion` disabled/hitl, `reply_draft`
+shadow/manual). All three are visible to the `scout paa` control plane.
+The replay-only `reply_draft` task has no reachable transition from its
+initial manual position; activation requires a new declaration. Scout no longer
 implements the loader: `paa_runtime.declarations` does, and
 `scout.paa.declarations` binds it to Scout's declarations directory and
 producer registry. Schema conformance is proved by

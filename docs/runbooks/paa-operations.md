@@ -7,8 +7,9 @@ separate application; this runbook covers only what remains in Scout.
 
 ## What this is, in one paragraph
 
-Every task Scout has a PAA declaration for (`inbound_reply_surfacing`,
-`canonical_promotion` — see `docs/architecture.md`'s PAA section) has a
+All three declared tasks (`inbound_reply_surfacing`, `canonical_promotion`,
+and `reply_draft` — see `docs/architecture.md`'s PAA section) are included
+in the `scout paa` control plane. Each has a
 *current autonomy position* (`manual`, `hitl`, `hotl`, or `autonomous`)
 for each exact scope it operates under. That position is never stored
 directly — it is always recomputed by folding the task's declaration
@@ -16,11 +17,12 @@ directly — it is always recomputed by folding the task's declaration
 `autonomy_events`. Moving position requires a **motion**: propose, then
 approve (or reject). An emergency `demote` collapses propose+approve into
 one command for the one declared demotion every checked-in task has
-(`hotl` → `hitl`). Neither checked-in task is wired to a runtime
-enforcement point today — `inbound_reply_surfacing` is `deployment:
-shadow` and `canonical_promotion` is `deployment: disabled` — so moving a
-position records operator intent in the event log without changing Scout's
-runtime behavior.
+(`hotl` → `hitl`). None is wired to a runtime enforcement point today:
+`inbound_reply_surfacing` and `reply_draft` are `deployment: shadow`, and
+`canonical_promotion` is `deployment: disabled`. Where a transition is
+reachable, moving position records operator intent without changing Scout's
+runtime behavior. The replay-only `reply_draft` task starts at `manual`
+with no reachable transition; activation requires a new declaration.
 
 ## Evidence: back it up, never hand-edit it
 
@@ -267,13 +269,14 @@ accepts exactly those strings, and two different scopes under the same
 task are fully independent; approving a motion for one scope never grants
 authority for another.
 
-Neither checked-in declaration lists `scopes`, so both tasks resolve under
+None of the three checked-in declarations lists `scopes`, so all resolve under
 the null scope: omit `--scope`, and expect `scout paa` to reject any scope
 you pass until a declaration declares one.
 
 ```bash
 scout paa show inbound_reply_surfacing
 scout paa show canonical_promotion
+scout paa show reply_draft
 ```
 
 ## Declaration-version reset

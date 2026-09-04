@@ -346,7 +346,7 @@ async def test_retry_refuses_changed_worker_before_spending(
     )
     before = state.conn.total_changes
     monkeypatch.setattr(ee, "JIG_REVISION", "changed-runtime-revision")
-    with pytest.raises(ee.RetryResolutionError, match="worker configuration changed"):
+    with pytest.raises(ee.RetryResolutionError, match="changed fields: .*worker_configuration"):
         await ee.retry_batch_replay(
             state=state,
             tracer=tracer,

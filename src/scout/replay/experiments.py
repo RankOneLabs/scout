@@ -2264,13 +2264,6 @@ async def retry_batch_replay(
             case.baseline, model_override=model_override,
             system_prompt_override=system_prompt_override,
         )
-        pinned_worker = pinned_evidence.get("worker_configuration")
-        if pinned_worker is not None and _canonical_json(pinned_worker) != _canonical_json(
-            dataclasses.asdict(replay_worker_configuration(plan))
-        ):
-            raise RetryResolutionError(
-                f"phase_run_id={phase_run_id} worker configuration changed; preview a new plan"
-            )
         if plan.is_no_op:
             raise RetryResolutionError(
                 f"phase_run_id={phase_run_id} is now a no-op candidate on retry"
