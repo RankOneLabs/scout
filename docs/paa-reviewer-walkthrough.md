@@ -24,9 +24,9 @@ projects, evaluates each candidate against a versioned project dossier,
 drafts an engagement comment, critiques and optionally revises it, and
 presents the result to an operator in a digest and a web UI. Outbound content
 creation and publishing are outside Scout; they live in a separate
-application. Scout embeds the `paa-runtime` control plane and the
-`paa-contracts` schemas as pinned dependencies rather than implementing its
-own.
+application. Scout embeds the `paa-runtime` control plane as a pinned
+dependency rather than implementing its own, and its tests validate the
+checked-in declarations against the published `paa-contracts` schemas.
 
 ## The declared tasks
 
