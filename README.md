@@ -1,5 +1,7 @@
 # Scout
 
+[![CI](https://github.com/RankOneLabs/scout/actions/workflows/ci.yml/badge.svg)](https://github.com/RankOneLabs/scout/actions/workflows/ci.yml)
+
 Scout monitors Discord, Farcaster, and Bluesky for posts relevant to your
 projects, evaluates them against project dossiers, and drafts engagement
 comments. Outbound content creation and publishing live in a separate
