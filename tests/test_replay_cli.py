@@ -381,6 +381,17 @@ class TestBatchRetryFeedback:
 
 
 class TestReportFeedback:
+    def test_prints_paa_records(self, state, tracer, feedback, monkeypatch, capsys) -> None:
+        run_id = self._seed_completed_batch(state, tracer, feedback, monkeypatch)
+        replay_cli.report_feedback(
+            argparse.Namespace(
+                experiment_run_id=[run_id], format="paa-json", out=None, pricing_catalog=None,
+            )
+        )
+        document = json.loads(capsys.readouterr().out)
+        assert document["schema"] == "scout-paa-replay/1"
+        assert document["operating_records"][0]["task"] == "reply_draft"
+
     def _seed_completed_batch(self, state, tracer, feedback, monkeypatch) -> int:
         _patch_resolve_dossier(monkeypatch)
         phase_run_id, _ = asyncio.run(_seed_reply_draft_correction(state, tracer, feedback))

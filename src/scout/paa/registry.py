@@ -31,6 +31,7 @@ from __future__ import annotations
 from paa_runtime.declarations import PaaEvaluationBasis, ProducerRegistration
 
 from scout.config import HUMAN_GRADE_SCHEMA_VERSION
+from scout.grading.correction import NORMALIZED_EDIT_DISTANCE_GRADER_VERSION
 from scout.scanning.agent import LLM_CRITIC_PROMPT_VERSION
 from scout.storage.state import AUTHOR_RATE_EVALUATOR_VERSION
 from scout.verifier import CONTENT_INVARIANTS_EVALUATOR_VERSION
@@ -39,6 +40,12 @@ __all__ = ["PRODUCER_REGISTRY"]
 
 
 PRODUCER_REGISTRY: tuple[ProducerRegistration, ...] = (
+    ProducerRegistration(
+        property="correction_distance", target="output", technique="deterministic",
+        evaluation_basis=PaaEvaluationBasis(kind="reference_label", ref="pinned_reply_correction"),
+        epistemic_status="proxy", version=NORMALIZED_EDIT_DISTANCE_GRADER_VERSION,
+        authority="advisory", status="implemented",
+    ),
     ProducerRegistration(
         property="content_invariants", target="output", technique="deterministic",
         evaluation_basis=PaaEvaluationBasis(kind="invariant", ref="content_invariants"),

@@ -57,7 +57,7 @@ git status — never confuse them:
   own, it can contain real production content, and it must be backed up
   alongside the database rather than committed.
 - **`evidence/paa/reference/`** — a generated, checked-in,
-  **publication-safe** snapshot: byte-for-byte copies of the two PAA
+  **publication-safe** snapshot: byte-for-byte copies of the PAA
   task declarations and the grading schema, a redacted evidence bundle,
   a redacted correction-and-prompt document (one `reply_draft_revisions`
   correction and one per-keyword literal prompt override), a redacted
@@ -80,6 +80,91 @@ git status — never confuse them:
   that no seeded source text, author identity, platform identity, URL,
   prompt text, correction text, reviewer name, decision reason, or
   free-form grade detail survives redaction into the checked-in tree.
+
+## Shadow reply-draft measurement and operating records
+
+Scout uses `paa-runtime==0.4.0` and validates against
+`paa-contracts==0.2.0`. `reply_draft.v1.yaml` declares a separate shadow
+task: recorded reply input → replay draft. It does not govern surfaced
+replies, change `inbound_reply_surfacing`, or grant publishing authority.
+Its initial position is `manual`. The contract-required transition edges
+are unreachable from that position; activating this task requires a new
+declaration. `correction_distance` is an advisory proxy measurement, not
+an acceptance or promotion gate.
+
+Export terminal attempts from a newly captured batch or sweep:
+
+```bash
+uv run scout feedback report --experiment-run-id 12 13 \
+  --format paa-json --pricing-catalog contracts/replay-pricing.v1.json \
+  --out /tmp/scout-replay-paa.json
+```
+
+This reads stored attempts and Jig traces; it makes no model calls and
+does not write operating records to the autonomy event store. The output
+is an internal, versioned `scout-paa-replay/1` interchange bundle:
+
+- `evidence_records`: `paa-evidence-record/0.2.0-draft`, one `scored`
+  verdict per measured output. The payload follows
+  `contracts/reply-draft-measurement.v1.schema.json`; distance is not
+  a fabricated pass/fail judgment.
+- `operating_records`: `paa-operating-record/0.1.0-draft`, one record per
+  attempt, including failed and superseded attempts. Multiple verdicts
+  must not multiply the cost. Consumers can append these to the separate
+  `paa_runtime.SqliteOperatingRecordStore`, never `autonomy_events`.
+- `sources`: content-addressed attempt provenance, including retry links,
+  baseline segment, input hash, worker manifest, trace and per-call usage,
+  recorded costs, and the complete supplied pricing catalog. Worker
+  `configuration_ref` hashes the nested configuration; `price.basis`
+  identifies the nested catalog. Input and output references require the
+  original Scout input/trace stores, not a public URL.
+- `variants`: separate attempt, failure, priced/unpriced, skipped, and
+  missing-case coverage per exported variant. The shared population and
+  authorized plan hash remain explicit. Exporting a subset of a sweep
+  makes no claim about variants not supplied.
+
+Prices apply the supplied catalog to each candidate `LLM_CALL`'s own
+model and token counts, never an agent aggregate plus its children.
+They are **estimates, not invoices**, and may use a different catalog
+from execution authorization. Raw Jig/Scout recorded cost is preserved
+as unverified provenance: Jig can stamp approximate prices itself.
+Missing usage, absent traces, or unpriced calls make the corresponding
+attempt's price unavailable (`null`), not zero. No partial estimate is
+presented as a complete attempt price. Cached-token discounts, human
+review, infrastructure, and other unrecorded costs are not estimated here.
+Neither Phase 1 costs nor Phase 1 passing cases enter this replay export.
+
+Re-exporting with another catalog creates a different content-addressed
+accounting snapshot, **not another charge**. Select one snapshot per
+`experiment_id` and pricing basis when aggregating; do not add alternative
+repricings of the same attempt. Keep configurations and observation
+populations separate. The exporter intentionally computes no cross-variant
+spend total, acceptance count, effective cost, winner, or operating decision.
+
+New batch plans bind the worker manifest (model, prompt/schema hashes,
+Jig revision, call/retry limits, empty tool registry, disabled memory and
+feedback injection, grader and assembler versions). Changing these settings
+invalidates the plan hash and refuses retries before new spend. Re-preview
+older plans after upgrading. Historical attempts lacking the captured
+manifest remain available through the existing JSON/Markdown reports;
+PAA export refuses to backfill their configuration from current defaults.
+
+This bundle is **measurement plumbing, not the published economic-fitness
+experiment**. Before paid execution for that experiment, separately declare
+the Phase 1 qualification rule and corpus, replay acceptance rule and
+population, and cost coverage. A distance delta does not establish absolute
+acceptance. Record the held-constant full-pipeline configuration and Phase 1
+provenance separately: this replay worker manifest identifies only the
+draft task. Effective cost must use accepted outcomes and spend from that
+same replay population/configuration, remain undefined at zero acceptance,
+and never override failed behavioral qualification. The operator records
+the eventual operating decision; authority remains a separate decision.
+
+Raw prompts, corrections, and trace text are not projected, but IDs, model
+names, skip diagnostics, and catalog source URLs remain internal provenance.
+Do not publish this export directly without a publication-safety review.
+The checked-in reference tree still contains hermetic illustrative data,
+not results of a live experiment.
 
 ## Actor resolution
 

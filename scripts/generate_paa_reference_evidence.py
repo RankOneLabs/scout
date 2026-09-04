@@ -1,8 +1,8 @@
 """Generate or check evidence/paa/reference/.
 
 evidence/paa/reference/ is Scout's checked-in, publication-safe PAA
-reference evidence: exact copies of the two checked-in PAA task
-declarations (inbound_reply_surfacing and canonical_promotion) and the
+reference evidence: exact copies of the checked-in PAA task
+declarations (inbound_reply_surfacing, canonical_promotion, reply_draft) and the
 grading schema, a redacted evidence bundle, a redacted correction-and-
 prompt document, a redacted offline-replay experiment summary, and a
 manifest tying every artifact back to the sources and schema/distribution
