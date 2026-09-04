@@ -1,12 +1,15 @@
 """Generate or check evidence/paa/reference/.
 
 evidence/paa/reference/ is Scout's checked-in, publication-safe PAA
-reference evidence: exact copies of the three PAA task declarations and
-the grading schema, a redacted evidence bundle, a redacted outbound
-promotion-report snapshot, and a manifest tying every artifact back to
-the sources and schema/distribution versions that produced it. See
-paa_reference_evidence.py for the generator itself and
-docs/runbooks/paa-operations.md for the operator-facing writeup.
+reference evidence: exact copies of the two checked-in PAA task
+declarations (inbound_reply_surfacing and canonical_promotion) and the
+grading schema, a redacted evidence bundle, a redacted correction-and-
+prompt document, a redacted offline-replay experiment summary, and a
+manifest tying every artifact back to the sources and schema/distribution
+versions that produced it. It is reference evidence rendered from fixture
+data, not production output. See scout.paa.reference_evidence for the
+generator itself and docs/runbooks/paa-operations.md for the
+operator-facing writeup.
 
 Usage:
     uv run python scripts/generate_paa_reference_evidence.py --write

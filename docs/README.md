@@ -5,6 +5,8 @@ The documents here cover design, configuration, and operator procedures.
 
 ## Guides
 
+- [PAA reviewer walkthrough](paa-reviewer-walkthrough.md) — a three-minute,
+  no-install tour of Scout's PAA declarations, evidence, and control plane
 - [Configuration](configuration.md) — environment variables, model routing,
   request volume, and cost considerations
 - [Deployment security](deployment-security.md) — sidecar and web boundaries,
