@@ -361,10 +361,16 @@ def render_captures() -> dict[str, str]:
 
 
 def _managed_files(target_dir: Path) -> dict[str, str]:
+    """The managed captures on disk, read as exact UTF-8 bytes.
+
+    Byte reads and writes on purpose: ``Path.read_text`` would fold CRLF
+    into LF and use the locale encoding, which is exactly the drift the
+    check exists to catch.
+    """
     if not target_dir.is_dir():
         return {}
     return {
-        path.name: path.read_text()
+        path.name: path.read_bytes().decode("utf-8")
         for path in sorted(target_dir.iterdir())
         if path.is_file() and path.suffix == CAPTURE_SUFFIX
     }
@@ -377,7 +383,7 @@ def write_captures(target_dir: Path = CAPTURES_DIR) -> list[str]:
     for stale in set(_managed_files(target_dir)) - set(rendered):
         (target_dir / stale).unlink()
     for filename, text in rendered.items():
-        (target_dir / filename).write_text(text)
+        (target_dir / filename).write_bytes(text.encode("utf-8"))
     return sorted(rendered)
 
 

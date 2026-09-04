@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import re
 import tempfile
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from scout.paa.walkthrough_captures import (
     check_captures,
     render_captures,
 )
+
+WALKTHROUGH = CAPTURES_DIR.parents[1] / "paa-reviewer-walkthrough.md"
+CAPTURE_LINK = re.compile(r"\]\(assets/paa-walkthrough/([^)#]+\.txt)\)")
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +58,11 @@ def test_scenario_visits_every_position_and_outcome(rendered: dict[str, str]) ->
     assert '"current_position": "hitl"' in joined
 
 
+def test_walkthrough_links_exactly_the_rendered_captures(rendered: dict[str, str]) -> None:
+    linked = set(CAPTURE_LINK.findall(WALKTHROUGH.read_text()))
+    assert linked == set(rendered)
+
+
 def test_checked_in_captures_are_current() -> None:
     assert check_captures(CAPTURES_DIR) == []
 
@@ -62,7 +71,7 @@ def test_check_detects_drift(tmp_path: Path, rendered: dict[str, str]) -> None:
     shadow = tmp_path / "captures"
     shadow.mkdir()
     for name, text in rendered.items():
-        (shadow / name).write_text(text)
+        (shadow / name).write_bytes(text.encode("utf-8"))
     first = sorted(rendered)[0]
-    (shadow / first).write_text("Label: Reference execution\nedited\n")
+    (shadow / first).write_bytes(b"Label: Reference execution\nedited\n")
     assert check_captures(shadow) == [f"stale capture: {first}"]
