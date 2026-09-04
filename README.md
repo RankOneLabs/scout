@@ -9,7 +9,16 @@ Every task that can affect the outside world is declared under the
 [Progressive Autonomy Architecture](https://www.paa.dev) (PAA). Scout's
 checked-in tasks begin with human approval and can advance only through an
 evidence-backed promotion reviewed by an operator. No Scout task is deployed
-at `autonomous` today.
+at `autonomous` today. The PAA site describes where Scout fits on its
+[implementations page](https://www.paa.dev/build/implementations#scout).
+
+## Review PAA in Scout
+
+Want the architecture and evidence without installing the application? Follow
+[the three-minute PAA evidence tour](docs/paa-reviewer-walkthrough.md).
+
+It covers Scout's task declarations, evaluator evidence, event-sourced autonomy
+state, promotion and demotion mechanics, and the limits of the current deployment.
 
 ## Quick start
 
@@ -106,6 +115,26 @@ Offline replay can compare candidate models and prompts without changing live
 state. See [Grading and feedback](docs/grading-and-feedback.md) and
 [Evaluations](docs/evaluations.md).
 
+## Deployment status
+
+Scout integrates PAA contracts and the event-sourced autonomy control plane, but
+neither checked-in PAA task is wired to an active runtime enforcement point today.
+
+| Task | Initial position | Deployment | Current effect |
+| --- | --- | --- | --- |
+| `inbound_reply_surfacing` | `hitl` | `shadow` | Evaluated and recorded; does not gate runtime behavior |
+| `canonical_promotion` | `hitl` | `disabled` | Declared for future integration; no runtime effect |
+
+Position changes exercised through the reference path demonstrate the control-plane
+mechanics. They are not evidence that Scout has earned or operated at HOTL or
+autonomous status in production. Production-derived grading and feedback evidence
+stays in the deployment that produced it and is exported only in redacted,
+publication-safe form; the evidence checked into this repository is reference
+evidence rendered from fixture data.
+
+Position is deployment-local and reconstructed from its event stream, so this
+README publishes no "current position" value.
+
 ## Project structure
 
 ```text
@@ -131,6 +160,7 @@ state. See [Grading and feedback](docs/grading-and-feedback.md) and
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [PAA reviewer walkthrough](docs/paa-reviewer-walkthrough.md)
 - [Configuration](docs/configuration.md)
 - [Deployment security](docs/deployment-security.md)
 - [Evaluations](docs/evaluations.md)

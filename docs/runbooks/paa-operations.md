@@ -59,21 +59,23 @@ git status — never confuse them:
 - **`evidence/paa/reference/`** — a generated, checked-in,
   **publication-safe** snapshot: byte-for-byte copies of the two PAA
   task declarations and the grading schema, a redacted evidence bundle,
-  a redacted correction-and-prompt document (a real `reply_draft_revisions`
-  correction and a real per-keyword literal prompt override), a redacted
+  a redacted correction-and-prompt document (one `reply_draft_revisions`
+  correction and one per-keyword literal prompt override), a redacted
   offline-replay experiment summary (`replay_reporting.build_batch_report`
-  for one hermetic batch — real segment/model/prompt hashes, scores,
-  coverage, uncertainty, and costs, with only the internal case identity
-  pseudonymized), and a manifest tying every artifact back to the exact
-  sources and schema/distribution versions that produced it. It exists so
-  a reviewer (or an external auditor) can see the shape of real PAA
+  for one hermetic batch — segment/model/prompt hashes, scores, coverage,
+  uncertainty, and costs, with the internal case identity pseudonymized),
+  and a manifest tying every artifact back to the exact sources and
+  schema/distribution versions that produced it. Every artifact is
+  rendered from a seeded fixture database through the same code paths a
+  real audit uses; none of it is production output. It exists so a
+  reviewer (or an external auditor) can see the shape of real PAA
   evidence without ever touching a real production database. Regenerate
-  it with `uv run python scripts/generate_paa/reference_evidence.py
+  it with `uv run python scripts/generate_paa_reference_evidence.py
   --write` (pins the real current git commit). CI runs the same command
   with `--check` and fails if the evidence has drifted from
   `contracts/paa/*.yaml`, `web/grading_schema.json`, or the generator
   itself, without ever writing to the checkout. See
-  `paa/reference_evidence.py` for the generator and
+  `scout.paa.reference_evidence` for the generator and
   `tests/test_paa_reference_evidence.py` for the sentinel-based proof
   that no seeded source text, author identity, platform identity, URL,
   prompt text, correction text, reviewer name, decision reason, or
@@ -98,7 +100,6 @@ relying on the login-name fallback.
 ```bash
 # 1. Propose. Zero effect on the current position until approved.
 scout paa propose inbound_reply_surfacing \
-  --scope <scope> \
   --to hotl \
   --evidence evidence.json \
   --actor <operator> \
@@ -157,7 +158,6 @@ definition already the conservative, safer direction:
 
 ```bash
 scout paa demote inbound_reply_surfacing \
-  --scope <scope> \
   --reason "elevated error rate, see incident #123" \
   --actor oncall \
   --source-row posts:481 \
@@ -177,14 +177,18 @@ later audit, not a live query).
 ## Exact scope, no wildcards
 
 Scope is compared only by exact string equality — there is no parent,
-child, account, or wildcard matching. Two different scope strings under
-the same task are fully independent; approving a motion for one scope
-never grants authority for another. Every checked-in task accepts any
-non-empty scope string as an opaque identifier.
+child, account, or wildcard matching. A declaration that lists `scopes`
+accepts exactly those strings, and two different scopes under the same
+task are fully independent; approving a motion for one scope never grants
+authority for another.
+
+Neither checked-in declaration lists `scopes`, so both tasks resolve under
+the null scope: omit `--scope`, and expect `scout paa` to reject any scope
+you pass until a declaration declares one.
 
 ```bash
-scout paa show inbound_reply_surfacing --scope <scope>
-scout paa show canonical_promotion --scope <scope>
+scout paa show inbound_reply_surfacing
+scout paa show canonical_promotion
 ```
 
 ## Declaration-version reset

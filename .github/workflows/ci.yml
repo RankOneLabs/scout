@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
     branches: [main, "epic/**"]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   python:
