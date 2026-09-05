@@ -12,8 +12,9 @@ references to retained bytes; a producer-specific replay test proves derivation.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal, NewType, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
@@ -58,6 +59,24 @@ class ArtifactLineage(BaseModel):
     inputs: Annotated[tuple[DigestReference, ...], Field(min_length=1)]
     process: ArtifactProcess
     outputs: Annotated[tuple[DigestReference, ...], Field(min_length=1)]
+
+
+class LineageProcessDocumentV1(TypedDict):
+    """Frozen wire projection of the original ArtifactProcess fields."""
+
+    id: ProcessId
+    version: str
+    config_digest: ArtifactDigest
+    environment: EnvironmentIdentity
+
+
+class LineageDocumentV1(TypedDict):
+    """Original untagged lineage document; field order is part of encoding v1."""
+
+    kind: TransformKind
+    inputs: tuple[ArtifactDigest, ...]
+    process: LineageProcessDocumentV1
+    outputs: tuple[ArtifactDigest, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,9 +171,36 @@ def digest_artifact(content: bytes) -> ArtifactDigest:
     return ArtifactDigest(hashlib.sha256(content).hexdigest())
 
 
+def project_lineage_document_v1(lineage: ArtifactLineage) -> LineageDocumentV1:
+    """Pin wire fields and their order independently of Pydantic model rendering."""
+    return LineageDocumentV1(
+        kind=lineage.kind,
+        inputs=lineage.inputs,
+        process=LineageProcessDocumentV1(
+            id=lineage.process.id,
+            version=lineage.process.version,
+            config_digest=lineage.process.config_digest,
+            environment=lineage.process.environment,
+        ),
+        outputs=lineage.outputs,
+    )
+
+
 def encode_lineage(lineage: ArtifactLineage) -> bytes:
-    """Version-local deterministic encoding; retains producer input/output order."""
-    return lineage.model_dump_json().encode("utf-8")
+    """Encode untagged v1 JSON, byte-compatible with already retained lineage.
+
+    Fixed object-field order (not sorted keys), ordered arrays, compact JSON,
+    unescaped Unicode and UTF-8 are the v1 contract. No model defaults or JSON
+    renderer settings participate. A different encoding needs a new version,
+    never a rewrite of v1 bytes or their digest identities.
+    """
+    return json.dumps(
+        project_lineage_document_v1(lineage),
+        sort_keys=False,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def decode_lineage(content: bytes) -> Result[ArtifactLineage, ArtifactError]:

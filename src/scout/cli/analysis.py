@@ -161,6 +161,12 @@ def _write_private_export(path: Path, content: bytes) -> None:
         os.link(temporary, path)
     finally:
         os.unlink(temporary)
+    # Persist publication (and temporary-name removal), not only file bytes.
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def _receipt(operation: str, bundle: ArtifactBundle) -> AnalysisReceipt:
@@ -244,7 +250,12 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
             )
         if args.analysis_command == "export":
             # Never overwrite an existing export (including the source DB).
-            _write_private_export(args.out, exported.value.model_dump_json().encode())
+            try:
+                _write_private_export(args.out, exported.value.model_dump_json().encode())
+            except FileExistsError:
+                return Err(
+                    ArtifactError("analysis", None, "Refusing to replace an existing export path")
+                )
             return Ok(_receipt("export", exported.value))
         return Err(ArtifactError("analysis", None, "Unknown analysis command"))
     except (sqlite3.Error, OSError, ValueError):

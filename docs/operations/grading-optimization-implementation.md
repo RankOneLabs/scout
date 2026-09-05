@@ -1,12 +1,15 @@
 # Scout grading optimization: implementation record
 
-Status: PR 1 implemented locally; validation/review before merge into the epic.
+Status: workflow step 1 is implemented in GitHub PR [#5](https://github.com/RankOneLabs/scout/pull/5):
+artifacts, schema 38, persistence, export/import, and operator CLI. Review remains
+required before merging into the epic.
 
 ## Branch and scope
 
-`epic/grading-optimization` starts at main revision `2098506`. PRs 1–4 target
-that epic, not main. After PR 4's end-to-end acceptance passes review, open the
-epic-to-main PR. PR 5 is Scout operator documentation and useful study navigation.
+`epic/grading-optimization` starts at main revision `2098506`. The PRs for workflow
+steps 1–4 target that epic, not main. After step 4's end-to-end acceptance passes
+review, open the epic-to-main PR. Step 5 is Scout operator documentation and useful
+study navigation. Step numbers refer to the plan sequence, not GitHub PR numbers.
 Tests belong to their feature PRs, not separate smoke-test PRs.
 
 No PAA site, documentation, schema, or generalization work is in this iteration.
@@ -14,7 +17,7 @@ No intermediate production rollout is implied by merging a feature into the epic
 
 The existing `fix/experiment-token-limits` branch at `c66a01c` remains separate.
 Reconcile its three unmerged fixes before the experiment work depends on them;
-PR 1's artifact model does not depend on those execution fixes.
+Step 1's artifact model does not depend on those execution fixes.
 
 ## Named model and actual sources
 
@@ -22,6 +25,7 @@ PR 1's artifact model does not depend on those execution fixes.
 | --- | --- |
 | `ArtifactLineage` | Approved workflow's four-part transform: kind, input digests, process, output digests |
 | `ArtifactProcess` | Producer-supplied ID/version, retained configuration digest, resolvable environment identity |
+| `LineageDocumentV1` / `LineageProcessDocumentV1` | Frozen wire projections of the original lineage/process fields; explicit v1 serialization independent of Pydantic rendering |
 | `RelevanceTargetSource` | `GradePopulationRow`: grade ID, resolved evaluation ID, evaluation relevant decision, human relevance judgment |
 | `RecordedEvaluation` | `evaluations` columns excluding deprecated `abstain_reason`; retains integer `relevant` values for selection-time validation, with boolean compatibility for existing v1 artifacts |
 | `HumanRelevanceTarget` | Tested judgment mapping: correct keeps the original decision; consistent false positive/negative invert it |
@@ -31,6 +35,16 @@ PR 1's artifact model does not depend on those execution fixes.
 digest transform. Structural validation is not proof that referenced content
 exists or that a producer is reproducible. Persistence must verify reference
 resolution; each producer needs its own replay test.
+
+The original untagged lineage JSON is encoding v1. It uses fixed field order
+(`kind`, `inputs`, `process`, `outputs`; process: `id`, `version`, `config_digest`,
+`environment`), ordered arrays, compact separators, unescaped Unicode, and UTF-8.
+The explicit encoder preserves the original bytes and digests; it does not sort
+keys, migrate stored rows, or silently re-address existing lineage. Golden-byte
+and legacy-store export/import tests pin this representation. A future encoding
+must introduce a distinct version and retain v1 reads. Producer-specific snapshot
+and inventory output serialization remains tied to its pinned producer version
+and environment; this encoding contract is specifically for lineage identity.
 
 `src/scout/grading/relevance_targets.py` defines only target derivation. It does
 not replace shared grade validation or declare a row eligible for training.
@@ -123,15 +137,18 @@ and inventory outputs. It separately reports opaque kinds without a replay
 adapter; structural validity alone is not reproducibility. No graph engine or
 general graph query surface is provided.
 
-Artifact exports use atomic, no-overwrite publication with mode 0600. They carry
-private source data and are not publication artifacts. Import verifies closure
+Artifact exports use atomic, no-overwrite publication with mode 0600, syncing
+both file contents and the parent directory on supported POSIX filesystems.
+An existing destination gets a specific refusal error. A directory-sync failure
+reports an IO error; the complete published file may remain and is not deleted.
+Exports carry private source data and are not publication artifacts. Import verifies closure
 and supported producer outputs before writes, and works without the original
 posts/grades/dossier checkout. Restore tests cover both this bundle boundary and
 SQLite database backup, including reading a snapshot after a source regrade.
 
 ## Remaining sequence
 
-PR 2 supplies partitions and selectors; PR 3 supplies review queues/actions and
-time measurement; PR 4 supplies model-specific relevance comparison and the
+Step 2 supplies partitions and selectors; step 3 supplies review queues/actions and
+time measurement; step 4 supplies model-specific relevance comparison and the
 end-to-end acceptance gate. No live experiment inventory, grading session,
 paid run, or deployment was performed while implementing this PR.

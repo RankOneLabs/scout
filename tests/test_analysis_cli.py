@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import stat
 from pathlib import Path
@@ -8,8 +9,26 @@ from pathlib import Path
 import pytest
 
 from scout.cli.analysis import add_analysis_parser, project_study_index, run_analysis
-from scout.grading.artifacts import ProducerEnvironment, digest_artifact
-from scout.grading.studies import InventorySelection, inventory_evidence, verify_inventory_replay
+from scout.grading.artifacts import (
+    ArtifactBundle,
+    ArtifactError,
+    ArtifactLineage,
+    ArtifactProcess,
+    EnvironmentIdentity,
+    ProcessId,
+    ProducerEnvironment,
+    RetainedArtifact,
+    TransformKind,
+    digest_artifact,
+    validate_bundle,
+)
+from scout.grading.studies import (
+    EvidenceObservations,
+    InventorySelection,
+    assemble_study_evidence,
+    inventory_evidence,
+    verify_inventory_replay,
+)
 from scout.result import Err, Ok
 from scout.storage.db import read_only_connection
 from scout.storage.state import StateManager
@@ -78,6 +97,119 @@ def test_export_is_private_atomic_and_cannot_overwrite_source(tmp_path: Path) ->
     )
     assert path.read_bytes() == before
     assert not list(tmp_path.glob(".scout-export-*"))
+
+
+@pytest.mark.parametrize("destination_kind", ["existing_export", "source_database"])
+def test_export_overwrite_refusal_is_distinct_and_keeps_existing_bytes(
+    tmp_path: Path, destination_kind: str
+) -> None:
+    source = tmp_path / "source.db"
+    with StateManager(str(source)):
+        pass
+    destination = source if destination_kind == "source_database" else tmp_path / "bundle.json"
+    if destination_kind == "existing_export":
+        destination.write_bytes(b"previous export")
+    before = destination.read_bytes()
+    result = run_analysis(arguments("export", "--db-path", str(source), "--out", str(destination)))
+    assert result == Err(
+        ArtifactError("analysis", None, "Refusing to replace an existing export path")
+    )
+    assert destination.read_bytes() == before
+    assert not list(tmp_path.glob(".scout-export-*"))
+
+
+def test_export_invalid_parent_keeps_generic_io_error(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    with StateManager(str(source)):
+        pass
+    result = run_analysis(
+        arguments("export", "--db-path", str(source), "--out", str(tmp_path / "absent" / "export"))
+    )
+    assert result == Err(
+        ArtifactError("analysis", None, "Analysis IO failed; verify paths and schema")
+    )
+
+
+@pytest.mark.parametrize("fail_directory_sync", [False, True])
+def test_export_syncs_published_directory_and_reports_sync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_directory_sync: bool
+) -> None:
+    source = tmp_path / "source.db"
+    with StateManager(str(source)):
+        pass
+    destination = tmp_path / "bundle.json"
+    synced: list[str] = []
+    sync_file = os.fsync
+
+    def sync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            assert destination.is_file()
+            assert not list(tmp_path.glob(".scout-export-*"))
+            synced.append("directory")
+            if fail_directory_sync:
+                raise OSError("synthetic directory sync failure")
+        else:
+            assert not destination.exists()
+            synced.append("file")
+        sync_file(descriptor)
+
+    monkeypatch.setattr("scout.cli.analysis.os.fsync", sync)
+    result = run_analysis(arguments("export", "--db-path", str(source), "--out", str(destination)))
+    assert synced == ["file", "directory"]
+    if fail_directory_sync:
+        assert result == Err(
+            ArtifactError("analysis", None, "Analysis IO failed; verify paths and schema")
+        )
+    else:
+        assert isinstance(result, Ok)
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert ArtifactBundle.model_validate_json(destination.read_bytes()).artifacts == ()
+
+
+@pytest.mark.parametrize("has_unreferenced_input", [False, True])
+def test_import_rejects_inventory_without_evidence_file_inputs(
+    tmp_path: Path, has_unreferenced_input: bool
+) -> None:
+    selection = InventorySelection(study="empty inventory", files=(), experiment_run_ids=())
+    observed = EvidenceObservations(files=(), runs=())
+    observations = observed.model_dump_json().encode()
+    config = selection.model_dump_json().encode()
+    environment = b"synthetic environment"
+    output = assemble_study_evidence(observed, selection).model_dump_json().encode()
+    inputs = (
+        (digest_artifact(environment), digest_artifact(observations))
+        if has_unreferenced_input
+        else (digest_artifact(observations),)
+    )
+    bundle = ArtifactBundle(
+        artifacts=tuple(
+            RetainedArtifact(digest=digest_artifact(content), content=content)
+            for content in (observations, config, environment, output)
+        ),
+        lineages=(
+            ArtifactLineage(
+                kind=TransformKind("scout.evidence.inventory"),
+                inputs=inputs,
+                process=ArtifactProcess(
+                    id=ProcessId("scout.evidence.inventory"),
+                    version="1",
+                    config_digest=digest_artifact(config),
+                    environment=EnvironmentIdentity(digest_artifact(environment)),
+                ),
+                outputs=(digest_artifact(output),),
+            ),
+        ),
+    )
+    assert isinstance(validate_bundle(bundle), Ok)
+    assert isinstance(verify_inventory_replay(bundle), Err)
+    bundle_path = tmp_path / "inventory.json"
+    bundle_path.write_text(bundle.model_dump_json())
+    destination = tmp_path / "must-not-create.db"
+    result = run_analysis(
+        arguments("import", "--db-path", str(destination), "--bundle", str(bundle_path))
+    )
+    assert isinstance(result, Err)
+    assert not destination.exists()
 
 
 def test_import_and_verify_retain_source_only_observations(tmp_path: Path) -> None:

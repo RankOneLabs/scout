@@ -178,6 +178,7 @@ def verify_inventory_replay(bundle: ArtifactBundle) -> Result[int, ArtifactError
         if (
             lineage.process.id != "scout.evidence.inventory"
             or lineage.process.version != "1"
+            or len(lineage.inputs) < 2
             or len(lineage.outputs) != 1
         ):
             return Err(
@@ -190,7 +191,9 @@ def verify_inventory_replay(bundle: ArtifactBundle) -> Result[int, ArtifactError
             observed = EvidenceObservations.model_validate_json(contents[lineage.inputs[-1]])
         except ValueError:
             return Err(ArtifactError("verify_inventory_replay", None, "Invalid inventory inputs"))
-        if any(file.digest not in lineage.inputs[:-1] for file in observed.files):
+        if not observed.files or any(
+            file.digest not in lineage.inputs[:-1] for file in observed.files
+        ):
             return Err(
                 ArtifactError("verify_inventory_replay", None, "Missing evidence file reference")
             )

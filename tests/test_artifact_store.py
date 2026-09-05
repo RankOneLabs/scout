@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from scout.cli.analysis import project_study_index
 from scout.grading.artifacts import (
     ArtifactBundle,
     ArtifactLineage,
@@ -53,6 +54,49 @@ def test_store_round_trip_is_idempotent_and_self_contained(bundle: ArtifactBundl
         assert restored.artifacts.import_bundle(exported.value) == Ok(None)
         assert restored.artifacts.import_bundle(exported.value) == Ok(None)
         assert restored.artifacts.export_bundle() == exported
+
+
+def test_legacy_lineage_identity_survives_export_import_and_index(bundle: ArtifactBundle) -> None:
+    lineage = bundle.lineages[0]
+    # Recreate a retained row written by the original untagged v1 encoder,
+    # without using the new writer to manufacture the compatibility fixture.
+    legacy = (
+        '{"kind":"test.transform","inputs":["'
+        + lineage.inputs[0]
+        + '"],"process":{"id":"test.producer","version":"1","config_digest":"'
+        + lineage.process.config_digest
+        + '","environment":"'
+        + lineage.process.environment
+        + '"},"outputs":["'
+        + lineage.outputs[0]
+        + '"]}'
+    ).encode("utf-8")
+    legacy_digest = digest_artifact(legacy)
+    with StateManager(":memory:") as source, StateManager(":memory:") as restored:
+        with source.db.transaction():
+            for artifact in (
+                *bundle.artifacts,
+                RetainedArtifact(digest=legacy_digest, content=legacy),
+            ):
+                source.conn.execute(
+                    "INSERT INTO analysis_artifacts(digest, content) VALUES (?, ?)",
+                    (artifact.digest, artifact.content),
+                )
+            source.conn.execute("INSERT INTO analysis_lineage(digest) VALUES (?)", (legacy_digest,))
+        exported = source.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        parsed = decode_bundle(exported.value.model_dump_json().encode())
+        assert isinstance(parsed, Ok)
+        assert restored.artifacts.import_bundle(parsed.value) == Ok(None)
+        assert restored.artifacts.import_bundle(parsed.value) == Ok(None)
+        assert restored.artifacts.export_bundle() == exported
+        assert restored.artifacts.get(legacy_digest) == Ok(legacy)
+        assert [row[0] for row in restored.conn.execute("SELECT digest FROM analysis_lineage")] == [
+            legacy_digest
+        ]
+        index = project_study_index(parsed.value)
+        assert isinstance(index, Ok)
+        assert index.value.entries[0].lineage_digest == legacy_digest
 
 
 @pytest.mark.parametrize("missing", [0, 1, 2, 3])

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from scout.grading.artifacts import (
+    ArtifactDigest,
     ArtifactLineage,
     ArtifactProcess,
     EnvironmentIdentity,
@@ -52,6 +53,47 @@ def test_equivalent_lineage_has_stable_encoded_digest(lineage: ArtifactLineage) 
     assert digest_artifact(encode_lineage(decoded.value)) == digest_artifact(
         encode_lineage(lineage)
     )
+
+
+def test_v1_encoding_pins_legacy_bytes_and_preserves_array_order() -> None:
+    # Literal legacy JSON: never derive this expected value with the encoder
+    # under test or a dependency's current JSON renderer.
+    legacy = (
+        '{"kind":"test.é/\\"\\\\\\n\\u0000","inputs":["'
+        + "b" * 64
+        + '","'
+        + "a" * 64
+        + '"],"process":{"id":"test.producer","version":"1","config_digest":"'
+        + "c" * 64
+        + '","environment":"'
+        + "d" * 64
+        + '"},"outputs":["'
+        + "f" * 64
+        + '","'
+        + "e" * 64
+        + '"]}'
+    ).encode("utf-8")
+    lineage = ArtifactLineage(
+        kind=TransformKind('test.é/"\\\n\x00'),
+        inputs=(ArtifactDigest("b" * 64), ArtifactDigest("a" * 64)),
+        process=ArtifactProcess(
+            id=ProcessId("test.producer"),
+            version="1",
+            config_digest=ArtifactDigest("c" * 64),
+            environment=EnvironmentIdentity("d" * 64),
+        ),
+        outputs=(ArtifactDigest("f" * 64), ArtifactDigest("e" * 64)),
+    )
+    assert encode_lineage(lineage) == legacy
+    assert decode_lineage(legacy) == Ok(lineage)
+
+
+def test_encoding_does_not_depend_on_model_json_rendering(
+    lineage: ArtifactLineage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = encode_lineage(lineage)
+    monkeypatch.setattr(ArtifactLineage, "model_dump_json", lambda self: "changed rendering")
+    assert encode_lineage(lineage) == expected
 
 
 @pytest.mark.parametrize("part", ["kind", "inputs", "process", "outputs"])
