@@ -141,6 +141,7 @@ LLM_MODEL: str = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
 RELEVANCE_MODEL: str = os.getenv("RELEVANCE_MODEL") or LLM_MODEL
 REPLY_DRAFT_MODEL: str = os.getenv("REPLY_DRAFT_MODEL") or LLM_MODEL
 CRITIC_MODEL: str = os.getenv("CRITIC_MODEL") or LLM_MODEL
+SCOUT_MODEL_IDENTITY_CONFIG: str | None = os.getenv("SCOUT_MODEL_IDENTITY_CONFIG")
 DB_PATH: str = os.getenv("DB_PATH", "scout.storage.db")
 TRACE_DB_PATH: str = os.getenv("TRACE_DB_PATH", "scout_traces.db")
 FEEDBACK_DB_PATH: str = os.getenv("FEEDBACK_DB_PATH", "scout_feedback.db")

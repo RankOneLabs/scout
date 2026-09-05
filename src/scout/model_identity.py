@@ -12,12 +12,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, NewType, TypedDict
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from scout.result import Err, Ok, Result
 
 ModelId = NewType("ModelId", str)
-type ModelRoute = Literal["anthropic", "openai", "google", "openrouter"]
-type ModelFamily = Literal["claude", "gpt", "o-series", "gemini", "kimi", "qwen"]
-type ModelDeveloper = Literal["anthropic", "openai", "google", "moonshotai", "qwen"]
+type ModelRoute = Literal["anthropic", "openai", "google", "openrouter", "dispatch", "ollama"]
+ModelFamily = NewType("ModelFamily", str)
+ModelDeveloper = NewType("ModelDeveloper", str)
 type PhaseRole = Literal["relevance", "reply_draft", "critic"]
 
 
@@ -26,6 +28,7 @@ class ModelIdentityJSON(TypedDict):
     route: ModelRoute
     developer: ModelDeveloper
     family: ModelFamily
+    source: Literal["builtin", "declared"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,11 +39,13 @@ class ModelIdentity:
     route: ModelRoute
     developer: ModelDeveloper
     family: ModelFamily
+    source: Literal["builtin", "declared"] = "builtin"
 
     def to_json(self) -> ModelIdentityJSON:
         return {
             "model": self.model, "route": self.route,
             "developer": self.developer, "family": self.family,
+            "source": self.source,
         }
 
 
@@ -71,22 +76,17 @@ class FamilyRule:
 # Kimi and Qwen namespaces: https://openrouter.ai/moonshotai/kimi-k2 and
 # https://openrouter.ai/qwen/qwen3-235b-a22b. No inference API is added here.
 _FAMILY_RULES = (
-    FamilyRule("anthropic", "claude", r"claude-.+", "anthropic"),
-    FamilyRule("openai", "gpt", r"(?:gpt|chatgpt)-.+", "openai"),
-    FamilyRule("openai", "o-series", r"o[134](?:-.+)?", "openai"),
-    FamilyRule("google", "gemini", r"gemini-.+", "google"),
-    FamilyRule("moonshotai", "kimi", r"kimi-.+", None),
-    FamilyRule("qwen", "qwen", r"qwen(?:[0-9].*|-.+)", None),
+    FamilyRule(ModelDeveloper("anthropic"), ModelFamily("claude"), r"claude-.+", "anthropic"),
+    FamilyRule(ModelDeveloper("openai"), ModelFamily("gpt"), r"(?:gpt|chatgpt)-.+", "openai"),
+    FamilyRule(ModelDeveloper("openai"), ModelFamily("o-series"), r"o[134](?:-.+)?", "openai"),
+    FamilyRule(ModelDeveloper("google"), ModelFamily("gemini"), r"gemini-.+", "google"),
+    FamilyRule(ModelDeveloper("moonshotai"), ModelFamily("kimi"), r"kimi-.+", None),
+    FamilyRule(ModelDeveloper("qwen"), ModelFamily("qwen"), r"qwen(?:[0-9].*|-.+)", None),
 )
 
 
-def resolve_model_identity(model: ModelId) -> Result[ModelIdentity, ModelIdentityError]:
-    """Resolve a known identifier without creating a client or changing routing.
-
-Dispatch and Ollama names can be arbitrary aliases; even a familiar-looking
-alias needs separately declared identity metadata, which is not yet supported.
-Unknown/malformed identifiers fail closed instead of inventing a family.
-    """
+def _resolve_builtin_identity(model: ModelId) -> Result[ModelIdentity, ModelIdentityError]:
+    """Resolve only built-in, namespace-checked identifiers."""
     parts = model.split("/")
     is_openrouter = len(parts) == 3 and parts[0] == "openrouter"
     if len(parts) != 1 and not is_openrouter:
@@ -115,6 +115,135 @@ Unknown/malformed identifiers fail closed instead of inventing a family.
     ))
 
 
+def resolve_model_identity(
+    model: ModelId, declared_identities: Sequence[ModelIdentity] = (),
+) -> Result[ModelIdentity, ModelIdentityError]:
+    """Resolve built-ins or validated exact local declarations; never reroute."""
+    builtin = _resolve_builtin_identity(model)
+    if isinstance(builtin, Ok):
+        return builtin
+    for identity in declared_identities:
+        if identity.model == model:
+            return Ok(identity)
+    return builtin
+
+
+class ModelDiversityPolicy(BaseModel):
+    """Deployment-local pipeline-wide preflight policy; three configured roles."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    minimum_families: int = Field(default=2, ge=1, le=3)
+
+
+DEFAULT_MODEL_DIVERSITY_POLICY = ModelDiversityPolicy()
+
+
+class DeclaredModelIdentity(BaseModel):
+    """Exact configured Jig identifier and operator-declared family metadata."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
+    developer: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]*$")
+    family: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]*$")
+
+
+class ModelIdentityConfig(BaseModel):
+    """JSON shape of SCOUT_MODEL_IDENTITY_CONFIG, stored in local .env only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    policy: ModelDiversityPolicy = Field(default_factory=ModelDiversityPolicy)
+    identities: tuple[DeclaredModelIdentity, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ModelIdentitySettings:
+    policy: ModelDiversityPolicy
+    identities: tuple[ModelIdentity, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelIdentityConfigError:
+    operation: str
+    detail: str
+
+
+def _resolve_declared_identity(
+    declaration: DeclaredModelIdentity,
+) -> Result[ModelIdentity, ModelIdentityConfigError]:
+    model = ModelId(declaration.model)
+    if any(
+        rule.family == declaration.family and rule.developer != declaration.developer
+        for rule in _FAMILY_RULES
+    ):
+        return Err(ModelIdentityConfigError(
+            "resolve_declared_identity", f"developer conflicts with known family: {model}",
+        ))
+    builtin = _resolve_builtin_identity(model)
+    if isinstance(builtin, Ok):
+        if (builtin.value.developer, builtin.value.family) != (
+            declaration.developer, declaration.family,
+        ):
+            return Err(ModelIdentityConfigError(
+                "resolve_declared_identity",
+                f"declaration conflicts with built-in identity: {model}",
+            ))
+        return builtin
+    prefix, separator, name = model.partition("/")
+    route: ModelRoute
+    if separator and name and prefix in {"dispatch", "ollama"}:
+        route = "dispatch" if prefix == "dispatch" else "ollama"
+    elif prefix == "openrouter" and len(name.split("/")) == 2 and all(name.split("/")):
+        # Existing namespaces cannot be used to relabel a known family slug.
+        namespace, slug = name.split("/")
+        if any(re.fullmatch(rule.slug_pattern, slug) for rule in _FAMILY_RULES):
+            return Err(ModelIdentityConfigError(
+                "resolve_declared_identity", f"developer/slug mismatch: {model}",
+            ))
+        if namespace != declaration.developer:
+            return Err(ModelIdentityConfigError(
+                "resolve_declared_identity", f"developer must match OpenRouter namespace: {model}",
+            ))
+        route = "openrouter"
+    else:
+        return Err(ModelIdentityConfigError(
+            "resolve_declared_identity", f"unsupported or malformed Jig model route: {model}",
+        ))
+    return Ok(ModelIdentity(
+        model, route, ModelDeveloper(declaration.developer), ModelFamily(declaration.family),
+        source="declared",
+    ))
+
+
+def parse_model_identity_config(
+    raw: str | None,
+) -> Result[ModelIdentitySettings, ModelIdentityConfigError]:
+    """Validate the local JSON boundary without logging its rejected contents."""
+    try:
+        config = (
+            ModelIdentityConfig() if raw is None else ModelIdentityConfig.model_validate_json(raw)
+        )
+    except ValidationError:
+        return Err(ModelIdentityConfigError(
+            "parse_model_identity_config",
+            "invalid SCOUT_MODEL_IDENTITY_CONFIG: expected policy.minimum_families (integer 1–3) "
+            "and identities with model, developer, family; extra fields are forbidden",
+        ))
+    identities: list[ModelIdentity] = []
+    seen: set[str] = set()
+    for declaration in config.identities:
+        if declaration.model in seen:
+            return Err(ModelIdentityConfigError(
+                "parse_model_identity_config", f"duplicate model declaration: {declaration.model}",
+            ))
+        seen.add(declaration.model)
+        match _resolve_declared_identity(declaration):
+            case Err(error):
+                return Err(error)
+            case Ok(identity):
+                identities.append(identity)
+    return Ok(ModelIdentitySettings(config.policy, tuple(identities)))
+
+
 @dataclass(frozen=True, slots=True)
 class ModelDiversityError:
     operation: str
@@ -128,12 +257,14 @@ def model_families(identities: Sequence[ModelIdentity]) -> tuple[ModelFamily, ..
 
 def check_model_diversity(
     identities: Sequence[ModelIdentity],
+    policy: ModelDiversityPolicy = DEFAULT_MODEL_DIVERSITY_POLICY,
 ) -> Result[None, ModelDiversityError]:
-    """Preserve the existing pipeline-wide two-family bar, not independence."""
+    """Apply a declared pipeline-wide diversity bar, not independence."""
     families = model_families(identities)
-    if len(families) < 2:
+    if len(families) < policy.minimum_families:
         return Err(ModelDiversityError(
             "check_model_diversity", families,
-            "configured models must span at least two distinct model families",
+            f"configured models must span at least {policy.minimum_families} "
+            "distinct model families",
         ))
     return Ok(None)

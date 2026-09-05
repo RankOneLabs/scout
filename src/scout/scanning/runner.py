@@ -74,6 +74,7 @@ from scout.model_identity import (
     PhaseModel,
     check_model_diversity,
     model_families,
+    parse_model_identity_config,
     resolve_model_identity,
 )
 from scout.platforms.bluesky import BlueskyScanner
@@ -507,6 +508,12 @@ def run_preflight(db_path: str, dossier_root: str) -> dict[str, object]:
         except RuntimeError as exc:
             errors.append(f"dossier-source revision is unavailable: {exc}")
 
+    settings_result = parse_model_identity_config(_config.SCOUT_MODEL_IDENTITY_CONFIG)
+    if isinstance(settings_result, Err):
+        errors.append(f"{settings_result.error.operation}: {settings_result.error.detail}")
+        return {"ok": False, "errors": errors, "details": details}
+    settings = settings_result.value
+    details["model_diversity_policy"] = settings.policy.model_dump()
     phase_models = (
         PhaseModel("relevance", ModelId(RELEVANCE_MODEL)),
         PhaseModel("reply_draft", ModelId(REPLY_DRAFT_MODEL)),
@@ -514,7 +521,7 @@ def run_preflight(db_path: str, dossier_root: str) -> dict[str, object]:
     )
     identities: list[ModelIdentity] = []
     for phase_model in phase_models:
-        match resolve_model_identity(phase_model.model):
+        match resolve_model_identity(phase_model.model, settings.identities):
             case Ok(identity):
                 identities.append(identity)
             case Err(error):
@@ -524,7 +531,7 @@ def run_preflight(db_path: str, dossier_root: str) -> dict[str, object]:
     details["model_families"] = list(model_families(identities))
     details["model_identities"] = [identity.to_json() for identity in identities]
     if len(identities) == len(phase_models):
-        match check_model_diversity(identities):
+        match check_model_diversity(identities, settings.policy):
             case Err(diversity_error):
                 errors.append(diversity_error.detail)
             case Ok():

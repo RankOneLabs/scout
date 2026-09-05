@@ -58,8 +58,8 @@ the prefix:
 
 ### Preflight model diversity
 
-Preflight resolves model identity separately from routing. Its existing
-pipeline-wide requirement is at least two distinct recognized model families
+Preflight resolves model identity separately from routing. Its default
+pipeline-wide requirement remains at least two distinct recognized model families
 across relevance, reply drafting, and critique. This is a diversity check, not
 proof of evaluator independence or a worker–critic-specific qualification gate.
 
@@ -78,12 +78,49 @@ or model size does not create another family. Recognition does not check API
 availability, credentials, pricing, or behavioral qualification, and does not
 change the models configured for any phase.
 
-Unknown identifiers, mismatched developer namespaces, and opaque Dispatch or
-Ollama aliases fail preflight with a diagnostic rather than count as another
-family. Alias identity metadata is not yet supported; supporting an additional
-identity requires a reviewed resolver mapping, not a made-up route prefix.
+Unknown identifiers and undeclared Dispatch or Ollama aliases fail preflight
+with a diagnostic rather than count as another family. Custom identities and
+the task's diversity requirement belong in deployment-local configuration, not
+in the shared built-in registry or the public repository.
+
+Set `SCOUT_MODEL_IDENTITY_CONFIG` in the ignored local `.env` file to a JSON
+object with this shape (example metadata, not an active model selection):
+
+```json
+{
+  "policy": {"minimum_families": 2},
+  "identities": [
+    {"model": "dispatch/reviewer", "developer": "moonshotai", "family": "kimi"},
+    {"model": "ollama/local-drafter", "developer": "qwen", "family": "qwen"}
+  ]
+}
+```
+
+Store that JSON on one line in `.env`. When the variable is unset, the policy
+defaults to two families with no custom declarations. `policy` and `identities`
+can each be omitted. `minimum_families` must be an integer from 1 to 3 for the
+three configured phases. Setting it to 1 is an explicit operator policy change;
+it still requires every configured model identity to resolve. No deployment
+policy or model selection changes merely by installing this code.
+
+Declarations match exact identifiers, without wildcard or prefix matching.
+They supply identity metadata, not routing overrides: Jig still routes using
+the original identifier. Use canonical built-in family/developer names when an
+alias serves a known family. A new developer/family can be declared locally for
+a Dispatch/Ollama alias or an unknown OpenRouter slug in its matching namespace.
+The operator is responsible for keeping alias metadata consistent with what the
+backend actually serves; preflight cannot verify that claim. Duplicate entries,
+malformed settings, unknown fields, unsupported routes, and declarations that
+contradict built-in identities fail preflight, including unused declarations.
+Developer/family labels use lowercase letters, digits, dots, underscores, or
+hyphens, starting with a letter or digit.
+
 The report retains `model_families` and adds `model_identities` containing the
-exact configured identifier, route, developer namespace, and family.
+exact configured identifier, route, developer namespace, family, and whether the
+identity is built-in or locally declared. `model_diversity_policy` prints the
+effective requirement. These diagnostics may contain private alias names and
+must be reviewed before publication. This remains a pipeline-wide preflight
+policy, not a new worker–critic-specific rule or an autonomy declaration change.
 
 ## Cost considerations
 

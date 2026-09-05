@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 from datetime import date
@@ -187,6 +188,39 @@ class TestLoadProjectDossiers:
 
 
 class TestRunPreflight:
+    @pytest.mark.parametrize(("local_config", "expected_ok"), [
+        (None, False),
+        ({"policy": {"minimum_families": 1}, "identities": [
+            {"model": "dispatch/reviewer", "developer": "anthropic", "family": "claude"},
+        ]}, True),
+        ({"identities": [
+            {"model": "dispatch/reviewer", "developer": "qwen", "family": "qwen"},
+        ]}, True),
+        ({"policy": {"minimum_families": 3}, "identities": [
+            {"model": "dispatch/reviewer", "developer": "qwen", "family": "qwen"},
+        ]}, False),
+        ({"policy": {"minimum_families": 1}}, False),
+        ({"policy": {"minimum_families": 0}}, False),
+    ])
+    def test_preflight_uses_local_identity_and_policy_without_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        local_config: object, expected_ok: bool,
+    ) -> None:
+        db_path = tmp_path / "scout.db"
+        self._seed_db(db_path, [])
+        before = db_path.read_bytes()
+        monkeypatch.setattr(config, "SCOUT_MODEL_IDENTITY_CONFIG",
+                            None if local_config is None else json.dumps(local_config))
+        monkeypatch.setattr(scan_runner, "CRITIC_MODEL", "dispatch/reviewer")
+        report = scan_runner.run_preflight(str(db_path), str(tmp_path / "dossier-source"))
+        assert report["ok"] is expected_ok
+        assert db_path.read_bytes() == before
+        if expected_ok:
+            expected_minimum = 1 if "minimum_families" in json.dumps(local_config) else 2
+            assert _details(report)["model_diversity_policy"] == {
+                "minimum_families": expected_minimum,
+            }
+
     @pytest.mark.parametrize(("models", "expected_ok", "families"), [
         (("openrouter/google/gemini-2.5-flash", "openrouter/openai/gpt-5-mini",
           "openrouter/anthropic/claude-sonnet-4.6"), True, ["claude", "gemini", "gpt"]),
@@ -221,6 +255,7 @@ class TestRunPreflight:
         monkeypatch.setattr(scan_runner, "RELEVANCE_MODEL", "claude-x")
         monkeypatch.setattr(scan_runner, "REPLY_DRAFT_MODEL", "claude-x")
         monkeypatch.setattr(scan_runner, "CRITIC_MODEL", "gpt-x")
+        monkeypatch.setattr(config, "SCOUT_MODEL_IDENTITY_CONFIG", None)
 
     def _seed_db(
         self, db_path: Path, projects: list[ProjectTarget], user_version: int = 18
