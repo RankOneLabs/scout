@@ -26,12 +26,12 @@ sm = pytest.fixture(_sm)
 
 
 class TestSchemaVersion:
-    def test_latest_schema_version_is_37(self) -> None:
-        assert LATEST_SCHEMA_VERSION == 37
+    def test_latest_schema_version_is_38(self) -> None:
+        assert LATEST_SCHEMA_VERSION == 38
 
-    def test_fresh_db_stamped_at_37(self, sm: StateManager) -> None:
+    def test_fresh_db_stamped_at_latest_version(self, sm: StateManager) -> None:
         version = int(sm.conn.execute("PRAGMA user_version").fetchone()[0])
-        assert version == 37
+        assert version == LATEST_SCHEMA_VERSION
 
     # The full SCHEMA-vs-legacy-upgrade convergence check
     # (columns, types, defaults, foreign keys, indexes, CHECK constraints,

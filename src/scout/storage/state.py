@@ -39,6 +39,7 @@ from scout.config import (
 )
 from scout.grading.feedback import FeedbackMode, PersistedFeedbackSnapshot, PhaseFeedbackBundle
 from scout.registry import RuntimeRegistry
+from scout.storage.artifacts import ArtifactStore
 from scout.storage.db import Db
 from scout.storage.evaluations import (
     AUTHOR_RATE_EVALUATOR_VERSION as AUTHOR_RATE_EVALUATOR_VERSION,
@@ -172,6 +173,7 @@ class StateManager:
         self._evaluations = EvaluationStore(self._uow)
         self._grades = GradeStore(self._uow, evaluations=self._evaluations)
         self._registry = RegistryStore(self._uow)
+        self._artifacts = ArtifactStore(self._uow)
 
     @property
     def db(self) -> Db:
@@ -212,6 +214,11 @@ class StateManager:
         """The Grade aggregate store — grades, revisions, usage
         overrides, and human-positive promotions."""
         return self._grades
+
+    @property
+    def artifacts(self) -> ArtifactStore:
+        """Exact retained analysis bytes and immutable producer lineage."""
+        return self._artifacts
 
     @property
     def registry(self) -> RegistryStore:

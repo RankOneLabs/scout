@@ -11,9 +11,38 @@ import sqlite3
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 RootMode = Literal["deferred", "immediate", "read"]
+
+
+@contextmanager
+def read_only_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """Root read snapshot for standalone operator connections; never migrates."""
+    if conn.in_transaction:
+        raise TransactionModeError("standalone read snapshot cannot nest")
+    prior = bool(conn.execute("PRAGMA query_only").fetchone()[0])
+    conn.execute("PRAGMA query_only = ON")
+    try:
+        conn.execute("BEGIN")
+        yield conn
+    finally:
+        conn.rollback()
+        conn.execute(f"PRAGMA query_only = {'ON' if prior else 'OFF'}")
+
+
+@contextmanager
+def read_only_connection(path: str) -> Iterator[sqlite3.Connection]:
+    """Open an existing DB read-only, including URI-sensitive path characters."""
+    conn = sqlite3.connect(f"file:{quote(str(Path(path).absolute()))}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        with read_only_snapshot(conn):
+            yield conn
+    finally:
+        conn.close()
 
 
 class TransactionError(RuntimeError):

@@ -379,7 +379,7 @@ class FeedbackBundleIntegrityError(RuntimeError):
 # 1. load_grade_population
 # --------------------------------------------------------------------------
 
-_POPULATION_SQL = """
+_POPULATION_COLUMNS_SQL = """
 SELECT
     g.id AS grade_id,
     g.post_id AS post_id,
@@ -418,11 +418,18 @@ SELECT
        WHERE gr.grade_id = g.id ORDER BY gr.revision DESC LIMIT 1) AS pinned_revision_id,
     (SELECT gr.revision FROM grade_revisions gr
        WHERE gr.grade_id = g.id ORDER BY gr.revision DESC LIMIT 1) AS pinned_revision_number
-FROM grades g
-JOIN posts p ON p.id = g.post_id
+"""
+
+_POPULATION_JOINS_SQL = """
 LEFT JOIN evaluations e ON e.id = g.evaluation_id
 LEFT JOIN draft_comments dc ON dc.evaluation_id = e.id
 LEFT JOIN grade_usage_overrides o ON o.grade_id = g.id
+"""
+
+_POPULATION_SQL = f"""
+{_POPULATION_COLUMNS_SQL}
+FROM grades g JOIN posts p ON p.id = g.post_id
+{_POPULATION_JOINS_SQL}
 WHERE g.graded_at >= ?
 ORDER BY g.graded_at DESC, g.id DESC
 """
@@ -445,6 +452,26 @@ def load_grade_population(
     boundary_text = _format_instant(boundary)
 
     rows = conn.execute(_POPULATION_SQL, (boundary_text,)).fetchall()
+    return _materialize_grade_population(rows)
+
+
+def load_corpus_grade_population(conn: sqlite3.Connection) -> tuple[GradePopulationRow, ...]:
+    """Current stable read supplied by caller; no prompt lookback or grade cap.
+
+    Keep orphaned grades visible for corpus exclusion instead of the prompt
+    reader's inner-post join. Missing revisions abort capture before any write:
+    a current grade with no revision cannot be honestly pinned.
+    """
+    rows = conn.execute(f"""
+        {_POPULATION_COLUMNS_SQL}
+        FROM grades g LEFT JOIN posts p ON p.id = g.post_id
+        {_POPULATION_JOINS_SQL}
+        ORDER BY g.id
+    """).fetchall()
+    return _materialize_grade_population(rows)
+
+
+def _materialize_grade_population(rows: Sequence[sqlite3.Row]) -> tuple[GradePopulationRow, ...]:
     population: list[GradePopulationRow] = []
     for row in rows:
         pinned_revision_id = row["pinned_revision_id"]
@@ -525,7 +552,7 @@ def classify_feedback_eligibility(
     results: list[EligibilityResult] = []
     valid_count = 0
     for row in population:
-        reason = _first_global_exclusion_reason(row)
+        reason = grade_exclusion_reason(row)
         if reason is not None:
             results.append(EligibilityResult(row=row, status="excluded", reason=reason))
             continue
@@ -537,7 +564,8 @@ def classify_feedback_eligibility(
     return tuple(results)
 
 
-def _first_global_exclusion_reason(row: GradePopulationRow) -> ExclusionReason | None:
+def grade_exclusion_reason(row: GradePopulationRow) -> ExclusionReason | None:
+    """Shared grade validity/usage checks, independent of prompt recency and caps."""
     if row.schema_version != HUMAN_GRADE_SCHEMA_VERSION:
         return "schema_version"
     if row.needs_regrade:

@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from scout.grading.artifacts import (
+    ArtifactBundle,
+    ArtifactLineage,
+    ArtifactProcess,
+    EnvironmentIdentity,
+    ProcessId,
+    RetainedArtifact,
+    TransformKind,
+    decode_bundle,
+    digest_artifact,
+)
+from scout.result import Err, Ok
+from scout.storage.schema import LATEST_SCHEMA_VERSION
+from scout.storage.state import StateManager
+
+
+@pytest.fixture
+def bundle() -> ArtifactBundle:
+    contents = (b"synthetic input", b"synthetic config", b"pinned environment", b"output\x00\xff")
+    artifacts = tuple(
+        RetainedArtifact(digest=digest_artifact(value), content=value) for value in contents
+    )
+    lineage = ArtifactLineage(
+        kind=TransformKind("test.transform"),
+        inputs=(artifacts[0].digest,),
+        process=ArtifactProcess(
+            id=ProcessId("test.producer"),
+            version="1",
+            config_digest=artifacts[1].digest,
+            environment=EnvironmentIdentity(artifacts[2].digest),
+        ),
+        outputs=(artifacts[3].digest,),
+    )
+    return ArtifactBundle(artifacts=artifacts, lineages=(lineage,))
+
+
+def test_binary_bundle_survives_json_boundary(bundle: ArtifactBundle) -> None:
+    assert decode_bundle(bundle.model_dump_json().encode()) == Ok(bundle)
+
+
+def test_store_round_trip_is_idempotent_and_self_contained(bundle: ArtifactBundle) -> None:
+    with StateManager(":memory:") as source, StateManager(":memory:") as restored:
+        assert source.artifacts.import_bundle(bundle) == Ok(None)
+        exported = source.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        assert restored.artifacts.import_bundle(exported.value) == Ok(None)
+        assert restored.artifacts.import_bundle(exported.value) == Ok(None)
+        assert restored.artifacts.export_bundle() == exported
+
+
+@pytest.mark.parametrize("missing", [0, 1, 2, 3])
+def test_missing_input_config_environment_or_output_refuses_entire_import(
+    bundle: ArtifactBundle,
+    missing: int,
+) -> None:
+    incomplete = bundle.model_copy(
+        update={
+            "artifacts": tuple(
+                value for index, value in enumerate(bundle.artifacts) if index != missing
+            ),
+        }
+    )
+    with StateManager(":memory:") as state:
+        assert isinstance(state.artifacts.import_bundle(incomplete), Err)
+        assert state.conn.execute("SELECT count(*) FROM analysis_artifacts").fetchone()[0] == 0
+
+
+def test_tampered_bytes_are_rejected_before_writing(bundle: ArtifactBundle) -> None:
+    corrupt = RetainedArtifact(digest=bundle.artifacts[0].digest, content=b"altered")
+    invalid = bundle.model_copy(update={"artifacts": (corrupt, *bundle.artifacts[1:])})
+    with StateManager(":memory:") as state:
+        assert isinstance(state.artifacts.import_bundle(invalid), Err)
+        assert state.conn.execute("SELECT count(*) FROM analysis_artifacts").fetchone()[0] == 0
+
+
+def test_database_failure_rolls_back_partial_import(bundle: ArtifactBundle) -> None:
+    with StateManager(":memory:") as state:
+        state.conn.execute("""CREATE TRIGGER fail_lineage BEFORE INSERT ON analysis_lineage
+                            BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END""")
+        assert isinstance(state.artifacts.import_bundle(bundle), Err)
+        assert state.conn.execute("SELECT count(*) FROM analysis_artifacts").fetchone()[0] == 0
+
+
+def test_failed_import_composes_as_savepoint_without_rolling_back_outer_work(
+    bundle: ArtifactBundle,
+) -> None:
+    with StateManager(":memory:") as state:
+        state.conn.execute("""CREATE TRIGGER fail_lineage BEFORE INSERT ON analysis_lineage
+                            BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END""")
+        with state.db.begin_immediate():
+            assert isinstance(state.artifacts.put(b"outer retained observation"), Ok)
+            assert isinstance(state.artifacts.import_bundle(bundle), Err)
+        assert state.conn.execute("SELECT count(*) FROM analysis_artifacts").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE analysis_artifacts SET content = x'00'",
+        "DELETE FROM analysis_artifacts",
+        "INSERT OR REPLACE INTO analysis_artifacts(digest, content) "
+        "SELECT digest, x'00' FROM analysis_artifacts",
+        "UPDATE analysis_lineage SET digest = digest",
+        "DELETE FROM analysis_lineage",
+        "INSERT OR REPLACE INTO analysis_lineage SELECT * FROM analysis_lineage",
+    ],
+)
+def test_database_enforces_immutability(bundle: ArtifactBundle, statement: str) -> None:
+    with StateManager(":memory:") as state:
+        assert state.artifacts.import_bundle(bundle) == Ok(None)
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"), state.db.transaction():
+            state.conn.execute(statement)
+
+
+def test_corrupted_stored_bytes_fail_export(bundle: ArtifactBundle) -> None:
+    with StateManager(":memory:") as state:
+        assert state.artifacts.import_bundle(bundle) == Ok(None)
+        # Simulate on-disk damage, not an allowed application mutation.
+        with state.db.transaction():
+            state.conn.execute("DROP TRIGGER analysis_artifacts_no_update")
+            state.conn.execute(
+                "UPDATE analysis_artifacts SET content = x'00' WHERE digest = ?",
+                (bundle.artifacts[0].digest,),
+            )
+        assert isinstance(state.artifacts.export_bundle(), Err)
+
+
+def test_sqlite_backup_preserves_artifacts_and_lineage(
+    bundle: ArtifactBundle, tmp_path: Path
+) -> None:
+    backup = tmp_path / "backup.db"
+    with StateManager(":memory:") as source:
+        assert source.artifacts.import_bundle(bundle) == Ok(None)
+        with sqlite3.connect(backup) as destination:
+            source.conn.backup(destination)
+        with StateManager(str(backup)) as restored:
+            assert restored.artifacts.export_bundle() == source.artifacts.export_bundle()
+
+
+def test_v37_upgrade_is_additive_and_matches_bootstrap(tmp_path: Path) -> None:
+    # Build a v37-shaped database by omitting only the new objects from bootstrap.
+    path = tmp_path / "v37.db"
+    with StateManager(str(path)) as before, before.db.transaction():
+        before.conn.execute("DROP TABLE analysis_lineage")
+        before.conn.execute("DROP TABLE analysis_artifacts")
+        before.conn.execute("PRAGMA user_version = 37")
+        before.conn.execute("INSERT INTO posts(platform, platform_msg_id) VALUES ('test', 'kept')")
+    with StateManager(str(path)) as upgraded, StateManager(":memory:") as fresh:
+        assert upgraded.conn.execute("PRAGMA user_version").fetchone()[0] == LATEST_SCHEMA_VERSION
+        assert upgraded.conn.execute("SELECT platform_msg_id FROM posts").fetchone()[0] == "kept"
+        query = (
+            "SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'analysis_%' ORDER BY name"
+        )
+        assert [tuple(row) for row in upgraded.conn.execute(query)] == [
+            tuple(row) for row in fresh.conn.execute(query)
+        ]
