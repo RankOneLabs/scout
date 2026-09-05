@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from scout.cli.analysis import add_analysis_parser, project_study_index, run_analysis
+from scout.cli.analysis import (
+    add_analysis_parser,
+    project_study_index,
+    run_analysis,
+    verify_analysis_bundle,
+)
 from scout.grading.artifacts import (
     ArtifactBundle,
     ArtifactError,
@@ -125,9 +130,8 @@ def test_export_invalid_parent_keeps_generic_io_error(tmp_path: Path) -> None:
     result = run_analysis(
         arguments("export", "--db-path", str(source), "--out", str(tmp_path / "absent" / "export"))
     )
-    assert result == Err(
-        ArtifactError("analysis", None, "Analysis IO failed; verify paths and schema")
-    )
+    assert isinstance(result, Err)
+    assert result.error.operation == "prepare_export"
 
 
 @pytest.mark.parametrize("fail_directory_sync", [False, True])
@@ -157,9 +161,9 @@ def test_export_syncs_published_directory_and_reports_sync_failure(
     result = run_analysis(arguments("export", "--db-path", str(source), "--out", str(destination)))
     assert synced == ["file", "directory"]
     if fail_directory_sync:
-        assert result == Err(
-            ArtifactError("analysis", None, "Analysis IO failed; verify paths and schema")
-        )
+        assert isinstance(result, Err)
+        assert result.error.operation == "sync_export_directory"
+        assert "published" in result.error.detail
     else:
         assert isinstance(result, Ok)
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
@@ -222,7 +226,11 @@ def test_import_and_verify_retain_source_only_observations(tmp_path: Path) -> No
         run_analysis(arguments("export", "--db-path", str(source), "--out", str(bundle))), Ok
     )
     assert isinstance(
-        run_analysis(arguments("import", "--db-path", str(destination), "--bundle", str(bundle))),
+        run_analysis(
+            arguments(
+                "import", "--db-path", str(destination), "--bundle", str(bundle), "--create-db"
+            )
+        ),
         Ok,
     )
     assert isinstance(run_analysis(arguments("verify", "--db-path", str(destination))), Ok)
@@ -307,3 +315,117 @@ def test_inventory_cli_records_explicit_files_and_environment(tmp_path: Path) ->
     )
     assert isinstance(result, Ok)
     assert isinstance(run_analysis(arguments("verify", "--db-path", str(path))), Ok)
+
+
+@pytest.fixture
+def valid_inventory_bundle(tmp_path: Path) -> ArtifactBundle:
+    report = tmp_path / "synthetic-report.txt"
+    report.write_bytes(b"synthetic evidence")
+    with StateManager(":memory:") as state, state.db.read_transaction():
+        result = inventory_evidence(
+            state.conn,
+            InventorySelection(study="synthetic", files=(str(report),), experiment_run_ids=()),
+            b"synthetic environment",
+        )
+    assert isinstance(result, Ok)
+    return result.value
+
+
+@pytest.mark.parametrize("producer", ["snapshot", "inventory"])
+@pytest.mark.parametrize("changed_field", ["id", "version"])
+def test_unknown_producer_does_not_block_valid_entries_or_import(
+    tmp_path: Path, valid_inventory_bundle: ArtifactBundle, producer: str, changed_field: str
+) -> None:
+    bundle = (
+        valid_inventory_bundle
+        if producer == "inventory"
+        else ArtifactBundle.model_validate_json(
+            (
+                Path(__file__).parent / "fixtures/grading_artifacts/legacy-snapshot-v1.json"
+            ).read_bytes()
+        )
+    )
+    lineage = bundle.lineages[0]
+    future = lineage.model_copy(
+        update={
+            "process": lineage.process.model_copy(update={changed_field: "future"}),
+        }
+    )
+    mixed = bundle.model_copy(update={"lineages": (lineage, future)})
+    assert verify_analysis_bundle(mixed) == Ok(1)
+    bundle_path = tmp_path / "mixed.json"
+    bundle_path.write_text(mixed.model_dump_json())
+    destination = tmp_path / "restored.db"
+    imported = run_analysis(
+        arguments(
+            "import", "--bundle", str(bundle_path), "--db-path", str(destination), "--create-db"
+        )
+    )
+    assert isinstance(imported, Ok)
+    assert imported.value.unsupported_lineage_count == 1
+    verified = run_analysis(arguments("verify", "--db-path", str(destination)))
+    assert isinstance(verified, Ok)
+    assert verified.value.replayed_lineage_count == 1
+    assert verified.value.unsupported_lineage_count == 1
+
+
+def test_index_keeps_valid_entries_and_attributes_invalid_or_unsupported_ones(
+    valid_inventory_bundle: ArtifactBundle,
+) -> None:
+    lineage = valid_inventory_bundle.lineages[0]
+    malformed = RetainedArtifact(digest=digest_artifact(b"bad inventory"), content=b"bad inventory")
+    bad = lineage.model_copy(update={"outputs": (malformed.digest,)})
+    future = lineage.model_copy(
+        update={"process": lineage.process.model_copy(update={"version": "2"})}
+    )
+    mixed = valid_inventory_bundle.model_copy(
+        update={
+            "artifacts": (*valid_inventory_bundle.artifacts, malformed),
+            "lineages": (lineage, bad, future),
+        }
+    )
+    result = project_study_index(mixed)
+    assert isinstance(result, Ok)
+    assert len(result.value.entries) == 3
+    assert result.value.entries[0].study == "synthetic"
+    assert result.value.entries[0].issue is None
+    assert result.value.entries[1].issue.kind == "invalid_study_evidence"
+    assert result.value.entries[2].issue.kind == "unsupported_producer"
+    # Isolation is an index property, never permission to verify corrupt known outputs.
+    assert isinstance(verify_analysis_bundle(mixed), Err)
+
+
+def test_import_requires_explicit_creation_and_supports_existing_uri_sensitive_path(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "empty.json"
+    source.write_text(ArtifactBundle(artifacts=(), lineages=()).model_dump_json())
+    destination = tmp_path / "restore?#.db"
+    command = arguments("import", "--bundle", str(source), "--db-path", str(destination))
+    result = run_analysis(command)
+    assert isinstance(result, Err)
+    assert "--create-db" in result.error.detail
+    assert not destination.exists()
+    with StateManager(str(destination)):
+        pass
+    assert isinstance(run_analysis(command), Ok)
+    assert not (tmp_path / "restore").exists()
+
+
+def test_link_failure_is_reported_as_not_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    with StateManager(str(source)):
+        pass
+
+    def fail_link(*args: object) -> None:
+        raise OSError("synthetic unsupported hard link")
+
+    monkeypatch.setattr("scout.cli.analysis.os.link", fail_link)
+    destination = tmp_path / "export.json"
+    result = run_analysis(arguments("export", "--db-path", str(source), "--out", str(destination)))
+    assert isinstance(result, Err)
+    assert result.error.operation == "publish_export"
+    assert not destination.exists()
+    assert not list(tmp_path.glob(".scout-export-*"))

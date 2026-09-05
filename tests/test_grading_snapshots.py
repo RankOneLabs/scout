@@ -1,26 +1,44 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
+from dataclasses import fields, make_dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
+from pydantic import create_model
 
 from scout.config import GradeRecord
 from scout.dossiers.resolver import DossierResolution, DossierSummary, ResolutionMetadata
-from scout.grading.artifacts import decode_bundle
+from scout.grading.artifacts import ArtifactBundle, decode_bundle
 from scout.grading.corpus_export import export_grading_corpus
+from scout.grading.feedback import GradePopulationRow
 from scout.grading.snapshots import (
+    POPULATION_WIRE_V1,
     CorpusSelection,
+    FrozenGradeInput,
     FrozenGradePopulation,
-    build_snapshot_bundle,
     preview_corpus,
     read_grade_population,
     select_corpus,
     verify_snapshot_replay,
 )
+from scout.grading.snapshots import (
+    build_snapshot_bundle as try_build_snapshot_bundle,
+)
+from scout.grading.wire import encode_wire_v1
 from scout.result import Err, Ok
 from scout.storage.state import StateManager
+
+
+def build_snapshot_bundle(
+    population: FrozenGradePopulation, selection: CorpusSelection, environment: bytes
+) -> ArtifactBundle:
+    result = try_build_snapshot_bundle(population, selection, environment)
+    assert isinstance(result, Ok), result
+    return result.value
 
 
 @pytest.fixture
@@ -266,3 +284,146 @@ def test_grading_preservation_export_carries_analysis_store(
         exported = read_artifact_bundle(restored)
         assert isinstance(exported, Ok)
         assert verify_snapshot_replay(exported.value) == Ok(1)
+
+
+def legacy_bundle() -> ArtifactBundle:
+    result = decode_bundle(
+        (Path(__file__).parent / "fixtures/grading_artifacts/legacy-snapshot-v1.json").read_bytes()
+    )
+    assert isinstance(result, Ok)
+    return result.value
+
+
+def test_retained_v1_fixture_is_byte_compatible_and_replays() -> None:
+    bundle = legacy_bundle()
+    contents = {artifact.digest: artifact.content for artifact in bundle.artifacts}
+    original = contents[bundle.lineages[0].inputs[0]]
+    population = FrozenGradePopulation.model_validate_json(original)
+    assert encode_wire_v1(population, POPULATION_WIRE_V1) == original
+    assert verify_snapshot_replay(bundle) == Ok(1)
+    with StateManager(":memory:") as restored:
+        assert restored.artifacts.import_bundle(bundle) == Ok(None)
+        exported = restored.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        assert verify_snapshot_replay(exported.value) == Ok(1)
+
+
+def test_operational_dataclass_reordering_does_not_break_retained_v1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hints = get_type_hints(GradePopulationRow)
+    reordered = list(fields(GradePopulationRow))
+    reordered[0], reordered[1] = reordered[1], reordered[0]
+    changed_row = make_dataclass(
+        "ReorderedGradePopulationRow",
+        [(field.name, hints[field.name]) for field in reordered],
+        frozen=True,
+        slots=True,
+    )
+    changed_input = create_model(
+        "ReorderedInput", __base__=FrozenGradeInput, grade=(changed_row, ...)
+    )
+    changed_population = create_model(
+        "ReorderedPopulation",
+        __base__=FrozenGradePopulation,
+        items=(tuple[changed_input, ...], ...),
+    )
+    monkeypatch.setattr("scout.grading.snapshots.FrozenGradePopulation", changed_population)
+    assert verify_snapshot_replay(legacy_bundle()) == Ok(1)
+
+
+def test_repeated_capture_only_adds_small_observation_metadata(state: StateManager) -> None:
+    population = capture(state)
+    selection = CorpusSelection(project_key="synthetic")
+    first = build_snapshot_bundle(population, selection, b"environment")
+    later = build_snapshot_bundle(
+        population.model_copy(update={"observed_at": "2026-09-06T00:00:00Z"}),
+        selection,
+        b"environment",
+    )
+    assert first.lineages == later.lineages
+    first_digests = {artifact.digest for artifact in first.artifacts}
+    new_artifacts = [
+        artifact for artifact in later.artifacts if artifact.digest not in first_digests
+    ]
+    assert len(new_artifacts) == 1
+    assert len(new_artifacts[0].content) < 256
+    assert b"scout.population-capture/v1" in new_artifacts[0].content
+    assert state.artifacts.import_bundle(first) == Ok(None)
+    assert state.artifacts.import_bundle(later) == Ok(None)
+    exported = state.artifacts.export_bundle()
+    assert isinstance(exported, Ok)
+    assert verify_snapshot_replay(exported.value) == Ok(1)
+
+
+def test_empty_population_is_previewable_but_cannot_be_snapshotted(state: StateManager) -> None:
+    empty = capture(state).model_copy(update={"items": ()})
+    selection = CorpusSelection(project_key="synthetic")
+    assert preview_corpus(select_corpus(empty, selection)).population_count == 0
+    assert isinstance(try_build_snapshot_bundle(empty, selection, b"environment"), Err)
+
+
+def test_nonempty_all_excluded_population_still_replays(state: StateManager) -> None:
+    bundle = build_snapshot_bundle(
+        capture(state), CorpusSelection(project_key="different-project"), b"environment"
+    )
+    assert verify_snapshot_replay(bundle) == Ok(1)
+
+
+@pytest.mark.parametrize("payload", ["not json", "42", "{}"])
+def test_corrupt_revision_payload_aborts_capture(state: StateManager, payload: str) -> None:
+    with state.db.transaction():
+        state.conn.execute("DROP TRIGGER grade_revisions_no_update")
+        state.conn.execute("UPDATE grade_revisions SET payload = ?", (payload,))
+    with state.db.read_transaction():
+        result = read_grade_population(state.conn, Path("/unused"))
+    assert isinstance(result, Err)
+    assert result.error.entity_id == "1"
+
+
+def test_missing_recorded_column_returns_error_value(state: StateManager) -> None:
+    with state.db.transaction():
+        state.conn.execute("ALTER TABLE evaluations DROP COLUMN relevant_to")
+    with state.db.read_transaction():
+        result = read_grade_population(state.conn, Path("/unused"))
+    assert isinstance(result, Err)
+    assert result.error.operation == "freeze_grade_input"
+
+
+def test_invalid_mutable_grade_remains_an_exclusion(state: StateManager) -> None:
+    with state.db.transaction():
+        state.conn.execute("UPDATE grades SET dimensions = 'not json'")
+    snapshot = select_corpus(capture(state), CorpusSelection(project_key="synthetic"))
+    assert snapshot.exclusions[0].reason == "shared_contract_invalid"
+
+
+@pytest.mark.parametrize("replacement_id", ["id", "id + 100"])
+def test_grade_revision_cannot_be_replaced_through_either_unique_key(
+    state: StateManager, replacement_id: str
+) -> None:
+    before = tuple(state.conn.execute("SELECT * FROM grade_revisions").fetchone())
+    state.conn.execute("PRAGMA recursive_triggers = OFF")
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"), state.db.transaction():
+        state.conn.execute(
+            "INSERT OR REPLACE INTO grade_revisions "
+            "(id,grade_id,evaluation_id,revision,schema_version,source,payload,recorded_at) "
+            f"SELECT {replacement_id},grade_id,evaluation_id,revision,schema_version,source,"
+            "'42',recorded_at FROM grade_revisions"
+        )
+    assert tuple(state.conn.execute("SELECT * FROM grade_revisions").fetchone()) == before
+
+
+def test_v38_upgrade_protects_existing_revision_without_rewriting_it(state: StateManager) -> None:
+    before = tuple(state.conn.execute("SELECT * FROM grade_revisions").fetchone())
+    with state.db.transaction():
+        state.conn.execute("DROP TRIGGER grade_revisions_no_replace")
+        state.conn.execute("PRAGMA user_version = 38")
+    with StateManager(state.db_path) as upgraded:
+        assert upgraded.conn.execute("PRAGMA user_version").fetchone()[0] == 39
+        assert tuple(upgraded.conn.execute("SELECT * FROM grade_revisions").fetchone()) == before
+        assert (
+            upgraded.conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE name='grade_revisions_no_replace'"
+            ).fetchone()[0]
+            == 1
+        )

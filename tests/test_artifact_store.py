@@ -205,3 +205,28 @@ def test_v37_upgrade_is_additive_and_matches_bootstrap(tmp_path: Path) -> None:
         assert [tuple(row) for row in upgraded.conn.execute(query)] == [
             tuple(row) for row in fresh.conn.execute(query)
         ]
+
+
+@pytest.mark.parametrize("mode", ["read", "write"])
+def test_export_borrows_outer_transaction_without_ending_it(
+    bundle: ArtifactBundle, mode: str
+) -> None:
+    with StateManager(":memory:") as state:
+        assert state.artifacts.import_bundle(bundle) == Ok(None)
+        expected = state.artifacts.export_bundle()
+        context = state.db.read_transaction() if mode == "read" else state.db.begin_immediate()
+        with context:
+            assert state.artifacts.export_bundle() == expected
+            assert state.conn.in_transaction
+            assert bool(state.conn.execute("PRAGMA query_only").fetchone()[0]) == (mode == "read")
+
+
+def test_export_does_not_commit_an_unmanaged_caller_transaction(bundle: ArtifactBundle) -> None:
+    with StateManager(":memory:") as state:
+        assert state.artifacts.import_bundle(bundle) == Ok(None)
+        state.conn.execute("BEGIN")
+        try:
+            assert isinstance(state.artifacts.export_bundle(), Ok)
+            assert state.conn.in_transaction
+        finally:
+            state.conn.rollback()

@@ -121,6 +121,10 @@ class ArtifactStore:
 
     def export_bundle(self) -> Result[ArtifactBundle, ArtifactError]:
         try:
+            if self._uow.conn.in_transaction:
+                # Borrow the caller's stable view; do not commit, roll back,
+                # or change the transaction's locking/query-only guarantees.
+                return read_artifact_bundle(self._uow.conn)
             with self._uow.read():
                 return read_artifact_bundle(self._uow.conn)
         except (sqlite3.Error, TransactionError):

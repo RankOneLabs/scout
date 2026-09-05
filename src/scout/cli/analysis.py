@@ -12,6 +12,7 @@ import os
 import sqlite3
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -24,6 +25,7 @@ from scout.grading.artifacts import (
     decode_bundle,
     digest_artifact,
     encode_lineage,
+    validate_bundle,
 )
 from scout.grading.snapshots import (
     CorpusSelection,
@@ -31,12 +33,14 @@ from scout.grading.snapshots import (
     preview_corpus,
     read_grade_population,
     select_corpus,
+    supports_snapshot,
     verify_snapshot_replay,
 )
 from scout.grading.studies import (
     InventorySelection,
-    StudyEvidence,
     inventory_evidence,
+    replay_inventory_lineage,
+    supports_inventory,
     verify_inventory_replay,
 )
 from scout.result import Err, Ok, Result
@@ -51,6 +55,7 @@ class AnalysisReceipt(BaseModel):
     artifact_count: int
     lineage_count: int
     outputs: tuple[ArtifactDigest, ...]
+    unsupported_lineage_count: int
 
 
 class AnalysisVerification(BaseModel):
@@ -58,6 +63,16 @@ class AnalysisVerification(BaseModel):
     lineage_count: int
     replayed_lineage_count: int
     unsupported_lineage_count: int
+
+
+class UnsupportedProducer(BaseModel):
+    kind: Literal["unsupported_producer"] = "unsupported_producer"
+    detail: str = "No adapter for this producer identity/version"
+
+
+class InvalidStudyEvidence(BaseModel):
+    kind: Literal["invalid_study_evidence"] = "invalid_study_evidence"
+    detail: str
 
 
 class StudyIndexEntry(BaseModel):
@@ -73,6 +88,7 @@ class StudyIndexEntry(BaseModel):
     usability: str | None = None
     reason: str | None = None
     experiment_run_ids: tuple[int, ...] = ()
+    issue: UnsupportedProducer | InvalidStudyEvidence | None = None
 
 
 class StudyIndex(BaseModel):
@@ -80,12 +96,22 @@ class StudyIndex(BaseModel):
 
 
 def project_study_index(bundle: ArtifactBundle) -> Result[StudyIndex, ArtifactError]:
+    validated = validate_bundle(bundle)
+    if isinstance(validated, Err):
+        return validated
     contents = {artifact.digest: artifact.content for artifact in bundle.artifacts}
 
     def entry(lineage: ArtifactLineage) -> StudyIndexEntry:
         evidence = None
-        if lineage.kind == "scout.evidence.inventory" and len(lineage.outputs) == 1:
-            evidence = StudyEvidence.model_validate_json(contents[lineage.outputs[0]])
+        issue: UnsupportedProducer | InvalidStudyEvidence | None = None
+        if not supports_inventory(lineage) and not supports_snapshot(lineage):
+            issue = UnsupportedProducer()
+        elif supports_inventory(lineage):
+            match replay_inventory_lineage(lineage, contents):
+                case Err(error):
+                    issue = InvalidStudyEvidence(detail=error.detail)
+                case Ok(value):
+                    evidence = value
         return StudyIndexEntry(
             lineage_digest=digest_artifact(encode_lineage(lineage)),
             kind=lineage.kind,
@@ -97,13 +123,10 @@ def project_study_index(bundle: ArtifactBundle) -> Result[StudyIndex, ArtifactEr
             usability=None if evidence is None else evidence.selection.usability,
             reason=None if evidence is None else evidence.selection.reason,
             experiment_run_ids=() if evidence is None else tuple(run.id for run in evidence.runs),
+            issue=issue,
         )
 
-    # This is the deserialization boundary for producer-specific annotations.
-    try:
-        return Ok(StudyIndex(entries=tuple(entry(lineage) for lineage in bundle.lineages)))
-    except (ValueError, KeyError):
-        return Err(ArtifactError("project_study_index", None, "Invalid retained study evidence"))
+    return Ok(StudyIndex(entries=tuple(entry(lineage) for lineage in bundle.lineages)))
 
 
 def verify_analysis_bundle(bundle: ArtifactBundle) -> Result[int, ArtifactError]:
@@ -140,6 +163,11 @@ def add_analysis_parser(
             child.add_argument("--out", type=Path, required=True)
         if command == "import":
             child.add_argument("--bundle", type=Path, required=True)
+            child.add_argument(
+                "--create-db",
+                action="store_true",
+                help="Explicitly allow creation of a new restore database",
+            )
         if command == "inventory":
             child.add_argument("--study", required=True)
             child.add_argument("--file", action="append", required=True)
@@ -150,23 +178,42 @@ def add_analysis_parser(
             child.add_argument("--reason")
 
 
-def _write_private_export(path: Path, content: bytes) -> None:
+def _write_private_export(path: Path, content: bytes) -> Result[None, ArtifactError]:
     """Publish complete bytes atomically, mode 0600, without replacing a target."""
-    descriptor, temporary = tempfile.mkstemp(prefix=".scout-export-", dir=path.parent)
+    try:
+        descriptor, temporary = tempfile.mkstemp(prefix=".scout-export-", dir=path.parent)
+    except OSError:
+        return Err(ArtifactError("prepare_export", str(path), "Cannot create export staging file"))
     try:
         with os.fdopen(descriptor, "wb") as output:
             output.write(content)
             output.flush()
             os.fsync(output.fileno())
         os.link(temporary, path)
+    except FileExistsError:
+        return Err(ArtifactError("analysis", None, "Refusing to replace an existing export path"))
+    except OSError:
+        return Err(ArtifactError("publish_export", str(path), "Export was not published"))
     finally:
         os.unlink(temporary)
     # Persist publication (and temporary-name removal), not only file bytes.
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError:
+        return Err(
+            ArtifactError(
+                "sync_export_directory",
+                str(path),
+                "Export published; directory durability unconfirmed. "
+                "Retained file was not removed; "
+                "inspect it or choose a new destination. Existing paths are never overwritten.",
+            )
+        )
+    return Ok(None)
 
 
 def _receipt(operation: str, bundle: ArtifactBundle) -> AnalysisReceipt:
@@ -175,6 +222,10 @@ def _receipt(operation: str, bundle: ArtifactBundle) -> AnalysisReceipt:
         artifact_count=len(bundle.artifacts),
         lineage_count=len(bundle.lineages),
         outputs=tuple(output for lineage in bundle.lineages for output in lineage.outputs),
+        unsupported_lineage_count=sum(
+            not supports_snapshot(lineage) and not supports_inventory(lineage)
+            for lineage in bundle.lineages
+        ),
     )
 
 
@@ -212,7 +263,10 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
                 return Ok(preview_corpus(select_corpus(population.value, selection)))
             environment = args.environment.read_bytes()
             ProducerEnvironment.model_validate_json(environment)
-            bundle = build_snapshot_bundle(population.value, selection, environment)
+            built = build_snapshot_bundle(population.value, selection, environment)
+            if isinstance(built, Err):
+                return built
+            bundle = built.value
             with StateManager(args.db_path) as state:
                 saved = state.artifacts.import_bundle(bundle)
             if isinstance(saved, Err):
@@ -225,7 +279,15 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
             verified = verify_analysis_bundle(parsed.value)
             if isinstance(verified, Err):
                 return verified
-            with StateManager(args.db_path) as state:
+            if not args.create_db and not Path(args.db_path).is_file():
+                return Err(
+                    ArtifactError(
+                        "import",
+                        args.db_path,
+                        "Restore destination must exist; use --create-db to create a new database",
+                    )
+                )
+            with StateManager(args.db_path, allow_create=args.create_db) as state:
                 saved = state.artifacts.import_bundle(parsed.value)
             if isinstance(saved, Err):
                 return saved
@@ -250,12 +312,9 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
             )
         if args.analysis_command == "export":
             # Never overwrite an existing export (including the source DB).
-            try:
-                _write_private_export(args.out, exported.value.model_dump_json().encode())
-            except FileExistsError:
-                return Err(
-                    ArtifactError("analysis", None, "Refusing to replace an existing export path")
-                )
+            published = _write_private_export(args.out, exported.value.model_dump_json().encode())
+            if isinstance(published, Err):
+                return published
             return Ok(_receipt("export", exported.value))
         return Err(ArtifactError("analysis", None, "Unknown analysis command"))
     except (sqlite3.Error, OSError, ValueError):

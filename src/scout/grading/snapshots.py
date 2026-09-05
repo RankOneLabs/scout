@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, TypeAdapter
+from pydantic import BaseModel, ConfigDict, JsonValue, StrictBool, StrictInt, TypeAdapter
 
 from scout.dossiers.resolver import DossierResolution, DossierResolutionError, resolve_dossier
 from scout.grading.artifacts import (
@@ -42,6 +42,7 @@ from scout.grading.relevance_targets import (
     derive_relevance_target,
     project_relevance_target_source,
 )
+from scout.grading.wire import ArrayWire, encode_wire_v1, record_wire
 from scout.result import Err, Ok, Result
 from scout.storage.evaluations import PhaseRun
 from scout.storage.grades import GradeRevision
@@ -130,6 +131,64 @@ class FrozenGradePopulation(BaseModel):
     items: tuple[FrozenGradeInput, ...]
 
 
+class PopulationItems(BaseModel):
+    """Selection inputs reconstructed from a v2 manifest, without capture time."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    items: tuple[FrozenGradeInput, ...]
+
+
+class PopulationManifest(BaseModel):
+    """V2 frozen population: ordered references to retained per-grade inputs."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    format: Literal["scout.grade-population/v2"] = "scout.grade-population/v2"
+    items: tuple[ArtifactDigest, ...]
+
+
+class PopulationCapture(BaseModel):
+    """Small source observation, separate from deterministic population identity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    format: Literal["scout.population-capture/v1"] = "scout.population-capture/v1"
+    population_digest: ArtifactDigest
+    observed_at: str
+
+
+class GradeRevisionPayload(BaseModel):
+    """Shape written by migrations.grade_revision_comparison_shape since v26.
+
+    Legacy revisions can predate reply correction fields. Human judgment values
+    are not validated here; this checks the storage record, not eligibility.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: int
+    evaluation_id: int | None
+    post_id: int
+    scan_id: int | None
+    source: str
+    graded_at: str
+    relevance_judgment: str
+    rejection_reason: str | None
+    comment_quality: int | None
+    comment_issue: str | None
+    schema_version: int
+    needs_regrade: int
+    action_judgment: str | None
+    dimensions: JsonValue
+    failure_note: str | None
+    factual_offending_claim: str | None
+    factual_disposition: str | None
+    factual_contradicting_evidence: str | None
+    context_missing_input: str | None
+    posture_should_have_been: str | None
+    implication_implied_claim: str | None
+    implication_missing_support: str | None
+    reply_revision_id: int | None = None
+    edited_text: str | None = None
+
+
 class CorpusSelection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     project_key: str
@@ -189,6 +248,101 @@ class CorpusPreview(BaseModel):
     exclusions: tuple[ExclusionCount, ...]
 
 
+# Frozen v1 projections, derived from the original DB rows and dossier contract.
+# Do not derive these lists from runtime model/dataclass field order.
+GRADE_WIRE_V1 = record_wire("""
+    grade_id post_id scan_id graded_at schema_version needs_regrade relevance_judgment
+    action_judgment dimensions failure_note factual_disposition factual_offending_claim
+    factual_contradicting_evidence context_missing_input posture_should_have_been
+    implication_implied_claim implication_missing_support platform evaluation_id
+    evaluation_post_id evaluation_scan_id evaluation_relevant evaluation_project_key
+    evaluation_dossier_summary_id evaluation_dossier_revision evaluation_posture
+    draft_comment_id draft_project_key draft_dossier_summary_id draft_dossier_revision
+    draft_posture override_mode override_reason pinned_revision_id pinned_revision_number
+""")
+REVISION_WIRE_V1 = record_wire(
+    "id grade_id evaluation_id revision schema_version source payload recorded_at"
+)
+POST_WIRE_V1 = record_wire("""
+    id platform platform_msg_id channel_name channel_id author_name author_id content url
+    created_at scan_id parent_lookup_status parent_id parent_author_id parent_author_name
+    parent_text parent_url
+""")
+EVALUATION_WIRE_V1 = record_wire("""
+    id post_id relevant score reason relevant_to keyword_route_id scan_id created_at
+    project_key posture surface_status failure_reason dossier_summary_id dossier_revision
+""")
+SUMMARY_WIRE_V1 = record_wire(
+    "project_key last_reviewed reviewer facts resources prohibitions references",
+    facts=ArrayWire(record_wire("id text safe_phrasings immutable_evidence")),
+    resources=ArrayWire(record_wire("id label canonical_url immutable_evidence")),
+    prohibitions=ArrayWire(record_wire("id mode pattern flags immutable_evidence")),
+)
+INPUT_WIRE_V1 = record_wire(
+    "grade revision revision_matches post evaluation phase_runs context exposures",
+    grade=GRADE_WIRE_V1,
+    revision=REVISION_WIRE_V1,
+    post=POST_WIRE_V1,
+    evaluation=EVALUATION_WIRE_V1,
+    phase_runs=ArrayWire(
+        record_wire(
+            "id scan_id post_id evaluation_id snapshot_phase_id phase trace_id "
+            "model status created_at"
+        )
+    ),
+    context=record_wire(
+        "summary metadata known_gaps",
+        summary=SUMMARY_WIRE_V1,
+        metadata=record_wire("project_key summary_id revision path"),
+    ),
+    exposures=ArrayWire(record_wire("snapshot_id scan_id phase grade_revision_id role")),
+)
+POPULATION_WIRE_V1 = record_wire("format observed_at items", items=ArrayWire(INPUT_WIRE_V1))
+SELECTION_WIRE_V1 = record_wire("project_key policy_version")
+SNAPSHOT_WIRE_V1 = record_wire(
+    "format selection members exclusions",
+    selection=SELECTION_WIRE_V1,
+    members=ArrayWire(
+        record_wire("grade_id evaluation_id grade_revision_id is_relevant input_digest")
+    ),
+    exclusions=ArrayWire(record_wire("grade_id reason")),
+)
+MANIFEST_WIRE_V2 = record_wire("format items")
+CAPTURE_WIRE_V1 = record_wire("format population_digest observed_at")
+
+
+def supports_snapshot(lineage: ArtifactLineage) -> bool:
+    return (
+        lineage.kind == "scout.corpus.snapshot"
+        and lineage.process.id == "scout.corpus.select"
+        and lineage.process.version in ("1", "2")
+    )
+
+
+def validate_revision_payload(item: FrozenGradeInput) -> Result[None, ArtifactError]:
+    try:
+        payload = GradeRevisionPayload.model_validate_json(item.revision.payload)
+    except ValueError:
+        return Err(
+            ArtifactError(
+                "validate_revision_payload", str(item.revision.id), "Corrupt grade revision payload"
+            )
+        )
+    if (
+        payload.id != item.revision.grade_id
+        or payload.evaluation_id != item.revision.evaluation_id
+        or payload.schema_version != item.revision.schema_version
+    ):
+        return Err(
+            ArtifactError(
+                "validate_revision_payload",
+                str(item.revision.id),
+                "Revision payload identity does not match its row",
+            )
+        )
+    return Ok(None)
+
+
 def preview_corpus(snapshot: CorpusSnapshot) -> CorpusPreview:
     counts = Counter(exclusion.reason for exclusion in snapshot.exclusions)
     positive_count = sum(member.is_relevant for member in snapshot.members)
@@ -228,11 +382,14 @@ def _read_frozen_input(
         "LEFT JOIN reply_draft_revisions rr ON rr.id = g.reply_revision_id WHERE g.id = ?",
         (row.grade_id,),
     ).fetchone()
+    # Malformed storage evidence must not be downgraded to an ordinary exclusion.
+    GradeRevisionPayload.model_validate_json(revision.payload)
+    recorded_payload = json.loads(revision.payload)
     try:
-        revision_matches = grade_revision_comparison_shape(current_grade) == json.loads(
-            revision.payload
-        )
+        revision_matches = grade_revision_comparison_shape(current_grade) == recorded_payload
     except (ValueError, TypeError):
+        # Invalid mutable grades remain exclusions; the immutable payload was
+        # validated separately and cannot be hidden by this comparison guard.
         revision_matches = False
     context = None
     if (
@@ -295,9 +452,26 @@ def read_grade_population(
             return Err(
                 ArtifactError("read_grade_population", None, "Ambiguous grade/draft linkage")
             )
-        items = tuple(_read_frozen_input(conn, row, dossier_root) for row in rows)
-        return Ok(FrozenGradePopulation(observed_at=datetime.now(UTC).isoformat(), items=items))
-    except (sqlite3.Error, ValueError, TypeError, OSError):
+        items: list[FrozenGradeInput] = []
+        for row in rows:
+            try:
+                item = _read_frozen_input(conn, row, dossier_root)
+            except (sqlite3.Error, ValueError, TypeError, OSError, IndexError, KeyError):
+                return Err(
+                    ArtifactError(
+                        "freeze_grade_input",
+                        str(row.grade_id),
+                        "Invalid source row, revision payload, or missing column",
+                    )
+                )
+            validated = validate_revision_payload(item)
+            if isinstance(validated, Err):
+                return validated
+            items.append(item)
+        return Ok(
+            FrozenGradePopulation(observed_at=datetime.now(UTC).isoformat(), items=tuple(items))
+        )
+    except (sqlite3.Error, ValueError, TypeError, OSError, IndexError, KeyError):
         return Err(
             ArtifactError("read_grade_population", None, "Cannot freeze source rows and revisions")
         )
@@ -324,7 +498,9 @@ def _input_exclusion(
     return None
 
 
-def select_corpus(population: FrozenGradePopulation, selection: CorpusSelection) -> CorpusSnapshot:
+def select_corpus(
+    population: FrozenGradePopulation | PopulationItems, selection: CorpusSelection
+) -> CorpusSnapshot:
     """Pure, replayable selection using only retained inputs; no caps or lookback."""
     members: list[CorpusMember] = []
     exclusions: list[CorpusExclusion] = []
@@ -345,7 +521,7 @@ def select_corpus(population: FrozenGradePopulation, selection: CorpusSelection)
                         evaluation_id=target.evaluation_id,
                         grade_revision_id=item.revision.id,
                         is_relevant=target.is_relevant,
-                        input_digest=digest_artifact(item.model_dump_json().encode()),
+                        input_digest=digest_artifact(encode_wire_v1(item, INPUT_WIRE_V1)),
                     )
                 )
     return CorpusSnapshot(selection=selection, members=tuple(members), exclusions=tuple(exclusions))
@@ -353,18 +529,36 @@ def select_corpus(population: FrozenGradePopulation, selection: CorpusSelection)
 
 def build_snapshot_bundle(
     population: FrozenGradePopulation, selection: CorpusSelection, environment: bytes
-) -> ArtifactBundle:
+) -> Result[ArtifactBundle, ArtifactError]:
     """Retain observations, per-item inputs, configuration, environment and output."""
+    if not population.items:
+        return Err(
+            ArtifactError(
+                "build_snapshot_bundle",
+                selection.project_key,
+                "No source grades; refusing an empty snapshot",
+            )
+        )
+    for item in population.items:
+        validated = validate_revision_payload(item)
+        if isinstance(validated, Err):
+            return validated
     snapshot = select_corpus(population, selection)
-    population_bytes = population.model_dump_json().encode()
-    config_bytes = selection.model_dump_json().encode()
-    output_bytes = snapshot.model_dump_json().encode()
+    item_bytes = tuple(encode_wire_v1(item, INPUT_WIRE_V1) for item in population.items)
+    manifest = PopulationManifest(items=tuple(digest_artifact(content) for content in item_bytes))
+    population_bytes = encode_wire_v1(manifest, MANIFEST_WIRE_V2)
+    capture = PopulationCapture(
+        population_digest=digest_artifact(population_bytes), observed_at=population.observed_at
+    )
+    config_bytes = encode_wire_v1(selection, SELECTION_WIRE_V1)
+    output_bytes = encode_wire_v1(snapshot, SNAPSHOT_WIRE_V1)
     contents = (
         population_bytes,
         config_bytes,
         environment,
         output_bytes,
-        *(item.model_dump_json().encode() for item in population.items),
+        encode_wire_v1(capture, CAPTURE_WIRE_V1),
+        *item_bytes,
     )
     unique = {digest_artifact(content): content for content in contents}
     lineage = ArtifactLineage(
@@ -372,17 +566,19 @@ def build_snapshot_bundle(
         inputs=(digest_artifact(population_bytes),),
         process=ArtifactProcess(
             id=ProcessId("scout.corpus.select"),
-            version="1",
+            version="2",
             config_digest=digest_artifact(config_bytes),
             environment=EnvironmentIdentity(digest_artifact(environment)),
         ),
         outputs=(digest_artifact(output_bytes),),
     )
-    return ArtifactBundle(
-        artifacts=tuple(
-            RetainedArtifact(digest=digest, content=unique[digest]) for digest in sorted(unique)
-        ),
-        lineages=(lineage,),
+    return Ok(
+        ArtifactBundle(
+            artifacts=tuple(
+                RetainedArtifact(digest=digest, content=unique[digest]) for digest in sorted(unique)
+            ),
+            lineages=(lineage,),
+        )
     )
 
 
@@ -396,28 +592,41 @@ def verify_snapshot_replay(bundle: ArtifactBundle) -> Result[int, ArtifactError]
     contents = {artifact.digest: artifact.content for artifact in bundle.artifacts}
     verified = 0
     for lineage in bundle.lineages:
-        if lineage.kind != "scout.corpus.snapshot":
+        if not supports_snapshot(lineage):
             continue
-        if (
-            lineage.process.id != "scout.corpus.select"
-            or lineage.process.version != "1"
-            or len(lineage.inputs) != 1
-            or len(lineage.outputs) != 1
-        ):
+        if len(lineage.inputs) != 1 or len(lineage.outputs) != 1:
             return Err(
-                ArtifactError("verify_snapshot_replay", None, "Unsupported snapshot producer")
+                ArtifactError("verify_snapshot_replay", None, "Invalid snapshot producer shape")
             )
         try:
-            population = FrozenGradePopulation.model_validate_json(contents[lineage.inputs[0]])
+            population: FrozenGradePopulation | PopulationItems
+            if lineage.process.version == "1":
+                population = FrozenGradePopulation.model_validate_json(contents[lineage.inputs[0]])
+            else:
+                manifest = PopulationManifest.model_validate_json(contents[lineage.inputs[0]])
+                population = PopulationItems(
+                    items=tuple(
+                        FrozenGradeInput.model_validate_json(contents[digest])
+                        for digest in manifest.items
+                    )
+                )
             selection = CorpusSelection.model_validate_json(contents[lineage.process.config_digest])
-        except ValueError:
+        except (ValueError, KeyError):
             return Err(
                 ArtifactError(
                     "verify_snapshot_replay", lineage.inputs[0], "Invalid snapshot inputs"
                 )
             )
+        if not population.items:
+            return Err(
+                ArtifactError("verify_snapshot_replay", lineage.inputs[0], "Empty population")
+            )
+        for item in population.items:
+            validated = validate_revision_payload(item)
+            if isinstance(validated, Err):
+                return validated
         snapshot = select_corpus(population, selection)
-        expected = snapshot.model_dump_json().encode()
+        expected = encode_wire_v1(snapshot, SNAPSHOT_WIRE_V1)
         if expected != contents[lineage.outputs[0]]:
             return Err(
                 ArtifactError(

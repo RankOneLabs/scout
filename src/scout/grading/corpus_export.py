@@ -52,6 +52,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sqlite3
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -294,15 +295,20 @@ def export_grading_corpus(source_db_path: str, destination_path: str) -> Grading
     that could later be mistaken for a complete export.
     """
     destination = Path(destination_path)
-    tmp_path = destination.with_name(f"{destination.name}.partial")
-
     source = _open_source(source_db_path)
+    tmp_path: Path | None = None
     try:
         with read_only_snapshot(source):
             analysis_tables = _analysis_tables(source)
             exported_tables = (*EXPORTED_TABLES, *analysis_tables)
-            with contextlib.suppress(FileNotFoundError):
-                tmp_path.unlink()
+            try:
+                descriptor, temporary = tempfile.mkstemp(
+                    prefix=f".{destination.name}.", suffix=".partial", dir=destination.parent
+                )
+            except OSError as exc:
+                raise GradingExportError(f"cannot create export at {destination}: {exc}") from exc
+            os.close(descriptor)
+            tmp_path = Path(temporary)
             written = _open_destination(tmp_path)
             try:
                 tables = tuple(
@@ -330,25 +336,17 @@ def export_grading_corpus(source_db_path: str, destination_path: str) -> Grading
                     tmp_path.unlink()
                 raise
             written.close()
+        try:
+            os.replace(tmp_path, destination)
+        except OSError as exc:
+            raise GradingExportError(
+                f"export verified but could not be moved into place at {destination}: {exc}"
+            ) from exc
     finally:
         source.close()
-
-    # The last step that can fail, and the one most easily left unguarded:
-    # a missing parent directory, a read-only mount, or a destination on a
-    # different filesystem all raise here, after every check has already
-    # passed. Unwrapped it would surface as a raw OSError traceback and
-    # leave .partial sitting next to the intended path — a complete,
-    # verified export under a name that gives no hint it is one, which is
-    # exactly the "half an export is never mistakable for a whole one"
-    # property the temporary file exists to provide.
-    try:
-        os.replace(tmp_path, destination)
-    except OSError as exc:
-        with contextlib.suppress(FileNotFoundError):
-            tmp_path.unlink()
-        raise GradingExportError(
-            f"export verified but could not be moved into place at {destination}: {exc}"
-        ) from exc
+        if tmp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                tmp_path.unlink()
 
     return GradingExportResult(destination=str(destination), tables=tables)
 

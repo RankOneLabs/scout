@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +22,7 @@ from scout.grading.artifacts import (
     digest_artifact,
     validate_bundle,
 )
+from scout.grading.wire import ArrayWire, encode_wire_v1, record_wire
 from scout.result import Err, Ok, Result
 
 
@@ -63,6 +65,28 @@ class EvidenceObservations(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     files: tuple[EvidenceFile, ...]
     runs: tuple[ExistingRunReference, ...]
+
+
+INVENTORY_SELECTION_WIRE_V1 = record_wire("study files experiment_run_ids usability reason")
+EVIDENCE_FILE_WIRE_V1 = record_wire("name digest")
+RUN_REFERENCE_WIRE_V1 = record_wire("id name observed_status attempt_ids")
+OBSERVATIONS_WIRE_V1 = record_wire(
+    "files runs", files=ArrayWire(EVIDENCE_FILE_WIRE_V1), runs=ArrayWire(RUN_REFERENCE_WIRE_V1)
+)
+EVIDENCE_WIRE_V1 = record_wire(
+    "format selection files runs",
+    selection=INVENTORY_SELECTION_WIRE_V1,
+    files=ArrayWire(EVIDENCE_FILE_WIRE_V1),
+    runs=ArrayWire(RUN_REFERENCE_WIRE_V1),
+)
+
+
+def supports_inventory(lineage: ArtifactLineage) -> bool:
+    return (
+        lineage.kind == "scout.evidence.inventory"
+        and lineage.process.id == "scout.evidence.inventory"
+        and lineage.process.version == "1"
+    )
 
 
 def assemble_study_evidence(
@@ -128,11 +152,11 @@ def inventory_evidence(
             )
         observed = EvidenceObservations(files=tuple(files), runs=tuple(runs))
         evidence = assemble_study_evidence(observed, selection)
-        evidence_bytes = evidence.model_dump_json().encode()
-        config_bytes = selection.model_dump_json().encode()
+        evidence_bytes = encode_wire_v1(evidence, EVIDENCE_WIRE_V1)
+        config_bytes = encode_wire_v1(selection, INVENTORY_SELECTION_WIRE_V1)
         # The observed DB links are retained inputs too; status remains distinct
         # from the operator's evidence-usability annotation in selection.
-        run_bytes = observed.model_dump_json().encode()
+        run_bytes = encode_wire_v1(observed, OBSERVATIONS_WIRE_V1)
         inputs = (*sorted(retained), digest_artifact(run_bytes))
         for content in (evidence_bytes, config_bytes, environment, run_bytes):
             retained[digest_artifact(content)] = content
@@ -164,6 +188,34 @@ def inventory_evidence(
         )
 
 
+def replay_inventory_lineage(
+    lineage: ArtifactLineage, contents: Mapping[ArtifactDigest, bytes]
+) -> Result[StudyEvidence, ArtifactError]:
+    """Replay one known producer from bytes validated by the caller's bundle boundary."""
+    if not supports_inventory(lineage) or len(lineage.inputs) < 2 or len(lineage.outputs) != 1:
+        return Err(
+            ArtifactError("verify_inventory_replay", None, "Invalid inventory producer shape")
+        )
+    try:
+        selection = InventorySelection.model_validate_json(contents[lineage.process.config_digest])
+        observed = EvidenceObservations.model_validate_json(contents[lineage.inputs[-1]])
+        recorded_output = contents[lineage.outputs[0]]
+    except (ValueError, KeyError):
+        return Err(ArtifactError("verify_inventory_replay", None, "Invalid inventory inputs"))
+    if not observed.files or any(file.digest not in lineage.inputs[:-1] for file in observed.files):
+        return Err(
+            ArtifactError("verify_inventory_replay", None, "Missing evidence file reference")
+        )
+    evidence = assemble_study_evidence(observed, selection)
+    if encode_wire_v1(evidence, EVIDENCE_WIRE_V1) != recorded_output:
+        return Err(
+            ArtifactError(
+                "verify_inventory_replay", lineage.outputs[0], "Inventory is not re-derivable"
+            )
+        )
+    return Ok(evidence)
+
+
 def verify_inventory_replay(bundle: ArtifactBundle) -> Result[int, ArtifactError]:
     match validate_bundle(bundle):
         case Err() as error:
@@ -173,36 +225,10 @@ def verify_inventory_replay(bundle: ArtifactBundle) -> Result[int, ArtifactError
     contents = {artifact.digest: artifact.content for artifact in bundle.artifacts}
     verified = 0
     for lineage in bundle.lineages:
-        if lineage.kind != "scout.evidence.inventory":
+        if not supports_inventory(lineage):
             continue
-        if (
-            lineage.process.id != "scout.evidence.inventory"
-            or lineage.process.version != "1"
-            or len(lineage.inputs) < 2
-            or len(lineage.outputs) != 1
-        ):
-            return Err(
-                ArtifactError("verify_inventory_replay", None, "Unsupported inventory producer")
-            )
-        try:
-            selection = InventorySelection.model_validate_json(
-                contents[lineage.process.config_digest]
-            )
-            observed = EvidenceObservations.model_validate_json(contents[lineage.inputs[-1]])
-        except ValueError:
-            return Err(ArtifactError("verify_inventory_replay", None, "Invalid inventory inputs"))
-        if not observed.files or any(
-            file.digest not in lineage.inputs[:-1] for file in observed.files
-        ):
-            return Err(
-                ArtifactError("verify_inventory_replay", None, "Missing evidence file reference")
-            )
-        expected = assemble_study_evidence(observed, selection).model_dump_json().encode()
-        if expected != contents[lineage.outputs[0]]:
-            return Err(
-                ArtifactError(
-                    "verify_inventory_replay", lineage.outputs[0], "Inventory is not re-derivable"
-                )
-            )
+        replayed = replay_inventory_lineage(lineage, contents)
+        if isinstance(replayed, Err):
+            return replayed
         verified += 1
     return Ok(verified)

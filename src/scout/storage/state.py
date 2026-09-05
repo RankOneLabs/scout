@@ -143,7 +143,9 @@ class StateManager:
     autonomy_events methods remain defined here directly.
     """
 
-    def __init__(self, db_path: str, *, init_schema: bool = True) -> None:
+    def __init__(
+        self, db_path: str, *, init_schema: bool = True, allow_create: bool = True
+    ) -> None:
         """Open a connection to `db_path`.
 
         Set `init_schema=False` for per-request connections once a caller
@@ -160,12 +162,12 @@ class StateManager:
             # ALTER TABLE ... RENAME fires, and intermediate migration
             # states can otherwise trip FK checks that the final shape
             # never would. Re-enabled once the database is fully upgraded.
-            self._db = Db(db_path, foreign_keys=False)
+            self._db = Db(db_path, foreign_keys=False, allow_create=allow_create)
             self._init_schema()
             self._db.set_foreign_keys(True)
             self._db.commit()
         else:
-            self._db = Db(db_path, foreign_keys=True)
+            self._db = Db(db_path, foreign_keys=True, allow_create=allow_create)
 
         self._uow = UnitOfWork(self._db)
         self._scans = ScanStore(self._uow)
