@@ -187,6 +187,32 @@ class TestLoadProjectDossiers:
 
 
 class TestRunPreflight:
+    @pytest.mark.parametrize(("models", "expected_ok", "families"), [
+        (("openrouter/google/gemini-2.5-flash", "openrouter/openai/gpt-5-mini",
+          "openrouter/anthropic/claude-sonnet-4.6"), True, ["claude", "gemini", "gpt"]),
+        (("openrouter/moonshotai/kimi-k2", "openrouter/qwen/qwen3-32b",
+          "openrouter/anthropic/claude-sonnet-4.6"), True, ["claude", "kimi", "qwen"]),
+        (("claude-sonnet-4-6", "openrouter/anthropic/claude-sonnet-4.6",
+          "openrouter/anthropic/claude-opus-4.6"), False, ["claude"]),
+        (("gpt-5-mini", "claude-sonnet-4-6", "dispatch/sonnet"),
+         False, ["claude", "gpt"]),
+    ])
+    def test_model_identity_gate_is_read_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        models: tuple[str, str, str], expected_ok: bool, families: list[str],
+    ) -> None:
+        db_path = tmp_path / "scout.db"
+        self._seed_db(db_path, [])
+        before = db_path.read_bytes()
+        for setting, model in zip(
+            ("RELEVANCE_MODEL", "REPLY_DRAFT_MODEL", "CRITIC_MODEL"), models, strict=True,
+        ):
+            monkeypatch.setattr(scan_runner, setting, model)
+        report = scan_runner.run_preflight(str(db_path), str(tmp_path / "dossier-source"))
+        assert report["ok"] is expected_ok
+        assert _details(report)["model_families"] == families
+        assert db_path.read_bytes() == before
+
     @pytest.fixture(autouse=True)
     def _independent_model_families(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """run_preflight also gates on model-family independence; give it two

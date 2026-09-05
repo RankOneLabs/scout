@@ -56,6 +56,35 @@ the prefix:
 - `dispatch/<name>` uses the service configured by `DISPATCH_URL`.
 - `ollama/<name>` uses a local Ollama server.
 
+### Preflight model diversity
+
+Preflight resolves model identity separately from routing. Its existing
+pipeline-wide requirement is at least two distinct recognized model families
+across relevance, reply drafting, and critique. This is a diversity check, not
+proof of evaluator independence or a worker–critic-specific qualification gate.
+
+Recognized OpenRouter namespace/family pairs are `anthropic/claude-*`,
+`openai/gpt-*` (also `chatgpt-*`), `openai/o1`, `openai/o3`, `openai/o4`
+(including their hyphenated variants, grouped as `o-series`),
+`google/gemini-*`, `moonshotai/kimi-*`, and `qwen/qwen*` (numeric or hyphenated
+version suffixes). For example, the published identifiers for
+[Kimi K2](https://openrouter.ai/moonshotai/kimi-k2) and
+[Qwen3](https://openrouter.ai/qwen/qwen3-235b-a22b) become
+`openrouter/moonshotai/kimi-k2` and `openrouter/qwen/qwen3-235b-a22b` in Jig.
+
+Direct Claude, GPT/ChatGPT, o-series, and Gemini identifiers resolve to the
+same families as their OpenRouter counterparts. A different route, version,
+or model size does not create another family. Recognition does not check API
+availability, credentials, pricing, or behavioral qualification, and does not
+change the models configured for any phase.
+
+Unknown identifiers, mismatched developer namespaces, and opaque Dispatch or
+Ollama aliases fail preflight with a diagnostic rather than count as another
+family. Alias identity metadata is not yet supported; supporting an additional
+identity requires a reviewed resolver mapping, not a made-up route prefix.
+The report retains `model_families` and adds `model_identities` containing the
+exact configured identifier, route, developer namespace, and family.
+
 ## Cost considerations
 
 With keyword prefiltering enabled, a scan of 200 messages might send 10–30 to
