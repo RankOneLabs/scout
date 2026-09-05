@@ -14,6 +14,7 @@ from scout.grading.snapshots import (
     CorpusSelection,
     FrozenGradePopulation,
     build_snapshot_bundle,
+    preview_corpus,
     read_grade_population,
     select_corpus,
     verify_snapshot_replay,
@@ -77,6 +78,96 @@ def capture(state: StateManager) -> FrozenGradePopulation:
 def test_old_grade_is_not_excluded_by_prompt_lookback(state: StateManager) -> None:
     snapshot = select_corpus(capture(state), CorpusSelection(project_key="synthetic"))
     assert len(snapshot.members) == 1
+
+
+@pytest.mark.parametrize("original_decision", [0, 1])
+def test_recorded_decision_preserves_integer_encoding(
+    state: StateManager, original_decision: int
+) -> None:
+    with state.db.transaction():
+        state.conn.execute("UPDATE evaluations SET relevant = ?", (original_decision,))
+    population = capture(state)
+    evaluation = population.items[0].evaluation
+    assert evaluation is not None
+    assert type(evaluation.relevant) is int
+    assert evaluation.relevant == original_decision
+
+
+@pytest.mark.parametrize("original_decision", [0, 1])
+def test_legacy_boolean_population_encoding_round_trips_and_replays(
+    state: StateManager, original_decision: int
+) -> None:
+    with state.db.transaction():
+        state.conn.execute("UPDATE evaluations SET relevant = ?", (original_decision,))
+    # Before RecordedEvaluation, v1 capture encoded EvaluationRow.relevant as
+    # a JSON boolean. Preserving that spelling is necessary for member digests.
+    boolean_json = "true" if original_decision else "false"
+    legacy_json = (
+        capture(state)
+        .model_dump_json()
+        .replace(f'"relevant":{original_decision}', f'"relevant":{boolean_json}')
+    )
+    assert f'"relevant":{boolean_json}' in legacy_json
+    population = FrozenGradePopulation.model_validate_json(legacy_json)
+    assert population.model_dump_json() == legacy_json
+    bundle = build_snapshot_bundle(
+        population, CorpusSelection(project_key="synthetic"), b"environment"
+    )
+    assert verify_snapshot_replay(bundle) == Ok(1)
+
+
+@pytest.mark.parametrize("original_decision", [2, -1])
+@pytest.mark.parametrize("project_key", ["synthetic", "unrelated"])
+def test_invalid_evaluation_is_retained_and_excluded_without_blocking_valid_members(
+    state: StateManager, original_decision: int, project_key: str
+) -> None:
+    with state.db.transaction():
+        state.conn.execute(
+            "INSERT INTO posts(id, platform, platform_msg_id, content) "
+            "VALUES (2, 'bluesky', 'invalid-decision-post', 'Another graded post')"
+        )
+        state.conn.execute(
+            "INSERT INTO evaluations(id, post_id, relevant, score, surface_status, "
+            "project_key, posture, dossier_revision, dossier_summary_id) "
+            "VALUES (2, 2, 1, 0.9, 'surfaced', ?, 'answer', ?, 'summary')",
+            (project_key, "b" * 40),
+        )
+    state.save_grade(
+        GradeRecord(
+            post_id=2,
+            evaluation_id=2,
+            source="web",
+            graded_at=datetime(2020, 1, 1, tzinfo=UTC),
+            relevance_judgment="correct",
+            action_judgment="accept",
+            schema_version=3,
+        )
+    )
+    with state.db.transaction():
+        state.conn.execute("UPDATE evaluations SET relevant = ? WHERE id = 2", (original_decision,))
+
+    population = capture(state)
+    recorded = population.items[1]
+    assert recorded.evaluation is not None
+    assert recorded.evaluation.relevant == original_decision
+    assert recorded.grade.evaluation_relevant == original_decision
+    selection = CorpusSelection(project_key="synthetic")
+    snapshot = select_corpus(population, selection)
+    assert [member.evaluation_id for member in snapshot.members] == [1]
+    expected_reason = (
+        "invalid_original_decision" if project_key == "synthetic" else "outside_project"
+    )
+    assert [(item.grade_id, item.reason) for item in snapshot.exclusions] == [
+        (recorded.grade.grade_id, expected_reason)
+    ]
+    preview = preview_corpus(snapshot)
+    assert (preview.population_count, preview.eligible_count) == (2, 1)
+
+    bundle = build_snapshot_bundle(population, selection, b"environment")
+    assert state.artifacts.import_bundle(bundle) == Ok(None)
+    exported = state.artifacts.export_bundle()
+    assert isinstance(exported, Ok)
+    assert verify_snapshot_replay(exported.value) == Ok(1)
 
 
 def test_snapshot_replays_after_live_post_and_grade_change(state: StateManager) -> None:

@@ -23,6 +23,7 @@ PR 1's artifact model does not depend on those execution fixes.
 | `ArtifactLineage` | Approved workflow's four-part transform: kind, input digests, process, output digests |
 | `ArtifactProcess` | Producer-supplied ID/version, retained configuration digest, resolvable environment identity |
 | `RelevanceTargetSource` | `GradePopulationRow`: grade ID, resolved evaluation ID, evaluation relevant decision, human relevance judgment |
+| `RecordedEvaluation` | `evaluations` columns excluding deprecated `abstain_reason`; retains integer `relevant` values for selection-time validation, with boolean compatibility for existing v1 artifacts |
 | `HumanRelevanceTarget` | Tested judgment mapping: correct keeps the original decision; consistent false positive/negative invert it |
 | `TargetExclusion` | Explicit invalid/missing/inconsistent source fact, retaining grade/evaluation identity |
 

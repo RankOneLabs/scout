@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, TypeAdapter
 
 from scout.dossiers.resolver import DossierResolution, DossierResolutionError, resolve_dossier
 from scout.grading.artifacts import (
@@ -43,7 +43,7 @@ from scout.grading.relevance_targets import (
     project_relevance_target_source,
 )
 from scout.result import Err, Ok, Result
-from scout.storage.evaluations import EvaluationRow, PhaseRun
+from scout.storage.evaluations import PhaseRun
 from scout.storage.grades import GradeRevision
 from scout.storage.migrations import grade_revision_comparison_shape
 
@@ -71,6 +71,33 @@ class RecordedPost(BaseModel):
     parent_url: str | None
 
 
+class RecordedEvaluation(BaseModel):
+    """Recorded evaluations columns from storage/schema.py, excluding abstain_reason.
+
+    Unlike the operational EvaluationRow, capture retains the INTEGER relevant
+    value even when it is outside 0/1; selection classifies invalid decisions.
+    StrictBool preserves the encoding of previously retained v1 populations so
+    their per-input digests still replay unchanged.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    id: int
+    post_id: int
+    relevant: StrictInt | StrictBool
+    score: float
+    reason: str | None
+    relevant_to: str | None
+    keyword_route_id: int | None
+    scan_id: int | None
+    created_at: str | None
+    project_key: str | None
+    posture: str | None
+    surface_status: str
+    failure_reason: str | None
+    dossier_summary_id: str | None
+    dossier_revision: str | None
+
+
 class RecordedExposure(BaseModel):
     """Existing feedback_snapshot_items joined to their phase and active snapshot."""
 
@@ -88,7 +115,7 @@ class FrozenGradeInput(BaseModel):
     revision: GradeRevision
     revision_matches: bool
     post: RecordedPost | None
-    evaluation: EvaluationRow | None
+    evaluation: RecordedEvaluation | None
     phase_runs: tuple[PhaseRun, ...]
     # GradeRevision.payload already retains correction pointer AND edited_text.
     # Keeping its exact payload avoids following a mutable "latest correction".
@@ -188,12 +215,12 @@ def _read_frozen_input(
     evaluation_row = conn.execute(
         "SELECT * FROM evaluations WHERE id = ?", (row.evaluation_id,)
     ).fetchone()
-    # EvaluationRow deliberately excludes the deprecated abstain_reason column.
+    # Capture the recorded decision, not the operational boolean projection.
     evaluation = (
         None
         if evaluation_row is None
-        else TypeAdapter(EvaluationRow).validate_python(
-            {name: evaluation_row[name] for name in EvaluationRow.__dataclass_fields__}
+        else RecordedEvaluation.model_validate(
+            {name: evaluation_row[name] for name in RecordedEvaluation.model_fields}
         )
     )
     current_grade = conn.execute(
