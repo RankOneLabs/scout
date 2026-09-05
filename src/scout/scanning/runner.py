@@ -68,6 +68,15 @@ from scout.grading.feedback import (
     PhaseFeedbackBundle,
     legacy_feedback_bundle,
 )
+from scout.model_identity import (
+    ModelId,
+    ModelIdentity,
+    PhaseModel,
+    check_model_diversity,
+    model_families,
+    parse_model_identity_config,
+    resolve_model_identity,
+)
 from scout.platforms.bluesky import BlueskyScanner
 from scout.platforms.discord import DiscordScanner
 from scout.platforms.farcaster import FarcasterScanner
@@ -499,10 +508,34 @@ def run_preflight(db_path: str, dossier_root: str) -> dict[str, object]:
         except RuntimeError as exc:
             errors.append(f"dossier-source revision is unavailable: {exc}")
 
-    families = {model.split("/", 1)[0].split("-", 1)[0] for model in (RELEVANCE_MODEL, REPLY_DRAFT_MODEL, CRITIC_MODEL)}
-    details["model_families"] = sorted(families)
-    if len(families) < 2:
-        errors.append("configured model families are not sufficiently independent")
+    settings_result = parse_model_identity_config(_config.SCOUT_MODEL_IDENTITY_CONFIG)
+    if isinstance(settings_result, Err):
+        errors.append(f"{settings_result.error.operation}: {settings_result.error.detail}")
+        return {"ok": False, "errors": errors, "details": details}
+    settings = settings_result.value
+    details["model_diversity_policy"] = settings.policy.model_dump()
+    phase_models = (
+        PhaseModel("relevance", ModelId(RELEVANCE_MODEL)),
+        PhaseModel("reply_draft", ModelId(REPLY_DRAFT_MODEL)),
+        PhaseModel("critic", ModelId(CRITIC_MODEL)),
+    )
+    identities: list[ModelIdentity] = []
+    for phase_model in phase_models:
+        match resolve_model_identity(phase_model.model, settings.identities):
+            case Ok(identity):
+                identities.append(identity)
+            case Err(error):
+                errors.append(
+                    f"{error.operation}: {phase_model.role} model {error.model!r}: {error.detail}"
+                )
+    details["model_families"] = list(model_families(identities))
+    details["model_identities"] = [identity.to_json() for identity in identities]
+    if len(identities) == len(phase_models):
+        match check_model_diversity(identities, settings.policy):
+            case Err(diversity_error):
+                errors.append(diversity_error.detail)
+            case Ok():
+                pass
     details["corpus_diagnostics"] = "run scripts/lint_eval_corpus.py with this checkout"
     return {"ok": not errors, "errors": errors, "details": details}
 
