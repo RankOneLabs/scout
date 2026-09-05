@@ -47,6 +47,27 @@ from scout.dossiers.resolver import (
 _FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "dossier_source"
 
 
+@pytest.mark.parametrize("index", ["version: 1.0.0\n", "version: 1.0.0\nentries: []\n"])
+def test_missing_or_invalid_index_entries_raise_boundary_error(
+    monkeypatch: pytest.MonkeyPatch, index: str
+) -> None:
+    from unittest.mock import Mock
+
+    revision = "b" * 40
+    monkeypatch.setattr("scout.dossiers.resolver.subprocess.run", Mock(side_effect=[
+        subprocess.CompletedProcess([], 0, "", ""),
+        subprocess.CompletedProcess([], 0, revision + "\n", ""),
+    ]))
+    # A permissive but well-formed pinned schema must not leak Python exceptions.
+    monkeypatch.setattr("scout.dossiers.resolver._git_show", Mock(side_effect=[
+        '{"$id":"https://synthetic.test/schemas/index.v1.schema.json","type":"object"}',
+        '{"$id":"https://synthetic.test/schemas/summary.v1.schema.json","type":"object"}',
+        index,
+    ]))
+    with pytest.raises(DossierResolutionError, match="entries must be a mapping"):
+        resolve_dossier("/synthetic", revision, "synthetic", "summary")
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

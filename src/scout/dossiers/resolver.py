@@ -408,7 +408,11 @@ def resolve_dossier(
     if not isinstance(index, Mapping) or not _is_v1_index_version(index.get("version")):
         raise _boundary_error("index.yaml must declare version 1.0.0", project_key,
                               dossier_summary_id, revision)
-    entry = index["entries"].get(dossier_summary_id)
+    entries = index.get("entries")
+    if not isinstance(entries, Mapping):
+        raise _boundary_error("index entries must be a mapping", project_key,
+                              dossier_summary_id, revision, "index.yaml")
+    entry = entries.get(dossier_summary_id)
     if not isinstance(entry, Mapping):
         raise _boundary_error("summary id is absent from index", project_key, dossier_summary_id, revision)
     if entry.get("type") != "summary":
@@ -425,11 +429,22 @@ def resolve_dossier(
     except yaml.YAMLError as exc:
         raise _boundary_error(f"summary is invalid YAML: {exc}", project_key, dossier_summary_id, revision, path) from exc
     _validate_instance(document, summary_schema, registry, project_key, dossier_summary_id, revision, path)
+    if not isinstance(document, Mapping):
+        raise _boundary_error("summary must be a mapping", project_key,
+                              dossier_summary_id, revision, path)
 
-    return _build_resolution(
-        document, project_key, dossier_summary_id, revision, path,
-        max_age_days=max_age_days, min_entries=min_entries,
-    )
+    try:
+        return _build_resolution(
+            document, project_key, dossier_summary_id, revision, path,
+            max_age_days=max_age_days, min_entries=min_entries,
+        )
+    except DossierResolutionError:
+        raise
+    except (KeyError, IndexError, AttributeError, TypeError, ValueError) as exc:
+        # A permissive pinned schema must not leak implementation exceptions
+        # from projection of untrusted dossier data across this IO boundary.
+        raise _boundary_error("invalid canonical dossier structure", project_key,
+                              dossier_summary_id, revision, path) from exc
 
 
 def _build_resolution(

@@ -9,7 +9,47 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 37
+LATEST_SCHEMA_VERSION = 39
+
+GRADE_REVISION_NO_REPLACE = """CREATE TRIGGER IF NOT EXISTS grade_revisions_no_replace
+    BEFORE INSERT ON grade_revisions
+    WHEN EXISTS (SELECT 1 FROM grade_revisions
+        WHERE id = NEW.id OR (grade_id = NEW.grade_id AND revision = NEW.revision))
+    BEGIN SELECT RAISE(ABORT, 'grade_revisions is immutable'); END"""
+
+# Shared by bootstrap and the additive v38 migration. Each statement executes
+# individually during migration so executescript cannot commit the outer UoW.
+ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS analysis_artifacts (
+        digest TEXT PRIMARY KEY NOT NULL
+            CHECK(length(digest) = 64 AND digest NOT GLOB '*[^0-9a-f]*'),
+        content BLOB NOT NULL CHECK(typeof(content) = 'blob'),
+        recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )""",
+    """CREATE TABLE IF NOT EXISTS analysis_lineage (
+        digest TEXT PRIMARY KEY NOT NULL REFERENCES analysis_artifacts(digest)
+    )""",
+    """CREATE TRIGGER IF NOT EXISTS analysis_artifacts_no_update
+        BEFORE UPDATE ON analysis_artifacts BEGIN
+            SELECT RAISE(ABORT, 'analysis_artifacts is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS analysis_artifacts_no_delete
+        BEFORE DELETE ON analysis_artifacts BEGIN
+            SELECT RAISE(ABORT, 'analysis_artifacts is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS analysis_artifacts_no_replace
+        BEFORE INSERT ON analysis_artifacts
+        WHEN EXISTS (SELECT 1 FROM analysis_artifacts WHERE digest = NEW.digest)
+        BEGIN SELECT RAISE(ABORT, 'analysis_artifacts is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS analysis_lineage_no_update
+        BEFORE UPDATE ON analysis_lineage BEGIN
+            SELECT RAISE(ABORT, 'analysis_lineage is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS analysis_lineage_no_delete
+        BEFORE DELETE ON analysis_lineage BEGIN
+            SELECT RAISE(ABORT, 'analysis_lineage is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS analysis_lineage_no_replace
+        BEFORE INSERT ON analysis_lineage
+        WHEN EXISTS (SELECT 1 FROM analysis_lineage WHERE digest = NEW.digest)
+        BEGIN SELECT RAISE(ABORT, 'analysis_lineage is immutable'); END""",
+)
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS scans (
@@ -915,6 +955,9 @@ CREATE TABLE IF NOT EXISTS human_positive_promotions (
 
 CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
     ON human_positive_promotions(status, updated_at, source_evaluation_id);
+
+{';'.join(ARTIFACT_SCHEMA_STATEMENTS)};
+{GRADE_REVISION_NO_REPLACE};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

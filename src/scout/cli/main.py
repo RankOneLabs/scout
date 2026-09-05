@@ -111,6 +111,9 @@ def parse_args() -> argparse.Namespace:
     )
 
     subparsers = parser.add_subparsers(dest="subcommand")
+    from scout.cli.analysis import add_analysis_parser
+
+    add_analysis_parser(subparsers, DB_PATH)
     preflight_p = subparsers.add_parser("preflight", help="Read-only Phase 1 deployment gate")
     preflight_p.add_argument("--dossier-root", required=True)
     preflight_p.add_argument("--db-path", default=DB_PATH)
@@ -567,6 +570,18 @@ def paa_list(args: argparse.Namespace) -> None:
 def main() -> None:
     args = parse_args()
     setup_logging(debug=args.debug)
+    if args.subcommand == "analysis":
+        from scout.cli.analysis import run_analysis
+        from scout.result import Err, Ok
+
+        match run_analysis(args):
+            case Ok(result):
+                print(result.model_dump_json(indent=2))
+            case Err(error):
+                print(f"{error.operation}: {error.detail}", file=sys.stderr)
+                raise SystemExit(1)
+        return
+
     if args.subcommand == "preflight":
         report = run_preflight(args.db_path, args.dossier_root)
         print(json.dumps(report, indent=2, sort_keys=True))

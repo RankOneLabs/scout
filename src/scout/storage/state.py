@@ -39,6 +39,7 @@ from scout.config import (
 )
 from scout.grading.feedback import FeedbackMode, PersistedFeedbackSnapshot, PhaseFeedbackBundle
 from scout.registry import RuntimeRegistry
+from scout.storage.artifacts import ArtifactStore
 from scout.storage.db import Db
 from scout.storage.evaluations import (
     AUTHOR_RATE_EVALUATOR_VERSION as AUTHOR_RATE_EVALUATOR_VERSION,
@@ -142,7 +143,9 @@ class StateManager:
     autonomy_events methods remain defined here directly.
     """
 
-    def __init__(self, db_path: str, *, init_schema: bool = True) -> None:
+    def __init__(
+        self, db_path: str, *, init_schema: bool = True, allow_create: bool = True
+    ) -> None:
         """Open a connection to `db_path`.
 
         Set `init_schema=False` for per-request connections once a caller
@@ -159,12 +162,12 @@ class StateManager:
             # ALTER TABLE ... RENAME fires, and intermediate migration
             # states can otherwise trip FK checks that the final shape
             # never would. Re-enabled once the database is fully upgraded.
-            self._db = Db(db_path, foreign_keys=False)
+            self._db = Db(db_path, foreign_keys=False, allow_create=allow_create)
             self._init_schema()
             self._db.set_foreign_keys(True)
             self._db.commit()
         else:
-            self._db = Db(db_path, foreign_keys=True)
+            self._db = Db(db_path, foreign_keys=True, allow_create=allow_create)
 
         self._uow = UnitOfWork(self._db)
         self._scans = ScanStore(self._uow)
@@ -172,6 +175,7 @@ class StateManager:
         self._evaluations = EvaluationStore(self._uow)
         self._grades = GradeStore(self._uow, evaluations=self._evaluations)
         self._registry = RegistryStore(self._uow)
+        self._artifacts = ArtifactStore(self._uow)
 
     @property
     def db(self) -> Db:
@@ -212,6 +216,11 @@ class StateManager:
         """The Grade aggregate store — grades, revisions, usage
         overrides, and human-positive promotions."""
         return self._grades
+
+    @property
+    def artifacts(self) -> ArtifactStore:
+        """Exact retained analysis bytes and immutable producer lineage."""
+        return self._artifacts
 
     @property
     def registry(self) -> RegistryStore:

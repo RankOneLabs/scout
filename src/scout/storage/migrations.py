@@ -3002,6 +3002,21 @@ def _migrate_to_37(conn: sqlite3.Connection) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
 
 
+def _migrate_to_38(conn: sqlite3.Connection) -> None:
+    """Retain exact analysis bytes and append-only lineage in scout.db."""
+    from scout.storage.schema import ARTIFACT_SCHEMA_STATEMENTS
+
+    for statement in ARTIFACT_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
+def _migrate_to_39(conn: sqlite3.Connection) -> None:
+    """Protect both revision uniqueness keys against SQLite REPLACE deletion."""
+    from scout.storage.schema import GRADE_REVISION_NO_REPLACE
+
+    conn.execute(GRADE_REVISION_NO_REPLACE)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3039,4 +3054,6 @@ MIGRATIONS: dict[int, Migration] = {
     35: _migrate_to_35,
     36: _migrate_to_36,
     37: _migrate_to_37,
+    38: _migrate_to_38,
+    39: _migrate_to_39,
 }

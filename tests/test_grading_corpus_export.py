@@ -78,6 +78,38 @@ def source_db(tmp_path: Path) -> Path:
     return path
 
 
+def test_half_schema_refusal_does_not_remove_another_export_partial(
+    source_db: Path, tmp_path: Path
+) -> None:
+    unrelated = tmp_path / "export.db.partial"
+    unrelated.write_bytes(b"another invocation owns this file")
+    with sqlite3.connect(source_db) as conn:
+        conn.execute("DROP TABLE analysis_lineage")
+    with pytest.raises(GradingExportError, match="incomplete analysis"):
+        export_grading_corpus(str(source_db), str(tmp_path / "export.db"))
+    assert unrelated.read_bytes() == b"another invocation owns this file"
+    assert not list(tmp_path.glob(".export.db.*.partial"))
+
+
+def test_copy_failure_removes_only_owned_staging_file(
+    source_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scout.grading.corpus_export as exporter
+
+    unrelated = tmp_path / "export.db.partial"
+    unrelated.write_bytes(b"another invocation owns this file")
+
+    def fail_copy(*args: object) -> int:
+        assert len(list(tmp_path.glob(".export.db.*.partial"))) == 1
+        raise GradingExportError("synthetic copy failure")
+
+    monkeypatch.setattr(exporter, "_copy_table", fail_copy)
+    with pytest.raises(GradingExportError, match="synthetic copy"):
+        export_grading_corpus(str(source_db), str(tmp_path / "export.db"))
+    assert unrelated.exists()
+    assert not list(tmp_path.glob(".export.db.*.partial"))
+
+
 class TestTheExportCarriesTheCorpus:
     def test_every_declared_table_is_present(self, source_db: Path, tmp_path: Path) -> None:
         destination = tmp_path / "scout.grading.db"
