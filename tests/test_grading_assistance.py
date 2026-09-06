@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import math
 import platform
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError
@@ -26,6 +28,7 @@ from scout.grading.assistance import (
     fit_tfidf,
     freeze_partition,
     group_posts,
+    population_grouping_posts,
     report_queue_reviews,
     score_texts,
     select_random,
@@ -43,6 +46,7 @@ from scout.grading.assistance_store import (
 from scout.grading.assistance_types import (
     AssistanceConfig,
     RandomSelector,
+    ReplayVerification,
     ReviewOutcome,
     SelectionReference,
     TfidfSelector,
@@ -164,7 +168,12 @@ def runtime():
 
 
 def partition_for(request_data, examples):
-    result = freeze_partition(examples, request_data.snapshot_digest, request_data.config)
+    result = freeze_partition(
+        examples,
+        request_data.snapshot_digest,
+        request_data.config,
+        related_posts=population_grouping_posts(request_data.population),
+    )
     assert isinstance(result, Ok), result
     return result.value
 
@@ -268,6 +277,7 @@ def test_one_class_or_infeasible_split_is_explicit(request_data, examples):
             tuple(item for item in examples if item.is_relevant),
             request_data.snapshot_digest,
             request_data.config,
+            related_posts=population_grouping_posts(request_data.population),
         ),
         Err,
     )
@@ -276,6 +286,7 @@ def test_one_class_or_infeasible_split_is_explicit(request_data, examples):
             tuple(replace(item, exposed=True) for item in examples),
             request_data.snapshot_digest,
             request_data.config,
+            related_posts=population_grouping_posts(request_data.population),
         ),
         Err,
     )
@@ -377,13 +388,15 @@ def test_pinned_execution_roundtrips_and_replays_after_live_changes(state, reque
     restored = ArtifactBundle.model_validate_json(built.value.bundle.model_dump_json())
     with state.db.transaction():
         state.conn.execute("UPDATE posts SET content = 'changed live text'")
-    assert verify_assistance_replay(restored) == Ok(1)
-    assert verify_analysis_bundle(restored) == Ok(2)
+    assert verify_assistance_replay(restored) == Ok(ReplayVerification(replayed_lineage_count=1))
+    assert verify_analysis_bundle(restored) == Ok(ReplayVerification(replayed_lineage_count=2))
     with StateManager(":memory:") as destination:
         assert destination.artifacts.import_bundle(restored) == Ok(None)
         exported = destination.artifacts.export_bundle()
         assert isinstance(exported, Ok)
-        assert verify_analysis_bundle(exported.value) == Ok(2)
+        assert verify_analysis_bundle(exported.value) == Ok(
+            ReplayVerification(replayed_lineage_count=2)
+        )
 
 
 def test_persisted_model_scores_without_fitting_again(request_data, examples, monkeypatch):
@@ -393,8 +406,8 @@ def test_persisted_model_scores_without_fitting_again(request_data, examples, mo
     def forbidden(*args, **kwargs):
         raise AssertionError("fit must not run during scoring")
 
-    monkeypatch.setattr("scout.grading.assistance.TfidfVectorizer.fit", forbidden)
-    monkeypatch.setattr("scout.grading.assistance.TfidfVectorizer.fit_transform", forbidden)
+    monkeypatch.setattr("sklearn.feature_extraction.text.TfidfVectorizer.fit", forbidden)
+    monkeypatch.setattr("sklearn.feature_extraction.text.TfidfVectorizer.fit_transform", forbidden)
     scores = score_texts(((1, "robot workflow"),), fitted.value, request_data.config.ranked)
     assert isinstance(scores, Ok), scores
     assert scores.value[0].explanation
@@ -481,7 +494,11 @@ def test_runtime_missing_package_metadata_returns_structured_error(
     assert result.error.detail == "Cannot capture declared/runtime pins"
 
 
-def test_ungraded_bridge_cannot_join_train_and_heldout(request_data, examples):
+@pytest.mark.parametrize("compact", [False, True])
+def test_ungraded_bridge_cannot_join_train_and_heldout(request_data, examples, compact):
+    from scout.grading.assistance import duplicate_key
+    from scout.grading.assistance_types import GroupingPost
+
     root, leaf = examples[:2]
     leaf = replace(leaf, post=leaf.post.model_copy(update={"parent_id": "bridge"}))
     bridge = root.post.model_copy(
@@ -493,6 +510,14 @@ def test_ungraded_bridge_cannot_join_train_and_heldout(request_data, examples):
         }
     )
     changed = (root, leaf, *examples[2:])
+    if compact:
+        bridge = GroupingPost(
+            id=bridge.id,
+            platform=bridge.platform,
+            platform_msg_id=bridge.platform_msg_id,
+            parent_id=bridge.parent_id,
+            duplicate_digest=duplicate_key(bridge),
+        )
     result = freeze_partition(
         changed, request_data.snapshot_digest, request_data.config, related_posts=(bridge,)
     )
@@ -516,7 +541,9 @@ def test_random_only_runs_without_a_two_class_training_requirement(request_data,
     assert isinstance(result, Ok)
     assert result.value.outputs.model is None
     assert result.value.outputs.report.heldout is None
-    assert verify_assistance_replay(result.value.bundle) == Ok(1)
+    assert verify_assistance_replay(result.value.bundle) == Ok(
+        ReplayVerification(replayed_lineage_count=1)
+    )
 
 
 def test_selected_duplicate_keeps_nonselected_source_link(request_data):
@@ -602,7 +629,9 @@ def test_source_archive_can_differ_when_current_v1_adapter_reproduces_outputs(
     monkeypatch.setattr(
         "scout.grading.assistance_store._installed_source", lambda: b"updated unrelated module"
     )
-    assert verify_assistance_replay(built.value.bundle) == Ok(1)
+    assert verify_assistance_replay(built.value.bundle) == Ok(
+        ReplayVerification(replayed_lineage_count=1)
+    )
 
 
 def test_new_snapshot_preserves_selection_provenance_but_not_edited_input_labels(
@@ -652,6 +681,48 @@ def test_new_snapshot_preserves_selection_provenance_but_not_edited_input_labels
     outcomes = resolve_queue_outcomes(bundle, snapshot_digest, queue)
     assert isinstance(outcomes, Ok)
     assert sampled_id in {item.evaluation_id for item in outcomes.value}
+    reported = run_analysis(
+        arguments(
+            "assistance-report",
+            "--db-path",
+            state.db.db_path,
+            "--queue",
+            queue_digest,
+            "--snapshot",
+            snapshot_digest,
+        )
+    )
+    assert isinstance(reported, Ok), reported
+    assert reported.value.snapshot_digest == snapshot_digest
+    assert reported.value.queue_digest == queue_digest
+    assert reported.value.random.reviewed_count == 1
+    assert reported.value.random.estimated_relevant_fraction is None
+    with state.db.read_transaction():
+        captured = read_rejected_population(state.conn, "synthetic", tmp_path)
+    assert isinstance(captured, Ok)
+    subsequent = build_assistance_bundle(
+        replace(
+            request_data,
+            bundle=bundle,
+            snapshot_digest=snapshot_digest,
+            population=captured.value,
+            provenance_queues=(queue_digest,),
+        ),
+        runtime,
+    )
+    assert isinstance(subsequent, Ok), subsequent
+    assert subsequent.value.lineage.inputs[2:] == (queue_digest,)
+    assert any(member.provenance for member in subsequent.value.outputs.partition.members)
+    assert verify_assistance_replay(subsequent.value.bundle) == Ok(
+        ReplayVerification(replayed_lineage_count=2)
+    )
+    with StateManager(":memory:") as restored:
+        assert restored.artifacts.import_bundle(subsequent.value.bundle) == Ok(None)
+        exported = restored.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        assert verify_assistance_replay(exported.value) == Ok(
+            ReplayVerification(replayed_lineage_count=2)
+        )
     with state.db.transaction():
         state.conn.execute(
             "UPDATE posts SET content = 'different source text' WHERE id = ?", (sampled_id,)
@@ -686,7 +757,332 @@ def test_unknown_assistance_producer_is_reported_not_replayed(request_data, runt
         update={"process": lineage.process.model_copy(update={"version": "future"})}
     )
     mixed = bundle.model_copy(update={"lineages": (*bundle.lineages, future)})
-    assert verify_assistance_replay(mixed) == Ok(1)
+    assert verify_assistance_replay(mixed) == Ok(ReplayVerification(replayed_lineage_count=1))
+
+
+@pytest.mark.parametrize("drift", ["python_version", "system", "machine", "package"])
+def test_runtime_drift_is_unverified_and_importable_but_not_trusted_provenance(
+    state,
+    request_data,
+    runtime,
+    tmp_path,
+    monkeypatch,
+    drift,
+):
+    from scout.grading.assistance_store import verify_provenance
+
+    built = build_assistance_bundle(request_data, runtime)
+    assert isinstance(built, Ok)
+    if drift == "package":
+        monkeypatch.setattr("scout.grading.assistance_store.version", lambda name: "future")
+    else:
+        monkeypatch.setattr(platform, drift, lambda: "future")
+    result = verify_analysis_bundle(built.value.bundle)
+    assert isinstance(result, Ok), result
+    assert result.value.replayed_lineage_count == 1  # The snapshot still replays.
+    assert len(result.value.unverified_here) == 1
+    assert result.value.unverified_here[0].lineage_digest == digest_artifact(
+        encode_lineage(built.value.lineage)
+    )
+    bundle_path = tmp_path / "foreign.json"
+    bundle_path.write_text(built.value.bundle.model_dump_json())
+    imported = run_analysis(
+        arguments(
+            "import",
+            "--db-path",
+            state.db.db_path,
+            "--bundle",
+            str(bundle_path),
+        )
+    )
+    assert isinstance(imported, Ok), imported
+    assert imported.value.unverified_here == result.value.unverified_here
+    checked = run_analysis(arguments("verify", "--db-path", state.db.db_path))
+    assert isinstance(checked, Ok), checked
+    assert checked.value.unsupported_lineage_count == 0
+    assert checked.value.unverified_here == result.value.unverified_here
+    queue_digest = built.value.lineage.outputs[2]
+    replayed = run_analysis(
+        arguments(
+            "assistance-replay",
+            "--db-path",
+            state.db.db_path,
+            "--queue",
+            queue_digest,
+        )
+    )
+    assert isinstance(replayed, Ok), replayed
+    assert replayed.value.status == "unverified_here"
+    assert verify_provenance(built.value.bundle, ()) == Ok(None)
+    assert isinstance(verify_provenance(built.value.bundle, (queue_digest,)), Err)
+
+
+def test_new_run_appends_only_requested_dependencies_despite_stale_history(
+    state,
+    request_data,
+    runtime,
+    tmp_path,
+    monkeypatch,
+):
+    from scout.grading.assistance_scope import read_assistance_bundle
+    from scout.grading.assistance_types import ExecutionObservationV2
+
+    built = build_assistance_bundle(request_data, runtime)
+    assert isinstance(built, Ok)
+    assert state.artifacts.import_bundle(built.value.bundle) == Ok(None)
+    unrelated = state.artifacts.put(b"unrelated large history" * 10000)
+    assert isinstance(unrelated, Ok)
+    with state.db.read_transaction():
+        scoped = read_assistance_bundle(state.conn, (request_data.snapshot_digest,))
+    assert isinstance(scoped, Ok)
+    assert unrelated.value not in {item.digest for item in scoped.value.artifacts}
+    assert built.value.lineage not in scoped.value.lineages
+    monkeypatch.setattr(platform, "python_version", lambda: "3.12.999")
+    contents = {item.digest: item.content for item in runtime.artifacts}
+    declared = ProducerEnvironment.model_validate_json(
+        contents[runtime.identity.declared_environment_digest]
+    ).model_copy(update={"python_version": "3.12.999"})
+    fresh_runtime = capture_runtime(
+        declared.model_dump_json().encode(), contents[runtime.identity.lock_digest]
+    )
+    assert isinstance(fresh_runtime, Ok)
+    # Also exercise the public builder with unrelated history still supplied.
+    assert isinstance(
+        build_assistance_bundle(
+            replace(request_data, bundle=built.value.bundle),
+            fresh_runtime.value,
+        ),
+        Ok,
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(request_data.config.model_dump_json())
+    environment = tmp_path / "environment.json"
+    environment.write_text(declared.model_dump_json())
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_bytes(contents[runtime.identity.lock_digest])
+    written = []
+    original_put = state.artifacts.__class__._put
+
+    def track_put(self, content):
+        written.append(digest_artifact(content))
+        return original_put(self, content)
+
+    monkeypatch.setattr(state.artifacts.__class__, "_put", track_put)
+    executed = run_analysis(
+        arguments(
+            "assistance-run",
+            "--db-path",
+            state.db.db_path,
+            "--snapshot",
+            request_data.snapshot_digest,
+            "--config",
+            str(config_path),
+            "--dossier-root",
+            str(tmp_path),
+            "--environment",
+            str(environment),
+            "--lock",
+            str(lock_path),
+        )
+    )
+    assert isinstance(executed, Ok), executed
+    assert unrelated.value not in written
+    assert request_data.snapshot_digest not in written
+    assert digest_artifact(encode_lineage(built.value.lineage)) not in written
+    stored = state.artifacts.get(executed.value.execution_observation_digest)
+    assert isinstance(stored, Ok)
+    observation = ExecutionObservationV2.model_validate_json(stored.value)
+    assert observation.execution.elapsed_ms > 0
+    assert observation.preparation.elapsed_ms > 0
+
+
+@pytest.mark.parametrize("damage", ["context", "lock", "source", "model", "dimensions", "random"])
+def test_runtime_drift_does_not_hide_corruption(
+    state, request_data, runtime, tmp_path, monkeypatch, damage
+):
+    from scout.grading.assistance_population import retain_population
+
+    built = build_assistance_bundle(request_data, runtime)
+    assert isinstance(built, Ok)
+    bundle = built.value.bundle
+    lineage = built.value.lineage
+    if damage in ("context", "lock", "source"):
+        if damage == "context":
+            retained = retain_population(request_data.population)
+            from scout.grading.assistance_types import RejectedInputReference
+
+            contents = {item.digest: item.content for item in retained.artifacts}
+            missing = next(
+                reference.context_digest
+                for key in retained.manifest.items
+                if (
+                    reference := RejectedInputReference.model_validate_json(contents[key])
+                ).context_digest
+            )
+        else:
+            missing = getattr(runtime.identity, f"{damage}_digest")
+        bundle = bundle.model_copy(
+            update={
+                "artifacts": tuple(item for item in bundle.artifacts if item.digest != missing),
+            }
+        )
+    else:
+        if damage == "dimensions":
+            content = (
+                built.value.outputs.model.model_copy(update={"idf": ()}).model_dump_json().encode()
+            )
+        elif damage == "random":
+            queue = built.value.outputs.queue
+            content = (
+                queue.model_copy(
+                    update={
+                        "random": queue.random.model_copy(
+                            update={"selected_evaluation_ids": (9999,)},
+                        )
+                    }
+                )
+                .model_dump_json()
+                .encode()
+            )
+        else:
+            content = b"{}"
+        artifact = RetainedArtifact(digest=digest_artifact(content), content=content)
+        output_ids = list(lineage.outputs)
+        output_ids[2 if damage == "random" else 1] = artifact.digest
+        bundle = bundle.model_copy(
+            update={
+                "artifacts": (*bundle.artifacts, artifact),
+                "lineages": (
+                    *bundle.lineages[:-1],
+                    lineage.model_copy(update={"outputs": tuple(output_ids)}),
+                ),
+            }
+        )
+    monkeypatch.setattr(platform, "machine", lambda: "foreign-architecture")
+    assert isinstance(verify_analysis_bundle(bundle), Err)
+    before = state.artifacts.export_bundle()
+    bundle_path = tmp_path / "damaged.json"
+    bundle_path.write_text(bundle.model_dump_json())
+    assert isinstance(
+        run_analysis(
+            arguments(
+                "import",
+                "--db-path",
+                state.db.db_path,
+                "--bundle",
+                str(bundle_path),
+            )
+        ),
+        Err,
+    )
+    assert state.artifacts.export_bundle() == before
+
+
+def test_scout_help_does_not_import_sklearn_or_threadpoolctl():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import runpy, sys; sys.argv = ['scout', '--help']; "
+            "\ntry: runpy.run_module('scout', run_name='__main__')"
+            "\nexcept SystemExit as exc: assert exc.code == 0"
+            "\nassert not {'sklearn', 'threadpoolctl'} & sys.modules.keys()",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_solver_iteration_count_is_diagnostic(request_data, runtime):
+    built = build_assistance_bundle(request_data, runtime)
+    assert isinstance(built, Ok)
+    outputs = built.value.outputs
+    changed = replace(outputs, model=outputs.model.model_copy(update={"iterations": 9999}))
+    assert outputs_match(outputs, changed)
+
+
+def test_population_deduplicates_context_and_omits_non_candidate_text(request_data):
+    from scout.grading.assistance_population import read_population, retain_population
+    from scout.grading.assistance_types import RejectedInputReference
+
+    retained = retain_population(request_data.population)
+    contents = {item.digest: item.content for item in retained.artifacts}
+    references = tuple(
+        RejectedInputReference.model_validate_json(contents[key]) for key in retained.manifest.items
+    )
+    context_ids = [item.context_digest for item in references if item.context_digest is not None]
+    assert len(context_ids) == 16
+    assert len(set(context_ids)) == 1
+    assert all(item.post_digest is None for item in references if item.has_grade)
+    assert len(retained.manifest.grouping_posts) == 28
+    assert read_population(retained.digest, contents) == Ok(request_data.population)
+    changed = request_data.population.model_copy(
+        update={
+            "items": tuple(
+                item.model_copy(
+                    update={"evaluation": item.evaluation.model_copy(update={"score": 0.9})}
+                )
+                if item.evaluation.id == 1
+                else item
+                for item in request_data.population.items
+            )
+        }
+    )
+    new = retain_population(changed)
+    assert len({item.digest for item in new.artifacts} - set(contents)) == 2  # Input + manifest.
+
+
+def test_population_batches_posts_query(state, tmp_path):
+    statements = []
+    state.conn.set_trace_callback(statements.append)
+    try:
+        with state.db.read_transaction():
+            result = read_rejected_population(state.conn, "synthetic", tmp_path)
+    finally:
+        state.conn.set_trace_callback(None)
+    assert isinstance(result, Ok)
+    post_queries = [sql for sql in statements if "SELECT" in sql.upper() and "FROM posts" in sql]
+    assert len(post_queries) == 1
+
+
+def test_execution_timer_excludes_provenance_preparation(request_data, runtime, monkeypatch):
+    clock = [0.0]
+
+    def prepare(*args):
+        clock[0] += 100
+        return Ok(None)
+
+    def tick():
+        clock[0] += 1
+        return clock[0]
+
+    monkeypatch.setattr("scout.grading.assistance_store.verify_provenance", prepare)
+    monkeypatch.setattr("scout.grading.assistance_store.perf_counter", tick)
+    monkeypatch.setattr("scout.grading.assistance_store.process_time", tick)
+    result = build_assistance_bundle(request_data, runtime)
+    assert isinstance(result, Ok)
+    assert result.value.timing.elapsed_ms == 2000
+    assert result.value.timing.cpu_ms == 2000
+
+
+def test_legacy_inline_population_replays(request_data, runtime):
+    # V1 did not have compact grouping edges. This fixture has independent training
+    # threads, so removing that V2 projection preserves its grouping semantics.
+    legacy = replace(
+        request_data,
+        producer_version="1",
+        population=request_data.population.model_copy(
+            update={"grouping_posts": ()},
+        ),
+    )
+    built = build_assistance_bundle(legacy, runtime)
+    assert isinstance(built, Ok)
+    assert built.value.lineage.process.version == "1"
+    assert verify_assistance_replay(built.value.bundle) == Ok(
+        ReplayVerification(replayed_lineage_count=1)
+    )
 
 
 @pytest.mark.parametrize(

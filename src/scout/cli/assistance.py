@@ -11,8 +11,21 @@ from time import perf_counter, process_time
 
 from pydantic import BaseModel
 
-from scout.grading.artifacts import ArtifactDigest, ArtifactError, digest_artifact, encode_lineage
-from scout.grading.assistance import eligible_candidates, freeze_partition, report_queue_reviews
+from scout.grading.artifacts import (
+    ArtifactAppend,
+    ArtifactDigest,
+    ArtifactError,
+    RetainedArtifact,
+    digest_artifact,
+    encode_lineage,
+)
+from scout.grading.assistance import (
+    eligible_candidates,
+    freeze_partition,
+    population_grouping_posts,
+    report_queue_reviews,
+)
+from scout.grading.assistance_scope import read_assistance_bundle
 from scout.grading.assistance_store import (
     AssistanceRequest,
     build_assistance_bundle,
@@ -22,17 +35,19 @@ from scout.grading.assistance_store import (
     replay_assistance_lineage,
     resolve_queue_outcomes,
     supports_assistance,
+    verify_provenance,
 )
 from scout.grading.assistance_types import (
     AssistanceConfig,
     CandidateExclusion,
-    ExecutionObservation,
+    ExecutionObservationV2,
+    ExecutionTiming,
+    ReplayUnavailable,
 )
-from scout.grading.assistance_wire import OBSERVATION_WIRE, encode_queue
+from scout.grading.assistance_wire import OBSERVATION_WIRE_V2, encode_queue
 from scout.grading.snapshots import CorpusSnapshot
 from scout.grading.wire import encode_wire_v1
 from scout.result import Err, Ok, Result
-from scout.storage.artifacts import read_artifact_bundle
 from scout.storage.db import read_only_connection
 from scout.storage.state import StateManager
 
@@ -93,7 +108,19 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
     started = perf_counter()
     cpu_started = process_time()
     with read_only_connection(args.db_path) as conn:
-        loaded = read_artifact_bundle(conn)
+        roots = tuple(
+            ArtifactDigest(value)
+            for value in (
+                *(
+                    [args.queue]
+                    if args.analysis_command in ("assistance-replay", "assistance-report")
+                    else []
+                ),
+                *([args.snapshot] if args.analysis_command != "assistance-replay" else []),
+                *getattr(args, "provenance_queue", []),
+            )
+        )
+        loaded = read_assistance_bundle(conn, roots)
         if isinstance(loaded, Err):
             return loaded
         bundle = loaded.value
@@ -121,6 +148,8 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
             replayed = replay_assistance_lineage(lineage, bundle)
             if isinstance(replayed, Err):
                 return replayed
+            if isinstance(replayed.value, ReplayUnavailable):
+                return Ok(replayed.value)
             if args.analysis_command == "assistance-replay":
                 return Ok(replayed.value.report)
             outcomes = resolve_queue_outcomes(
@@ -137,6 +166,10 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
         config = AssistanceConfig.model_validate_json(args.config.read_bytes())
         snapshot_digest = ArtifactDigest(args.snapshot)
         provenance = tuple(ArtifactDigest(value) for value in sorted(set(args.provenance_queue)))
+        if args.analysis_command == "assistance-preview":
+            provenance_check = verify_provenance(bundle, provenance)
+            if isinstance(provenance_check, Err):
+                return provenance_check
         examples = load_training_examples(bundle, snapshot_digest, provenance)
         if isinstance(examples, Err):
             return examples
@@ -151,9 +184,7 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
             examples.value,
             snapshot_digest,
             config,
-            related_posts=tuple(
-                item.post for item in captured.value.items if item.post is not None
-            ),
+            related_posts=population_grouping_posts(captured.value),
         )
         limitations: list[str] = []
         if isinstance(partition, Err):
@@ -193,32 +224,32 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
     lineage_digest = digest_artifact(encode_lineage(execution.value.lineage))
     # ru_maxrss is a process-lifetime high-water mark, not marginal model memory.
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    observation = ExecutionObservation(
+    observation = ExecutionObservationV2(
         queue_digest=queue_digest,
         lineage_digest=lineage_digest,
         observed_at=datetime.now(UTC).isoformat(),
-        elapsed_ms=(perf_counter() - started) * 1000,
-        cpu_ms=(process_time() - cpu_started) * 1000,
+        preparation=ExecutionTiming(
+            elapsed_ms=max(
+                0, (perf_counter() - started) * 1000 - execution.value.timing.elapsed_ms
+            ),
+            cpu_ms=max(0, (process_time() - cpu_started) * 1000 - execution.value.timing.cpu_ms),
+        ),
+        execution=execution.value.timing,
         process_peak_rss_bytes=int(rss * 1024)
         if platform.system() == "Linux"
         else (int(rss) if platform.system() == "Darwin" else None),
     )
-    observation_bytes = encode_wire_v1(observation, OBSERVATION_WIRE)
+    observation_bytes = encode_wire_v1(observation, OBSERVATION_WIRE_V2)
     # Include the source measurement in the same atomic import as the derivation.
-    from scout.grading.artifacts import RetainedArtifact
-
-    output_bundle = execution.value.bundle.model_copy(
-        update={
-            "artifacts": (
-                *execution.value.bundle.artifacts,
-                RetainedArtifact(
-                    digest=digest_artifact(observation_bytes), content=observation_bytes
-                ),
-            )
-        }
+    delta = ArtifactAppend(
+        artifacts=(
+            *execution.value.new_artifacts,
+            RetainedArtifact(digest=digest_artifact(observation_bytes), content=observation_bytes),
+        ),
+        lineages=(execution.value.lineage,),
     )
     with StateManager(args.db_path, allow_create=False) as state:
-        saved = state.artifacts.import_bundle(output_bundle)
+        saved = state.artifacts.append(delta)
     if isinstance(saved, Err):
         return saved
     return Ok(

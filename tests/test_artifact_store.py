@@ -7,6 +7,7 @@ import pytest
 
 from scout.cli.analysis import project_study_index
 from scout.grading.artifacts import (
+    ArtifactAppend,
     ArtifactBundle,
     ArtifactLineage,
     ArtifactProcess,
@@ -44,6 +45,40 @@ def bundle() -> ArtifactBundle:
 
 def test_binary_bundle_survives_json_boundary(bundle: ArtifactBundle) -> None:
     assert decode_bundle(bundle.model_dump_json().encode()) == Ok(bundle)
+
+
+def test_append_can_reference_existing_artifacts_without_resubmitting_them(bundle):
+    with StateManager(":memory:") as state:
+        for artifact in bundle.artifacts[:-1]:
+            assert state.artifacts.put(artifact.content) == Ok(artifact.digest)
+        delta = ArtifactAppend(artifacts=bundle.artifacts[-1:], lineages=bundle.lineages)
+        assert state.artifacts.append(delta) == Ok(None)
+        exported = state.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        assert exported.value.lineages == bundle.lineages
+        assert state.artifacts.append(delta) == Ok(None)
+        assert state.artifacts.export_bundle() == exported
+
+
+def test_append_missing_reference_rolls_back_only_delta(bundle):
+    with StateManager(":memory:") as state:
+        existing = state.artifacts.put(b"existing unrelated evidence")
+        assert isinstance(existing, Ok)
+        delta = ArtifactAppend(artifacts=bundle.artifacts[-1:], lineages=bundle.lineages)
+        assert isinstance(state.artifacts.append(delta), Err)
+        assert [row[0] for row in state.conn.execute("SELECT digest FROM analysis_artifacts")] == [
+            existing.value
+        ]
+
+
+def test_append_rejects_corrupt_digest_before_writing(bundle):
+    with StateManager(":memory:") as state:
+        delta = ArtifactAppend(
+            artifacts=(bundle.artifacts[0].model_copy(update={"content": b"damaged"}),),
+            lineages=(),
+        )
+        assert isinstance(state.artifacts.append(delta), Err)
+        assert state.conn.execute("SELECT count(*) FROM analysis_artifacts").fetchone()[0] == 0
 
 
 def test_store_round_trip_is_idempotent_and_self_contained(bundle: ArtifactBundle) -> None:

@@ -19,7 +19,7 @@ No intermediate production rollout is implied by merging a feature into the epic
 ## Workflow step 2: local grading assistance
 
 The executable path is a nested pipeline, recorded with the existing four-part
-`scout.grading.assistance` lineage (producer version `1`): retained corpus and
+`scout.grading.assistance` lineage (new writes use producer version `2`): retained corpus and
 candidate population → grouped partition → train-only fit → independent
 ranked/random selection → queue and comparison report. Four ordered output
 digests address the partition, fitted model (`null` for random-only), queue, and
@@ -31,15 +31,21 @@ The boundary types in `grading/assistance_types.py` mirror real sources:
 | Payload | Actual source |
 | --- | --- |
 | `RejectedInput` / `RejectedPopulation` | Recorded `evaluations`, `posts`, pinned dossier resolution, and observed grade presence |
+| `RejectedPopulationManifest` / `RejectedInputReference` | V2 ordered digest references to reusable evaluation inputs, posts, and dossier resolutions |
+| `GroupingPost` | Compact post identity, parent relationship, and normalized-content digest; preserves noncandidate bridge edges |
 | `TrainingExample` | Selected `CorpusMember` plus its retained `FrozenGradeInput`; labels only from human judgments |
 | `FrozenPartition` | Corpus membership, grouping, seed policy, known prompt exposure, and explicitly supplied earlier selection provenance |
 | `FittedTfidf` | Fitted training-only vocabulary, IDF, binary coefficients/intercept, training IDs, and solver iteration count; JSON, not executable pickle |
 | `SelectorResult` / `ReviewQueue` | Exact eligible evaluation population and selection memberships, scores, contribution explanations, duplicate source links |
 | `AssistanceReport` | Queue counts, exclusions, overlap, deduplication, and held-out confusion counts beside a training-majority baseline |
-| `ExecutionObservation` | Measured wall/CPU duration and process peak RSS, linked to the queue and exact producing lineage digests |
+| `ExecutionObservationV2` | Separate preparation/execution wall and CPU durations, plus process peak RSS, linked to the queue and exact producing lineage digests; v1 observations remain readable |
+| `ReplayUnavailable` | Explicit `unverified_here` status with lineage digest and runtime mismatch detail; not successful verification |
 | `QueueReviewReport` | Queue/snapshot references and exact reviewed revision IDs; separate ranked yield and random-slice rate paths |
 
-`uv.lock` pins the approved runtime scikit-learn dependency. The existing Docker
+`uv.lock` pins scikit-learn and the directly used NumPy and threadpoolctl dependencies.
+Assistance imports numerical libraries only at fitting/scoring boundaries; building
+CLI parsers or running `scout --help` does not load scikit-learn or threadpoolctl.
+The existing Docker
 build installs it through `uv sync --frozen --no-dev`; no Dockerfile change is
 needed. Runtime capture checks the declared Python version and dependency-lock
 digest against the supplied bytes and checks installed numerical package versions
@@ -54,16 +60,34 @@ queue order, and report counts must replay exactly; floating model parameters,
 probabilities, and contributions allow an absolute tolerance of `1e-10` (zero
 relative tolerance). Ranking sorts probability rounded to 12 decimal places,
 then evaluation ID. The retained model and queue bytes/digests are never rewritten
-to match a rerun. An installed compatible v1 adapter may verify older source
-archives; changed numerical runtime pins require replay in the recorded
-environment. Retained source is evidence and is never automatically executed.
+to match a rerun. Solver iteration count is diagnostic, not replay identity.
+Installed compatible adapters may verify older source archives. Changed numerical
+runtime pins produce `unverified_here`, identifying the lineage that needs its
+recorded environment; they do not block preservation import or unrelated new runs.
+This status does not prove numerical reproducibility. Retained bytes, required
+references, payload shapes, partitions, and selection structure are checked first;
+corruption remains an error even under runtime drift. New runs verify only explicitly
+requested provenance queues and their provenance dependencies. An explicitly
+requested queue that cannot replay here remains a targeted provenance error.
+Retained source is evidence and is never automatically executed.
 Wire field order is explicit in `assistance_wire.py`, independent of operational
-model field order.
+model field order. Existing v1 inline populations and producer lineages still replay;
+their retained bytes are never migrated or rewritten.
 
 ### Selection and partition policy
 
 Execution reads one explicit corpus snapshot, not current grades for labels.
 Candidate capture reads a stable read-only DB view and releases it before fitting.
+V2 population manifests reference independently retained inputs, posts, and pinned
+dossier contexts by digest. Shared dossier contexts are stored once, not once per
+evaluation. Noncandidate rows retain evaluation/grade-presence observations and
+compact grouping edges, without repeating full post text or dossiers. Post reads
+are batched. A changed evaluation creates a new input and manifest while unchanged
+posts and dossiers reuse their bytes.
+Assistance commands load only the requested snapshot/queue dependency set; the
+lineage index scan does not load unrelated historical artifact payloads. Runs append
+only their new artifacts and lineage atomically, rather than re-importing history.
+Full preservation export and full-store verification still inspect the whole store.
 Only same-project, ungraded `relevant=0` / `surface_status=not_relevant` evaluations
 with nonempty post text and available pinned dossier context are eligible. Legacy
 post-only grades also exclude candidates. Missing project metadata is an exclusion,
@@ -105,7 +129,10 @@ grade write; a display duplicate never inherits another evaluation's judgment.
 Queue repetition reuses immutable artifacts and does not overwrite dispositions.
 The review/disposition UI, timing, reconciliation, and promotion controls remain
 workflow step 3. Execution observations are separate append-only source records,
-so timing does not change deterministic queue identity. Peak RSS is explicitly a
+so timing does not change deterministic queue identity. V2 observations distinguish
+preparation (including DB capture, runtime capture, and prior-provenance checks)
+from this run's derivation/encoding wall and CPU time. Persistence is not included.
+Peak RSS is explicitly a
 process-lifetime high-water mark, not incremental model memory; unavailable metrics
 are null. No human review duration is fabricated by these commands.
 
@@ -179,7 +206,8 @@ the assistance producer. Known malformed outputs fail verification/import;
 unknown producer versions are reported without blocking supported ones. No command
 creates a database at a mistyped path or invokes human-positive promotion.
 The index decodes output shapes without refitting; `verify` and explicit replay
-perform the numerical derivation check.
+perform the numerical derivation check where runtime pins match. Verify/import
+receipts report `unverified_here` separately from replayed and unsupported lineages.
 
 The existing `fix/experiment-token-limits` branch at `c66a01c` remains separate.
 Reconcile its three unmerged fixes before the experiment work depends on them;

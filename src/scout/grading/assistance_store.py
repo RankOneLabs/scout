@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from time import perf_counter, process_time
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -33,17 +34,32 @@ from scout.grading.artifacts import (
     RetainedArtifact,
     TransformKind,
     digest_artifact,
+    encode_lineage,
     validate_bundle,
 )
-from scout.grading.assistance import execute_assistance, freeze_partition
+from scout.grading.assistance import (
+    assemble_queue,
+    duplicate_key,
+    eligible_candidates,
+    execute_assistance,
+    freeze_partition,
+    population_grouping_posts,
+    select_random,
+    select_ranked,
+)
+from scout.grading.assistance_population import read_population, retain_population
 from scout.grading.assistance_types import (
     AssistanceConfig,
     AssistanceOutputs,
     AssistanceReport,
+    ExecutionTiming,
     FittedTfidf,
     FrozenPartition,
+    GroupingPost,
     RejectedInput,
     RejectedPopulation,
+    ReplayUnavailable,
+    ReplayVerification,
     ReviewOutcome,
     ReviewQueue,
     SelectionReference,
@@ -127,6 +143,7 @@ class AssistanceRequest:
     population: RejectedPopulation
     config: AssistanceConfig
     provenance_queues: tuple[ArtifactDigest, ...] = ()
+    producer_version: Literal["1", "2"] = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +151,8 @@ class AssistanceExecution:
     bundle: ArtifactBundle
     outputs: AssistanceOutputs
     lineage: ArtifactLineage
+    new_artifacts: tuple[RetainedArtifact, ...]
+    timing: ExecutionTiming
 
 
 def _retained(contents: tuple[bytes, ...]) -> tuple[RetainedArtifact, ...]:
@@ -221,18 +240,42 @@ def read_rejected_population(
             "OR trim(e.project_key) = '' ORDER BY e.id",
             (project,),
         ).fetchall()
+        # One joined population read replaces one post query per evaluation.
+        post_rows = conn.execute(
+            "SELECT DISTINCT p.* FROM posts p JOIN evaluations e ON e.post_id = p.id "
+            "WHERE e.project_key = ? OR e.project_key IS NULL OR trim(e.project_key) = '' "
+            "ORDER BY p.id",
+            (project,),
+        ).fetchall()
+        posts = {row["id"]: RecordedPost.model_validate(dict(row)) for row in post_rows}
+        grouping = tuple(
+            GroupingPost(
+                id=post.id,
+                platform=post.platform,
+                platform_msg_id=post.platform_msg_id,
+                parent_id=post.parent_id,
+                duplicate_digest=duplicate_key(post)
+                if post.content and post.content.strip()
+                else None,
+            )
+            for post in posts.values()
+        )
         items: list[RejectedInput] = []
         contexts: dict[tuple[str, str, str], DossierResolution | None] = {}
         for row in rows:
             evaluation = RecordedEvaluation.model_validate(
                 {name: row[name] for name in RecordedEvaluation.model_fields}
             )
-            post_row = conn.execute(
-                "SELECT * FROM posts WHERE id = ?", (evaluation.post_id,)
-            ).fetchone()
+            needs_context = (
+                evaluation.project_key == project
+                and evaluation.relevant == 0
+                and evaluation.surface_status == "not_relevant"
+                and not row["has_grade"]
+            )
             context = None
             if (
-                evaluation.project_key
+                needs_context
+                and evaluation.project_key
                 and evaluation.dossier_revision
                 and evaluation.dossier_summary_id
             ):
@@ -249,12 +292,14 @@ def read_rejected_population(
             items.append(
                 RejectedInput(
                     evaluation=evaluation,
-                    post=None if post_row is None else RecordedPost.model_validate(dict(post_row)),
+                    post=posts.get(evaluation.post_id) if needs_context else None,
                     context=context,
                     has_grade=bool(row["has_grade"]),
                 )
             )
-        return Ok(RejectedPopulation(project_key=project, items=tuple(items)))
+        return Ok(
+            RejectedPopulation(project_key=project, items=tuple(items), grouping_posts=grouping)
+        )
     except (sqlite3.Error, ValueError, OSError, IndexError, KeyError, TypeError):
         return Err(
             ArtifactError("capture_rejected", project, "Invalid recorded candidate row or schema")
@@ -265,7 +310,7 @@ def supports_assistance(lineage: ArtifactLineage) -> bool:
     return (
         lineage.kind == "scout.grading.assistance"
         and lineage.process.id == "scout.grading.assistance"
-        and lineage.process.version == "1"
+        and lineage.process.version in ("1", "2")
     )
 
 
@@ -275,21 +320,12 @@ def load_training_examples(
     provenance_queues: tuple[ArtifactDigest, ...] = (),
 ) -> Result[tuple[TrainingExample, ...], ArtifactError]:
     """Resolve only explicit, retained snapshot and queue identities, not latest grades."""
-    producers = tuple(
-        lineage
-        for lineage in bundle.lineages
-        if supports_snapshot(lineage) and lineage.outputs == (snapshot_digest,)
-    )
-    verified = verify_snapshot_replay(bundle.model_copy(update={"lineages": producers}))
-    if isinstance(verified, Err):
-        return verified
+    validated = load_corpus_snapshot(bundle, snapshot_digest)
+    if isinstance(validated, Err):
+        return validated
     contents = {item.digest: item.content for item in bundle.artifacts}
-    if not producers:
-        return Err(
-            ArtifactError("load_training", snapshot_digest, "Expected a supported corpus snapshot")
-        )
     try:
-        snapshot = CorpusSnapshot.model_validate_json(contents[snapshot_digest])
+        snapshot = validated.value
         queues: list[tuple[ArtifactDigest, ReviewQueue, RejectedPopulation]] = []
         for digest in provenance_queues:
             if not any(
@@ -306,8 +342,10 @@ def load_training_examples(
                 return Err(
                     ArtifactError("load_training", digest, "Queue project differs from snapshot")
                 )
-            pool = RejectedPopulation.model_validate_json(contents[queue.population_digest])
-            queues.append((digest, queue, pool))
+            pool_result = read_population(queue.population_digest, contents)
+            if isinstance(pool_result, Err):
+                return pool_result
+            queues.append((digest, queue, pool_result.value))
         examples: list[TrainingExample] = []
         for member in snapshot.members:
             item = FrozenGradeInput.model_validate_json(contents[member.input_digest])
@@ -317,8 +355,6 @@ def load_training_examples(
                 )
             provenance: list[SelectionReference] = []
             for digest, queue, pool in queues:
-                # Retain provenance only for the exact observed input, not an ID
-                # reused after post edits or a changed project/evaluation.
                 if not any(
                     candidate.evaluation == item.evaluation
                     and candidate.post == item.post
@@ -347,6 +383,31 @@ def load_training_examples(
         )
 
 
+def load_corpus_snapshot(
+    bundle: ArtifactBundle, snapshot_digest: ArtifactDigest
+) -> Result[CorpusSnapshot, ArtifactError]:
+    """Validate a pinned snapshot without materializing a discarded training projection."""
+    producers = tuple(
+        lineage
+        for lineage in bundle.lineages
+        if supports_snapshot(lineage) and lineage.outputs == (snapshot_digest,)
+    )
+    verified = verify_snapshot_replay(bundle.model_copy(update={"lineages": producers}))
+    if isinstance(verified, Err):
+        return verified
+    contents = {item.digest: item.content for item in bundle.artifacts}
+    if not producers:
+        return Err(
+            ArtifactError("load_training", snapshot_digest, "Expected a supported corpus snapshot")
+        )
+    try:
+        return Ok(CorpusSnapshot.model_validate_json(contents[snapshot_digest]))
+    except (ValueError, KeyError):
+        return Err(
+            ArtifactError("load_training", snapshot_digest, "Invalid retained training references")
+        )
+
+
 def derive_assistance(request: AssistanceRequest) -> Result[AssistanceOutputs, ArtifactError]:
     examples = load_training_examples(
         request.bundle, request.snapshot_digest, request.provenance_queues
@@ -365,35 +426,57 @@ def derive_assistance(request: AssistanceRequest) -> Result[AssistanceOutputs, A
         examples.value,
         request.snapshot_digest,
         request.config,
-        related_posts=tuple(
-            item.post for item in request.population.items if item.post is not None
-        ),
+        related_posts=population_grouping_posts(request.population),
     )
     if isinstance(partition, Err):
         return partition
-    return execute_assistance(examples.value, request.population, partition.value, request.config)
+    population_digest = (
+        retain_population(request.population).digest
+        if request.producer_version == "2"
+        else digest_artifact(encode_population(request.population))
+    )
+    return execute_assistance(
+        examples.value,
+        request.population,
+        partition.value,
+        request.config,
+        population_digest=population_digest,
+    )
 
 
 def build_assistance_bundle(
     request: AssistanceRequest, runtime: RetainedRuntime
 ) -> Result[AssistanceExecution, ArtifactError]:
-    # Do not let a corrupt earlier queue supply fabricated random provenance.
-    prior = verify_assistance_replay(request.bundle)
+    # Only explicitly consumed provenance is a gate for a new run.
+    prior = verify_provenance(request.bundle, request.provenance_queues)
     if isinstance(prior, Err):
         return prior
+    started, cpu_started = perf_counter(), process_time()
     result = derive_assistance(request)
     if isinstance(result, Err):
         return result
-    population = encode_population(request.population)
+    retained_population = retain_population(request.population)
+    population = (
+        next(
+            item.content
+            for item in retained_population.artifacts
+            if item.digest == retained_population.digest
+        )
+        if request.producer_version == "2"
+        else encode_population(request.population)
+    )
     config = encode_config(request.config)
     outputs = encode_outputs(result.value)
+    timing = ExecutionTiming(
+        elapsed_ms=(perf_counter() - started) * 1000, cpu_ms=(process_time() - cpu_started) * 1000
+    )
     environment = encode_wire_v1(runtime.identity, RUNTIME_WIRE)
     lineage = ArtifactLineage(
         kind=TransformKind("scout.grading.assistance"),
         inputs=(request.snapshot_digest, digest_artifact(population), *request.provenance_queues),
         process=ArtifactProcess(
             id=ProcessId("scout.grading.assistance"),
-            version="1",
+            version=request.producer_version,
             config_digest=digest_artifact(config),
             environment=EnvironmentIdentity(digest_artifact(environment)),
         ),
@@ -403,6 +486,11 @@ def build_assistance_bundle(
         (
             *(item.content for item in request.bundle.artifacts),
             *(item.content for item in runtime.artifacts),
+            *(
+                item.content
+                for item in retained_population.artifacts
+                if request.producer_version == "2"
+            ),
             population,
             config,
             *outputs,
@@ -413,12 +501,21 @@ def build_assistance_bundle(
     validated = validate_bundle(bundle)
     if isinstance(validated, Err):
         return validated
-    return Ok(AssistanceExecution(bundle, result.value, lineage))
+    existing = {item.digest for item in request.bundle.artifacts}
+    return Ok(
+        AssistanceExecution(
+            bundle,
+            result.value,
+            lineage,
+            tuple(item for item in artifacts if item.digest not in existing),
+            timing,
+        )
+    )
 
 
 def replay_assistance_lineage(
     lineage: ArtifactLineage, bundle: ArtifactBundle
-) -> Result[AssistanceOutputs, ArtifactError]:
+) -> Result[AssistanceOutputs | ReplayUnavailable, ArtifactError]:
     """Replay supported code only; retained source is evidence, never executed."""
     if not supports_assistance(lineage) or len(lineage.inputs) < 2 or len(lineage.outputs) != 4:
         return Err(ArtifactError("replay_assistance", None, "Invalid assistance producer shape"))
@@ -426,44 +523,67 @@ def replay_assistance_lineage(
         item.digest: item.content for item in bundle.artifacts
     }
     try:
-        runtime = AssistanceRuntime.model_validate_json(
-            contents[ArtifactDigest(lineage.process.environment)]
+        # Validate retained structure/references BEFORE considering runtime drift.
+        retained = read_assistance_outputs(lineage, contents)
+        if isinstance(retained, Err):
+            return retained
+        population = read_population(lineage.inputs[1], contents)
+        if isinstance(population, Err):
+            return population
+        config = AssistanceConfig.model_validate_json(contents[lineage.process.config_digest])
+        examples = load_training_examples(bundle, lineage.inputs[0], lineage.inputs[2:])
+        if isinstance(examples, Err):
+            return examples
+        partition = freeze_partition(
+            examples.value,
+            lineage.inputs[0],
+            config,
+            related_posts=population_grouping_posts(population.value),
         )
-        recaptured = capture_runtime(
-            contents[runtime.declared_environment_digest], contents[runtime.lock_digest]
-        )
-        if isinstance(recaptured, Err):
-            return recaptured
-        # Current code may contain a compatible v1 adapter after unrelated Scout
-        # changes. Retain the actual original source, but establish compatibility
-        # by replaying outputs, not by requiring unrelated files to match.
-        compatible_runtime = recaptured.value.identity.model_copy(
-            update={"source_digest": runtime.source_digest}
-        )
-        if compatible_runtime != runtime or runtime.source_digest not in contents:
+        if isinstance(partition, Err):
+            return partition
+        if (
+            partition.value != retained.value.partition
+            or retained.value.queue.population_digest != lineage.inputs[1]
+            or retained.value.queue.project_key != population.value.project_key
+            or retained.value.report.project_key != population.value.project_key
+            or (config.ranked is None) != (retained.value.model is None)
+        ):
             return Err(
                 ArtifactError(
-                    "replay_assistance",
-                    lineage.outputs[2],
-                    "Pinned numerical runtime differs; replay in its environment",
+                    "replay_assistance", lineage.outputs[2], "Inconsistent retained outputs"
                 )
             )
-        population = RejectedPopulation.model_validate_json(contents[lineage.inputs[1]])
-        config = AssistanceConfig.model_validate_json(contents[lineage.process.config_digest])
+        structural = validate_retained_selection(
+            retained.value,
+            AssistanceRequest(
+                bundle=bundle,
+                snapshot_digest=lineage.inputs[0],
+                population=population.value,
+                config=config,
+                provenance_queues=lineage.inputs[2:],
+            ),
+            examples.value,
+        )
+        if isinstance(structural, Err):
+            return structural
+        available = check_replay_runtime(lineage, contents)
+        if isinstance(available, Err):
+            return available
+        if available.value is not None:
+            return Ok(available.value)
         derived = derive_assistance(
             AssistanceRequest(
                 bundle=bundle,
                 snapshot_digest=lineage.inputs[0],
-                population=population,
+                population=population.value,
                 config=config,
                 provenance_queues=lineage.inputs[2:],
+                producer_version="1" if lineage.process.version == "1" else "2",
             )
         )
         if isinstance(derived, Err):
             return derived
-        retained = read_assistance_outputs(lineage, contents)
-        if isinstance(retained, Err):
-            return retained
         if not outputs_match(retained.value, derived.value):
             return Err(
                 ArtifactError(
@@ -477,6 +597,56 @@ def replay_assistance_lineage(
                 "replay_assistance", None, "Invalid assistance inputs or runtime references"
             )
         )
+
+
+def validate_retained_selection(
+    outputs: AssistanceOutputs,
+    request: AssistanceRequest,
+    examples: tuple[TrainingExample, ...],
+) -> Result[None, ArtifactError]:
+    """Check nonnumerical invariants even when fitting cannot replay locally."""
+    failure = Err(ArtifactError("replay_assistance", None, "Invalid retained selection structure"))
+    candidates, exclusions = eligible_candidates(request.population, examples)
+    candidate_ids = tuple(item.evaluation.id for item in candidates)
+    sampled = select_random(candidate_ids, request.config.random)
+    if isinstance(sampled, Err):
+        return sampled
+    if sampled.value != outputs.queue.random or exclusions != outputs.report.exclusions:
+        return failure
+    model, ranked = outputs.model, outputs.queue.ranked
+    if request.config.ranked is None:
+        if model is not None or ranked is not None or outputs.report.heldout is not None:
+            return failure
+    else:
+        if model is None or ranked is None or outputs.report.heldout is None:
+            return failure
+        if (
+            not model.vocabulary
+            or len(set(model.vocabulary)) != len(model.vocabulary)
+            or len(model.idf) != len(model.vocabulary)
+            or len(model.coefficients) != len(model.vocabulary)
+            or model.train_evaluation_ids
+            != tuple(
+                member.evaluation_id
+                for member in outputs.partition.members
+                if member.partition == "train"
+            )
+            or sorted(score.evaluation_id for score in ranked.scores) != sorted(candidate_ids)
+        ):
+            return failure
+        if select_ranked(ranked.scores, candidates, request.config.ranked) != ranked:
+            return failure
+    if (
+        assemble_queue(
+            request.population,
+            ranked,
+            sampled.value,
+            population_digest=outputs.queue.population_digest,
+        )
+        != outputs.queue
+    ):
+        return failure
+    return Ok(None)
 
 
 def _numbers_match(left: tuple[float, ...], right: tuple[float, ...]) -> bool:
@@ -536,10 +706,9 @@ def outputs_match(left: AssistanceOutputs, right: AssistanceOutputs) -> bool:
         if a is not b:
             return False
     else:
-        if (a.train_evaluation_ids, a.vocabulary, a.iterations) != (
+        if (a.train_evaluation_ids, a.vocabulary) != (
             b.train_evaluation_ids,
             b.vocabulary,
-            b.iterations,
         ):
             return False
         if not _numbers_match(
@@ -558,13 +727,16 @@ def resolve_queue_outcomes(
     snapshot_digest: ArtifactDigest,
     queue: ReviewQueue,
 ) -> Result[tuple[ReviewOutcome, ...], ArtifactError]:
-    examples = load_training_examples(bundle, snapshot_digest)
-    if isinstance(examples, Err):
-        return examples
+    validated = load_corpus_snapshot(bundle, snapshot_digest)
+    if isinstance(validated, Err):
+        return validated
     contents = {item.digest: item.content for item in bundle.artifacts}
     try:
-        snapshot = CorpusSnapshot.model_validate_json(contents[snapshot_digest])
-        pool = RejectedPopulation.model_validate_json(contents[queue.population_digest])
+        snapshot = validated.value
+        pool_result = read_population(queue.population_digest, contents)
+        if isinstance(pool_result, Err):
+            return pool_result
+        pool = pool_result.value
         if (
             snapshot.selection.project_key != queue.project_key
             or pool.project_key != queue.project_key
@@ -594,15 +766,122 @@ def resolve_queue_outcomes(
         )
 
 
-def verify_assistance_replay(bundle: ArtifactBundle) -> Result[int, ArtifactError]:
+def verify_assistance_replay(bundle: ArtifactBundle) -> Result[ReplayVerification, ArtifactError]:
     checked = validate_bundle(bundle)
     if isinstance(checked, Err):
         return checked
     verified = 0
+    unavailable: list[ReplayUnavailable] = []
     for lineage in bundle.lineages:
         if supports_assistance(lineage):
             result = replay_assistance_lineage(lineage, bundle)
             if isinstance(result, Err):
                 return result
-            verified += 1
-    return Ok(verified)
+            if isinstance(result.value, ReplayUnavailable):
+                unavailable.append(result.value)
+            else:
+                verified += 1
+    return Ok(
+        ReplayVerification(replayed_lineage_count=verified, unverified_here=tuple(unavailable))
+    )
+
+
+def check_replay_runtime(
+    lineage: ArtifactLineage,
+    contents: Mapping[ArtifactDigest, bytes],
+) -> Result[ReplayUnavailable | None, ArtifactError]:
+    """Foreign runtime is unavailable here, not corruption or successful replay."""
+    try:
+        runtime = AssistanceRuntime.model_validate_json(
+            contents[ArtifactDigest(lineage.process.environment)]
+        )
+        declared = ProducerEnvironment.model_validate_json(
+            contents[runtime.declared_environment_digest]
+        )
+        lock = contents[runtime.lock_digest]
+        locked = DependencyLock.model_validate(tomllib.loads(lock.decode()))
+        SourceArchive.model_validate_json(contents[runtime.source_digest])
+        if (
+            declared.dependency_lock_digest != runtime.lock_digest
+            or digest_artifact(lock) != runtime.lock_digest
+            or declared.python_version != runtime.python_version
+            or tuple(package.name for package in runtime.packages)
+            != ("numpy", "scipy", "scikit-learn", "threadpoolctl", "pydantic")
+            or any(
+                not any(
+                    pin.name == package.name and pin.version == package.version
+                    for pin in locked.package
+                )
+                for package in runtime.packages
+            )
+        ):
+            return Err(ArtifactError("replay_runtime", None, "Inconsistent retained runtime pins"))
+    except (ValueError, KeyError):
+        return Err(
+            ArtifactError("replay_runtime", None, "Invalid or missing retained runtime evidence")
+        )
+    detail = "Pinned numerical runtime differs; replay in its recorded environment"
+    try:
+        compatible = (
+            runtime.python_version == platform.python_version()
+            and runtime.system == platform.system()
+            and runtime.machine == platform.machine()
+            and runtime.packages == _packages()
+        )
+    except PackageNotFoundError:
+        compatible = False
+        detail = "Required package metadata unavailable in this environment"
+    return Ok(
+        None
+        if compatible
+        else ReplayUnavailable(
+            lineage_digest=digest_artifact(encode_lineage(lineage)),
+            detail=detail,
+        )
+    )
+
+
+def verify_provenance(
+    bundle: ArtifactBundle,
+    queue_digests: tuple[ArtifactDigest, ...],
+) -> Result[None, ArtifactError]:
+    """Check the transitive provenance dependency set, never unrelated history.
+
+    An explicitly consumed queue must have a verified producer here. Unavailable
+    dependencies are a targeted limitation, not an implicit verified assertion.
+    """
+    pending = list(queue_digests)
+    visited: set[ArtifactDigest] = set()
+    while pending:
+        digest = pending.pop()
+        if digest in visited:
+            continue
+        visited.add(digest)
+        producers = tuple(
+            lineage
+            for lineage in bundle.lineages
+            if supports_assistance(lineage)
+            and len(lineage.outputs) == 4
+            and lineage.outputs[2] == digest
+        )
+        if not producers:
+            return Err(
+                ArtifactError("verify_provenance", digest, "No supported provenance producer")
+            )
+        has_verified = False
+        for lineage in producers:
+            result = replay_assistance_lineage(lineage, bundle)
+            if isinstance(result, Err):
+                return result
+            if not isinstance(result.value, ReplayUnavailable):
+                has_verified = True
+                pending.extend(lineage.inputs[2:])
+        if not has_verified:
+            return Err(
+                ArtifactError(
+                    "verify_provenance",
+                    digest,
+                    "Requested provenance is unverified here; use its recorded runtime",
+                )
+            )
+    return Ok(None)

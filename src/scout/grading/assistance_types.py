@@ -35,6 +35,61 @@ class RejectedPopulation(AssistanceDocument):
     format: Literal["scout.rejected-population/v1"] = "scout.rejected-population/v1"
     project_key: str
     items: tuple[RejectedInput, ...]
+    grouping_posts: tuple[GroupingPost, ...] = ()
+
+
+class GroupingPost(AssistanceDocument):
+    """Compact posts projection preserving thread and duplicate edges."""
+
+    id: int
+    platform: str
+    platform_msg_id: str
+    parent_id: str | None
+    duplicate_digest: DigestReference | None
+
+
+class RejectedInputReference(AssistanceDocument):
+    format: Literal["scout.rejected-input/v2"] = "scout.rejected-input/v2"
+    evaluation: RecordedEvaluation
+    post_digest: DigestReference | None
+    context_digest: DigestReference | None
+    has_grade: bool
+
+
+class RejectedPopulationManifest(AssistanceDocument):
+    format: Literal["scout.rejected-population/v2"] = "scout.rejected-population/v2"
+    project_key: str
+    items: tuple[DigestReference, ...]
+    grouping_posts: tuple[DigestReference, ...]
+
+
+class ReplayUnavailable(AssistanceDocument):
+    status: Literal["unverified_here"] = "unverified_here"
+    lineage_digest: DigestReference
+    detail: str
+
+
+class ReplayVerification(AssistanceDocument):
+    replayed_lineage_count: int = 0
+    unverified_here: tuple[ReplayUnavailable, ...] = ()
+
+
+class ExecutionTiming(AssistanceDocument):
+    elapsed_ms: float
+    cpu_ms: float
+
+
+class ExecutionObservationV2(AssistanceDocument):
+    format: Literal["scout.assistance-execution/v2"] = "scout.assistance-execution/v2"
+    queue_digest: DigestReference
+    lineage_digest: DigestReference
+    observed_at: str
+    preparation: ExecutionTiming
+    execution: ExecutionTiming
+    process_peak_rss_bytes: int | None
+
+
+RejectedPopulation.model_rebuild()
 
 
 class TfidfSelector(AssistanceDocument):

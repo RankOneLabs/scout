@@ -32,6 +32,7 @@ from scout.grading.assistance_store import (
     supports_assistance,
     verify_assistance_replay,
 )
+from scout.grading.assistance_types import ReplayUnavailable, ReplayVerification
 from scout.grading.snapshots import (
     CorpusSelection,
     build_snapshot_bundle,
@@ -61,6 +62,7 @@ class AnalysisReceipt(BaseModel):
     lineage_count: int
     outputs: tuple[ArtifactDigest, ...]
     unsupported_lineage_count: int
+    unverified_here: tuple[ReplayUnavailable, ...] = ()
 
 
 class AnalysisVerification(BaseModel):
@@ -68,6 +70,7 @@ class AnalysisVerification(BaseModel):
     lineage_count: int
     replayed_lineage_count: int
     unsupported_lineage_count: int
+    unverified_here: tuple[ReplayUnavailable, ...] = ()
 
 
 class UnsupportedProducer(BaseModel):
@@ -142,7 +145,7 @@ def project_study_index(bundle: ArtifactBundle) -> Result[StudyIndex, ArtifactEr
     return Ok(StudyIndex(entries=tuple(entry(lineage) for lineage in bundle.lineages)))
 
 
-def verify_analysis_bundle(bundle: ArtifactBundle) -> Result[int, ArtifactError]:
+def verify_analysis_bundle(bundle: ArtifactBundle) -> Result[ReplayVerification, ArtifactError]:
     snapshots = verify_snapshot_replay(bundle)
     if isinstance(snapshots, Err):
         return snapshots
@@ -152,7 +155,14 @@ def verify_analysis_bundle(bundle: ArtifactBundle) -> Result[int, ArtifactError]
     assistance = verify_assistance_replay(bundle)
     if isinstance(assistance, Err):
         return assistance
-    return Ok(snapshots.value + inventories.value + assistance.value)
+    return Ok(
+        ReplayVerification(
+            replayed_lineage_count=snapshots.value
+            + inventories.value
+            + assistance.value.replayed_lineage_count,
+            unverified_here=assistance.value.unverified_here,
+        )
+    )
 
 
 def add_analysis_parser(
@@ -235,7 +245,9 @@ def _write_private_export(path: Path, content: bytes) -> Result[None, ArtifactEr
     return Ok(None)
 
 
-def _receipt(operation: str, bundle: ArtifactBundle) -> AnalysisReceipt:
+def _receipt(
+    operation: str, bundle: ArtifactBundle, *, unverified: tuple[ReplayUnavailable, ...] = ()
+) -> AnalysisReceipt:
     return AnalysisReceipt(
         operation=operation,
         artifact_count=len(bundle.artifacts),
@@ -247,6 +259,7 @@ def _receipt(operation: str, bundle: ArtifactBundle) -> AnalysisReceipt:
             and not supports_assistance(lineage)
             for lineage in bundle.lineages
         ),
+        unverified_here=unverified,
     )
 
 
@@ -316,7 +329,7 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
                 saved = state.artifacts.import_bundle(parsed.value)
             if isinstance(saved, Err):
                 return saved
-            return Ok(_receipt("import", parsed.value))
+            return Ok(_receipt("import", parsed.value, unverified=verified.value.unverified_here))
         with read_only_connection(args.db_path) as conn:
             exported = read_artifact_bundle(conn)
         if isinstance(exported, Err):
@@ -331,8 +344,11 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
                 AnalysisVerification(
                     artifact_count=len(exported.value.artifacts),
                     lineage_count=len(exported.value.lineages),
-                    replayed_lineage_count=verified.value,
-                    unsupported_lineage_count=len(exported.value.lineages) - verified.value,
+                    replayed_lineage_count=verified.value.replayed_lineage_count,
+                    unsupported_lineage_count=len(exported.value.lineages)
+                    - verified.value.replayed_lineage_count
+                    - len(verified.value.unverified_here),
+                    unverified_here=verified.value.unverified_here,
                 )
             )
         if args.analysis_command == "export":

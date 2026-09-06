@@ -1477,10 +1477,12 @@ dependencies = [
     { name = "fastapi" },
     { name = "jig", extra = ["anthropic", "openrouter"] },
     { name = "jsonschema" },
+    { name = "numpy" },
     { name = "paa-runtime" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
+    { name = "threadpoolctl" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1501,10 +1503,12 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "jig", extras = ["anthropic", "openrouter"], git = "https://github.com/rankonelabs/jig.git?rev=4fae89bb04768d57be6db4cd2bdef859d1e17322" },
     { name = "jsonschema", specifier = ">=4.23" },
+    { name = "numpy", specifier = ">=2.4.3" },
     { name = "paa-runtime", specifier = "==0.4.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "scikit-learn", specifier = ">=1.9.0" },
+    { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 

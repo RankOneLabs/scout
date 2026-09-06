@@ -71,6 +71,12 @@ REPORT_WIRE = record_wire(
 OBSERVATION_WIRE = record_wire(
     "format queue_digest lineage_digest observed_at elapsed_ms cpu_ms process_peak_rss_bytes"
 )
+TIMING_WIRE = record_wire("elapsed_ms cpu_ms")
+OBSERVATION_WIRE_V2 = record_wire(
+    "format queue_digest lineage_digest observed_at preparation execution process_peak_rss_bytes",
+    preparation=TIMING_WIRE,
+    execution=TIMING_WIRE,
+)
 
 
 def encode_population(population: RejectedPopulation) -> bytes:

@@ -8,12 +8,10 @@ import unicodedata
 import warnings
 from collections import Counter
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-import numpy as np
-from sklearn.exceptions import ConvergenceWarning
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from threadpoolctl import threadpool_limits
+if TYPE_CHECKING:
+    from sklearn.feature_extraction.text import TfidfVectorizer
 
 from scout.grading.artifacts import ArtifactDigest, ArtifactError, digest_artifact
 from scout.grading.assistance_types import (
@@ -26,6 +24,7 @@ from scout.grading.assistance_types import (
     FittedTfidf,
     FrozenPartition,
     GroupId,
+    GroupingPost,
     HeldoutComparison,
     PartitionMember,
     QueueReviewReport,
@@ -54,7 +53,7 @@ def duplicate_key(post: RecordedPost) -> ArtifactDigest:
     return digest_artifact(normalized.encode())
 
 
-def group_posts(posts: Sequence[RecordedPost]) -> dict[int, GroupId]:
+def group_posts(posts: Sequence[RecordedPost | GroupingPost]) -> dict[int, GroupId]:
     """Connected components of recorded parent edges, post IDs and exact duplicates.
 
     Platform namespaces mirror posts.UNIQUE(platform, platform_msg_id).
@@ -69,15 +68,20 @@ def group_posts(posts: Sequence[RecordedPost]) -> dict[int, GroupId]:
             key = parents[key]
         return key
 
-    def message_key(post: RecordedPost, message_id: str) -> str:
+    def message_key(post: RecordedPost | GroupingPost, message_id: str) -> str:
         # Length-prefix fields avoid delimiter ambiguity in external identifiers.
         fields = (post.platform, message_id)
         return "message:" + "".join(f"{len(field)}:{field}" for field in fields)
 
     for post in posts:
         keys = [f"post:{post.id}", message_key(post, post.platform_msg_id)]
-        if post.content and post.content.strip():
-            keys.append(f"text:{duplicate_key(post)}")
+        text_digest = (
+            post.duplicate_digest
+            if isinstance(post, GroupingPost)
+            else (duplicate_key(post) if post.content and post.content.strip() else None)
+        )
+        if text_digest is not None:
+            keys.append(f"text:{text_digest}")
         if post.parent_id:
             keys.append(message_key(post, post.parent_id))
         roots = [root(key) for key in keys]
@@ -92,7 +96,7 @@ def freeze_partition(
     snapshot: ArtifactDigest,
     config: AssistanceConfig,
     *,
-    related_posts: tuple[RecordedPost, ...] = (),
+    related_posts: tuple[RecordedPost | GroupingPost, ...],
 ) -> Result[FrozenPartition, ArtifactError]:
     if len({item.evaluation_id for item in examples}) != len(examples):
         return Err(ArtifactError("partition", snapshot, "Duplicate corpus evaluation identity"))
@@ -198,7 +202,7 @@ def eligible_candidates(
     population: RejectedPopulation, examples: tuple[TrainingExample, ...]
 ) -> tuple[tuple[RejectedInput, ...], tuple[CandidateExclusion, ...]]:
     # Protect future held-out cases from near-term model-guided review exposure.
-    posts = (*[i.post for i in examples], *[i.post for i in population.items if i.post is not None])
+    posts = (*[i.post for i in examples], *population_grouping_posts(population))
     groups = group_posts(posts)
     graded_groups = {groups[item.post.id] for item in examples}
     candidates: list[RejectedInput] = []
@@ -215,6 +219,9 @@ def eligible_candidates(
 
 
 def _vectorizer(config: TfidfSelector, model: FittedTfidf | None = None) -> TfidfVectorizer:
+    import numpy as np
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
     vectorizer = TfidfVectorizer(
         lowercase=True,
         strip_accents=None,
@@ -243,6 +250,10 @@ def fit_tfidf(
     train: tuple[TrainingExample, ...], config: TfidfSelector, seed: int
 ) -> Result[FittedTfidf, ArtifactError]:
     """The only fitting boundary. Callers pass train members, never all documents."""
+    from sklearn.exceptions import ConvergenceWarning
+    from sklearn.linear_model import LogisticRegression
+    from threadpoolctl import threadpool_limits
+
     if {item.is_relevant for item in train} != {False, True}:
         return Err(ArtifactError("fit_tfidf", None, "Training partition needs two classes"))
     try:
@@ -285,6 +296,8 @@ def fit_tfidf(
 def score_texts(
     documents: tuple[tuple[int, str], ...], model: FittedTfidf, config: TfidfSelector
 ) -> Result[tuple[ScoredCandidate, ...], ArtifactError]:
+    from threadpoolctl import threadpool_limits
+
     if not documents:
         return Ok(())
     try:
@@ -370,7 +383,11 @@ def select_ranked(
 
 
 def assemble_queue(
-    population: RejectedPopulation, ranked: SelectorResult | None, random_result: SelectorResult
+    population: RejectedPopulation,
+    ranked: SelectorResult | None,
+    random_result: SelectorResult,
+    *,
+    population_digest: ArtifactDigest | None = None,
 ) -> ReviewQueue:
     from scout.grading.assistance_wire import encode_population
 
@@ -412,7 +429,7 @@ def assemble_queue(
                 )
     return ReviewQueue(
         project_key=population.project_key,
-        population_digest=digest_artifact(encode_population(population)),
+        population_digest=population_digest or digest_artifact(encode_population(population)),
         items=tuple(
             ReviewQueueItem(duplicate_key=key, sources=tuple(items))
             for key, items in grouped.items()
@@ -437,6 +454,8 @@ def execute_assistance(
     population: RejectedPopulation,
     partition: FrozenPartition,
     config: AssistanceConfig,
+    *,
+    population_digest: ArtifactDigest | None = None,
 ) -> Result[AssistanceOutputs, ArtifactError]:
     checked = validate_partition(examples, population, partition)
     if isinstance(checked, Err):
@@ -487,7 +506,9 @@ def execute_assistance(
             ),
             train_majority_baseline=confusion(truth, (majority,) * len(test)),
         )
-    queue = assemble_queue(population, ranked, random_result.value)
+    queue = assemble_queue(
+        population, ranked, random_result.value, population_digest=population_digest
+    )
     ranked_ids = set(() if ranked is None else ranked.selected_evaluation_ids)
     random_ids = set(random_result.value.selected_evaluation_ids)
     selected_count = len(ranked_ids | random_ids)
@@ -526,9 +547,7 @@ def validate_partition(
         return Err(
             ArtifactError("validate_partition", None, "Partition must cover each example once")
         )
-    groups = group_posts(
-        (*[i.post for i in examples], *[i.post for i in population.items if i.post is not None])
-    )
+    groups = group_posts((*[i.post for i in examples], *population_grouping_posts(population)))
     assignments: dict[GroupId, str] = {}
     for example in examples:
         member = members[example.evaluation_id]
@@ -543,6 +562,13 @@ def validate_partition(
             )
         assignments[key] = member.partition
     return Ok(None)
+
+
+def population_grouping_posts(
+    population: RejectedPopulation,
+) -> tuple[RecordedPost | GroupingPost, ...]:
+    """One required grouping input for preview, execution, and validation."""
+    return (*population.grouping_posts, *[i.post for i in population.items if i.post is not None])
 
 
 def report_queue_reviews(
