@@ -5,7 +5,7 @@ import { useState } from "react";
 import { GradeControls } from "@/components/molecules/GradeControls";
 import { useQueueReview } from "@/hooks/use-queue-review";
 import { useReviewQueue } from "@/hooks/use-review-queues";
-import { selectQueueItems, selectReviewProgress } from "@/lib/review-selectors";
+import { selectQueueItems, selectReviewProgress, selectReviewScore } from "@/lib/review-selectors";
 import type { Grade, GradeInput } from "@/types/schema";
 import type { QueueReviewItem, ReviewPriceBasis, ReviewStatus } from "@/types/review-queues";
 
@@ -21,6 +21,7 @@ function QueueItemReview({ digest, item, pricing, onSaved }: {
     return response.json() as Promise<Grade>;
   };
   const { post, evaluation, context } = item.recorded;
+  const score = selectReviewScore(item.score);
   return (
     <section className="space-y-4 border-t border-gray-300 py-4 dark:border-gray-700">
       <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -34,9 +35,9 @@ function QueueItemReview({ digest, item, pricing, onSaved }: {
       {post?.parent_text && <blockquote className="border-l-2 border-gray-400 pl-3 text-sm">{post.parent_author_name}: {post.parent_text}</blockquote>}
       <p className="whitespace-pre-wrap text-sm">{post?.content}</p>
       <p className="text-sm"><span className="font-medium">Recorded rejection:</span> {evaluation.reason ?? "No explanation recorded"}</p>
-      {item.score && <div className="text-sm">
-        <p>Selector probability: {item.score.probability.toFixed(3)} (ranking evidence, not a human label)</p>
-        <p>TF-IDF × coefficient: {item.score.explanation.map((term) => `${term.term} (${term.contribution.toFixed(3)})`).join(", ")}</p>
+      {score && <div className="text-sm">
+        <p>{score.summary}</p>
+        <p>{score.explanation}</p>
       </div>}
       <details className="text-sm">
         <summary className="cursor-pointer">Recorded dossier {evaluation.dossier_summary_id} · {evaluation.dossier_revision?.slice(0, 12)}</summary>

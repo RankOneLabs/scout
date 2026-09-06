@@ -13,17 +13,28 @@ const scoreSchema = z.object({
   evaluation_id: z.number().int(), probability: z.number(),
   explanation: z.array(z.object({ term: z.string(), contribution: z.number() })),
 });
+const similarityScoreSchema = z.object({
+  evaluation_id: z.number().int(), similarity: z.number().min(0).max(1),
+  explanation: z.array(z.object({ term: z.string(), contribution: z.number() })),
+});
 const selectorSchema = z.object({
   kind: z.enum(["tfidf_logistic", "seeded_random"]),
   population_evaluation_ids: z.array(z.number().int()),
   selected_evaluation_ids: z.array(z.number().int()),
   scores: z.array(scoreSchema), explanation_method: z.string().nullable(),
 });
+const positiveSelectorSchema = z.object({
+  kind: z.literal("tfidf_positive_similarity"),
+  population_evaluation_ids: z.array(z.number().int()),
+  selected_evaluation_ids: z.array(z.number().int()),
+  scores: z.array(similarityScoreSchema),
+  explanation_method: z.literal("tfidf-times-positive-centroid/v1"),
+});
 export const reviewQueueSchema = z.object({
   format: z.literal("scout.review-queue/v1"), project_key: z.string(),
   population_digest: digestSchema,
   items: z.array(z.object({ duplicate_key: digestSchema, sources: z.array(queueSourceSchema) })),
-  ranked: selectorSchema.nullable(), random: selectorSchema,
+  ranked: z.union([selectorSchema, positiveSelectorSchema]).nullable(), random: selectorSchema,
 });
 export type ReviewQueue = z.infer<typeof reviewQueueSchema>;
 
@@ -76,11 +87,15 @@ export interface QueueReviewItem {
   source: z.infer<typeof queueSourceSchema>;
   duplicate_key: string;
   recorded: RejectedInput;
-  score: z.infer<typeof scoreSchema> | null;
+  score: z.infer<typeof scoreSchema> | z.infer<typeof similarityScoreSchema> | null;
   grade: Grade | null;
   current_revision_id: number | null;
   disposition: ReviewDisposition | null;
   status: ReviewStatus;
+}
+export interface ReviewScorePresentation {
+  summary: string;
+  explanation: string;
 }
 export interface ReviewCosts {
   action_ids: string[]; measured_action_count: number; unavailable_action_count: number;

@@ -1,5 +1,15 @@
 import type { Grade } from "@/types/schema";
-import type { QueueReviewItem, ReviewCosts, ReviewDisposition, ReviewStatus } from "@/types/review-queues";
+import type { QueueReviewItem, ReviewCosts, ReviewDisposition, ReviewStatus, ReviewScorePresentation } from "@/types/review-queues";
+
+export function selectReviewScore(score: QueueReviewItem["score"]): ReviewScorePresentation | null {
+  if (score === null) return null;
+  const isSimilarity = "similarity" in score;
+  const summary = isSimilarity
+    ? `Similarity to confirmed positives: ${score.similarity.toFixed(3)} (cosine similarity, not a relevance probability or human label)`
+    : `Selector probability: ${score.probability.toFixed(3)} (ranking evidence, not a human label)`;
+  const terms = score.explanation.map((term) => `${term.term} (${term.contribution.toFixed(3)})`).join(", ");
+  return { summary, explanation: `${isSimilarity ? "TF-IDF × positive centroid" : "TF-IDF × coefficient"}: ${terms}` };
+}
 
 export function selectReviewStatus(input: {
   grade: Grade | null; revisionId: number | null; disposition: ReviewDisposition | null;

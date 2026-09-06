@@ -56,6 +56,27 @@ QUEUE_WIRE = record_wire(
     ranked=SELECTOR_WIRE,
     random=SELECTOR_WIRE,
 )
+POSITIVE_CONFIG_WIRE = record_wire(
+    "format seed heldout_fraction ranked random",
+    ranked=record_wire("kind count max_features"),
+    random=record_wire("kind count seed design"),
+)
+POSITIVE_MODEL_WIRE = record_wire("format train_evaluation_ids vocabulary idf centroid")
+POSITIVE_SELECTOR_WIRE = record_wire(
+    "kind population_evaluation_ids selected_evaluation_ids scores explanation_method",
+    scores=ArrayWire(
+        record_wire(
+            "evaluation_id similarity explanation",
+            explanation=ArrayWire(record_wire("term contribution")),
+        )
+    ),
+)
+POSITIVE_QUEUE_WIRE = record_wire(
+    "format project_key population_digest items ranked random",
+    items=next(field.layout for field in QUEUE_WIRE.fields if field.name == "items"),
+    ranked=POSITIVE_SELECTOR_WIRE,
+    random=SELECTOR_WIRE,
+)
 CONFUSION_WIRE = record_wire("true_positive true_negative false_positive false_negative")
 REPORT_WIRE = record_wire(
     "format project_key source_count candidate_count candidate_duplicate_count "
@@ -84,18 +105,34 @@ def encode_population(population: RejectedPopulation) -> bytes:
 
 
 def encode_config(config: AssistanceConfig) -> bytes:
-    return encode_wire_v1(config, CONFIG_WIRE)
+    layout = (
+        POSITIVE_CONFIG_WIRE
+        if config.ranked is not None and config.ranked.kind == "tfidf_positive_similarity"
+        else CONFIG_WIRE
+    )
+    return encode_wire_v1(config, layout)
 
 
 def encode_queue(queue: ReviewQueue) -> bytes:
-    return encode_wire_v1(queue, QUEUE_WIRE)
+    layout = (
+        POSITIVE_QUEUE_WIRE
+        if queue.ranked is not None and queue.ranked.kind == "tfidf_positive_similarity"
+        else QUEUE_WIRE
+    )
+    return encode_wire_v1(queue, layout)
 
 
 def encode_outputs(outputs: AssistanceOutputs) -> tuple[bytes, ...]:
     """Four ordered outputs; random-only runs retain an explicit null model."""
     return (
         encode_wire_v1(outputs.partition, PARTITION_WIRE),
-        encode_wire_v1(outputs.model, MODEL_WIRE),
+        encode_wire_v1(
+            outputs.model,
+            POSITIVE_MODEL_WIRE
+            if outputs.model is not None
+            and outputs.model.format == "scout.tfidf-positive-centroid/v1"
+            else MODEL_WIRE,
+        ),
         encode_queue(outputs.queue),
         encode_wire_v1(outputs.report, REPORT_WIRE),
     )

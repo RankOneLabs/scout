@@ -42,6 +42,7 @@ from scout.grading.assistance_types import (
     CandidateExclusion,
     ExecutionObservationV2,
     ExecutionTiming,
+    PositiveSimilaritySelector,
     ReplayUnavailable,
 )
 from scout.grading.assistance_wire import OBSERVATION_WIRE_V2, encode_queue
@@ -194,6 +195,10 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
             related_posts=population_grouping_posts(captured.value),
         )
         limitations: list[str] = []
+        if isinstance(config.ranked, PositiveSimilaritySelector) and not any(
+            item.is_relevant for item in examples.value
+        ):
+            limitations.append("No confirmed positive references")
         if isinstance(partition, Err):
             limitations.append(partition.error.detail)
         if config.random.count > len(candidates):
@@ -222,6 +227,7 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
             population=captured.value,
             config=config,
             provenance_queues=provenance,
+            producer_version="3" if isinstance(config.ranked, PositiveSimilaritySelector) else "2",
         ),
         runtime.value,
     )

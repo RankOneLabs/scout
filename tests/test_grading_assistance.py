@@ -25,11 +25,13 @@ from scout.grading.artifacts import (
 from scout.grading.assistance import (
     eligible_candidates,
     execute_assistance,
+    fit_positive_tfidf,
     fit_tfidf,
     freeze_partition,
     group_posts,
     population_grouping_posts,
     report_queue_reviews,
+    score_positive_similarity,
     score_texts,
     select_random,
 )
@@ -45,6 +47,9 @@ from scout.grading.assistance_store import (
 )
 from scout.grading.assistance_types import (
     AssistanceConfig,
+    FittedPositiveTfidf,
+    PositiveSimilarityResult,
+    PositiveSimilaritySelector,
     RandomSelector,
     ReplayVerification,
     ReviewOutcome,
@@ -413,7 +418,12 @@ def test_persisted_model_scores_without_fitting_again(request_data, examples, mo
     assert scores.value[0].explanation
 
 
-def test_preview_and_execute_commands_preserve_grades(state, request_data, runtime, tmp_path):
+@pytest.mark.parametrize("positive_similarity", [False, True])
+def test_preview_and_execute_commands_preserve_grades(
+    state, request_data, runtime, tmp_path, positive_similarity
+):
+    if positive_similarity:
+        request_data = positive_request(request_data)
     config_path = tmp_path / "config.json"
     config_path.write_text(request_data.config.model_dump_json())
     environment = tmp_path / "environment.json"
@@ -897,11 +907,14 @@ def test_new_run_appends_only_requested_dependencies_despite_stale_history(
 
 
 @pytest.mark.parametrize("damage", ["context", "lock", "source", "model", "dimensions", "random"])
+@pytest.mark.parametrize("positive_similarity", [False, True])
 def test_runtime_drift_does_not_hide_corruption(
-    state, request_data, runtime, tmp_path, monkeypatch, damage
+    state, request_data, runtime, tmp_path, monkeypatch, damage, positive_similarity
 ):
     from scout.grading.assistance_population import retain_population
 
+    if positive_similarity:
+        request_data = positive_request(request_data)
     built = build_assistance_bundle(request_data, runtime)
     assert isinstance(built, Ok)
     bundle = built.value.bundle
@@ -1155,9 +1168,157 @@ def test_assistance_config_has_pinned_v1_wire_bytes():
     )
 
 
-def test_new_wire_layout_ignores_operational_field_order(request_data, runtime):
+def positive_request(request_data):
+    return replace(
+        request_data,
+        producer_version="3",
+        config=AssistanceConfig(
+            ranked=PositiveSimilaritySelector(count=3),
+            random=RandomSelector(count=5, seed=17),
+        ),
+    )
+
+
+def test_positive_similarity_needs_no_negative_labels(request_data, examples):
+    request = positive_request(request_data)
+    positives = tuple(item for item in examples if item.is_relevant)
+    partition = partition_for(request, positives)
+    result = execute_assistance(positives, request.population, partition, request.config)
+    assert isinstance(result, Ok), result
+    assert isinstance(result.value.model, FittedPositiveTfidf)
+    assert result.value.model.train_evaluation_ids == tuple(i.evaluation_id for i in positives)
+    assert result.value.report.heldout is None
+    assert isinstance(result.value.queue.ranked, PositiveSimilarityResult)
+
+
+def test_positive_similarity_fits_neither_negatives_nor_candidates(request_data, examples):
+    request = positive_request(request_data)
+    result = execute_assistance(
+        examples, request.population, partition_for(request, examples), request.config
+    )
+    assert isinstance(result, Ok), result
+    model = result.value.model
+    assert isinstance(model, FittedPositiveTfidf)
+    assert not {"soup", "recipe", "kitchen", "unique100", "automation"} & set(model.vocabulary)
+    assert model.train_evaluation_ids == tuple(i.evaluation_id for i in examples if i.is_relevant)
+
+
+def test_positive_similarity_does_not_fit_heldout_positive(request_data, examples):
+    request = positive_request(request_data)
+    partition = partition_for(request, examples)
+    partition = partition.model_copy(
+        update={
+            "members": tuple(
+                item.model_copy(update={"partition": "heldout"})
+                if item.evaluation_id == 2
+                else item
+                for item in partition.members
+            )
+        }
+    )
+    result = execute_assistance(examples, request.population, partition, request.config)
+    assert isinstance(result, Ok), result
+    assert "unique2" not in result.value.model.vocabulary
+    assert 2 not in result.value.model.train_evaluation_ids
+
+
+def test_positive_similarity_is_cosine_not_probability(examples):
+    config = PositiveSimilaritySelector()
+    # One confirmed positive is sufficient for retrieval.
+    positive = next(item for item in examples if item.is_relevant)
+    fitted = fit_positive_tfidf((positive,), config)
+    assert isinstance(fitted, Ok)
+    scores = score_positive_similarity(
+        ((100, positive.post.content), (101, "unseen tokens")), fitted.value, config
+    )
+    assert isinstance(scores, Ok)
+    assert scores.value[0].similarity == pytest.approx(1.0)
+    assert scores.value[1].similarity == 0
+    assert sum(term.contribution for term in scores.value[0].explanation) == pytest.approx(1.0)
+    assert "probability" not in scores.value[0].model_dump()
+
+
+def test_positive_similarity_without_positives_is_an_error(examples):
+    assert isinstance(
+        fit_positive_tfidf(
+            tuple(i for i in examples if not i.is_relevant), PositiveSimilaritySelector()
+        ),
+        Err,
+    )
+
+
+def test_positive_similarity_zero_overlap_stays_in_random_frame(request_data, examples):
+    request = positive_request(request_data)
+    request = replace(
+        request,
+        config=request.config.model_copy(update={"ranked": PositiveSimilaritySelector(count=20)}),
+    )
+    result = execute_assistance(
+        examples, request.population, partition_for(request, examples), request.config
+    )
+    assert isinstance(result, Ok)
+    ranked = result.value.queue.ranked
+    assert isinstance(ranked, PositiveSimilarityResult)
+    zero_ids = {score.evaluation_id for score in ranked.scores if score.similarity == 0}
+    assert zero_ids
+    assert zero_ids <= set(result.value.queue.random.population_evaluation_ids)
+    assert not zero_ids & set(ranked.selected_evaluation_ids)
+    assert ranked.selected_evaluation_ids[0] == 102  # Stable tie among equal matches.
+    assert 100 in ranked.selected_evaluation_ids
+    assert 101 not in ranked.selected_evaluation_ids
+
+
+def test_positive_similarity_replays_imports_and_preserves_no_grades(
+    request_data, runtime, state, tmp_path
+):
+    request = positive_request(request_data)
+    before = state.conn.execute("SELECT count(*) FROM grades").fetchone()[0]
+    built = build_assistance_bundle(request, runtime)
+    assert isinstance(built, Ok), built
+    assert built.value.lineage.process.version == "3"
+    assert verify_assistance_replay(built.value.bundle) == Ok(
+        ReplayVerification(replayed_lineage_count=1)
+    )
+    assert state.artifacts.import_bundle(built.value.bundle) == Ok(None)
+    assert state.conn.execute("SELECT count(*) FROM grades").fetchone()[0] == before
+    with StateManager(str(tmp_path / "restore.db")) as restored:
+        assert restored.artifacts.import_bundle(built.value.bundle) == Ok(None)
+        exported = restored.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        assert isinstance(verify_analysis_bundle(exported.value), Ok)
+
+
+def test_positive_similarity_refuses_legacy_producer(request_data, runtime):
+    assert isinstance(
+        build_assistance_bundle(
+            replace(positive_request(request_data), producer_version="2"), runtime
+        ),
+        Err,
+    )
+
+
+def test_positive_similarity_has_pinned_wire_bytes():
+    from scout.grading.assistance_wire import encode_config
+
+    config = AssistanceConfig(
+        ranked=PositiveSimilaritySelector(count=3), random=RandomSelector(count=5, seed=29)
+    )
+    assert encode_config(config) == (
+        b'{"format":"scout.assistance-config/v1","seed":0,"heldout_fraction":0.2,'
+        b'"ranked":{"kind":"tfidf_positive_similarity","count":3,"max_features":20000},'
+        b'"random":{"kind":"seeded_random","count":5,"seed":29,'
+        b'"design":"srs_without_replacement_evaluations/v1"}}'
+    )
+
+
+@pytest.mark.parametrize("positive_similarity", [False, True])
+def test_new_wire_layout_ignores_operational_field_order(
+    request_data, runtime, positive_similarity
+):
     from dataclasses import make_dataclass
 
+    if positive_similarity:
+        request_data = positive_request(request_data)
     built = build_assistance_bundle(request_data, runtime)
     assert isinstance(built, Ok)
     outputs = built.value.outputs
