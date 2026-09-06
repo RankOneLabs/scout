@@ -217,6 +217,24 @@ export interface BaselineEvidenceV2 {
   assembler_version?: string;
 }
 
+// Mirrors scout.replay.experiments.ReplayWorkerConfiguration, serialized by
+// build_batch_case_evidence before a replay attempt executes.
+export interface ReplayWorkerConfiguration {
+  phase: FeedbackPhase;
+  model: string;
+  system_prompt_sha256: string;
+  output_schema_sha256: string;
+  max_tool_calls: number;
+  max_llm_calls: number;
+  max_parse_retries: number;
+  jig_revision: string;
+  grader_version: string | null;
+  assembler_version: string;
+  tools: string[];
+  include_memory_in_prompt: boolean;
+  include_feedback_in_prompt: boolean;
+}
+
 export interface BatchCaseEvidenceV1 {
   version: 1;
   recorded_input_sha256: string;
@@ -225,6 +243,8 @@ export interface BatchCaseEvidenceV1 {
   baseline_prompt_reused: boolean;
   candidate_model: string;
   candidate_prompt_sha256: string;
+  // Older v1 evidence predates this capture; absence is not inferred or backfilled.
+  worker_configuration?: ReplayWorkerConfiguration;
   estimated_usd: number | null;
   reply_revision_id: number;
   correction_sha256: string;

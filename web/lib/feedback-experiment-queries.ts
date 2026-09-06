@@ -26,6 +26,7 @@ import type {
   ExperimentRunListResponse,
   ExperimentRunStatus,
   ReplyEvidence,
+  ReplayWorkerConfiguration,
   ScoreEvidence,
   TraceDiff,
 } from "@/types/feedback-experiments";
@@ -165,6 +166,24 @@ const baselineEvidenceV2Schema = z
   })
   .strict();
 
+const replayWorkerConfigurationSchema: z.ZodType<ReplayWorkerConfiguration> = z
+  .object({
+    phase: z.enum(["relevance", "reply_draft", "critic"]),
+    model: z.string().min(1),
+    system_prompt_sha256: z.string().min(1),
+    output_schema_sha256: z.string().min(1),
+    max_tool_calls: z.number().int().nonnegative(),
+    max_llm_calls: z.number().int().positive(),
+    max_parse_retries: z.number().int().nonnegative(),
+    jig_revision: z.string().min(1),
+    grader_version: z.string().min(1).nullable(),
+    assembler_version: z.string().min(1),
+    tools: z.array(z.string().min(1)),
+    include_memory_in_prompt: z.boolean(),
+    include_feedback_in_prompt: z.boolean(),
+  })
+  .strict();
+
 const batchCaseEvidenceV1Schema: z.ZodType<BatchCaseEvidenceV1> = z
   .object({
     version: z.literal(1),
@@ -174,6 +193,7 @@ const batchCaseEvidenceV1Schema: z.ZodType<BatchCaseEvidenceV1> = z
     baseline_prompt_reused: z.boolean(),
     candidate_model: z.string().min(1),
     candidate_prompt_sha256: z.string().min(1),
+    worker_configuration: replayWorkerConfigurationSchema.optional(),
     estimated_usd: z.number().nullable(),
     reply_revision_id: z.number().int(),
     correction_sha256: z.string().min(1),
