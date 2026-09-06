@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect, Request
 
 from scout.cli import grading_api
 from scout.config import GradeRecord
@@ -262,3 +263,73 @@ def test_source_change_requires_new_queue(state, queue):  # noqa: F811
         state.conn.execute("UPDATE posts SET content = 'changed' WHERE id = ?", (evaluation_id,))
     result = save_review(state, queue.queue_digest, evaluation_id, action())
     assert isinstance(result, Err) and result.error.status == 409
+
+
+@pytest.mark.parametrize("damage", ["missing_revision", "payload_drift"])
+def test_sidecar_revision_damage_is_a_known_conflict(state, queue, monkeypatch, damage):  # noqa: F811
+    evaluation_id = selected(queue)
+    state.save_grade(
+        GradeRecord(
+            post_id=evaluation_id,
+            evaluation_id=evaluation_id,
+            scan_id=None,
+            source="cli",
+            graded_at=datetime.now(UTC),
+            relevance_judgment="correct",
+            action_judgment="accept",
+        )
+    )
+    with state.db.transaction():
+        if damage == "missing_revision":
+            # Simulate pre-existing damage without weakening production protections.
+            triggers = state.conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'trigger' AND tbl_name = 'grade_revisions'"
+            ).fetchall()
+            for trigger in triggers:
+                state.conn.execute(f'DROP TRIGGER "{trigger[0]}"')
+            state.conn.execute(
+                "DELETE FROM grade_revisions WHERE evaluation_id = ?", (evaluation_id,)
+            )
+        else:
+            state.conn.execute(
+                "UPDATE grades SET failure_note = 'Drifted' WHERE evaluation_id = ?",
+                (evaluation_id,),
+            )
+    monkeypatch.setattr(grading_api, "DB_PATH", state.db_path)
+    path = f"/review-queues/{queue.queue_digest}/evaluations/{evaluation_id}/actions"
+    with TestClient(grading_api.app, headers={"Host": "localhost"}) as client:
+        response = client.post(path, json=action().model_dump(mode="json"))
+    assert response.status_code == 409, response.text
+    assert "remediate the grade first" in response.json()["detail"]
+    assert state.conn.execute("SELECT count(*) FROM review_dispositions").fetchone()[0] == 0
+
+
+def test_future_post_column_returns_known_schema_conflict(state, queue):  # noqa: F811
+    with state.db.transaction():
+        state.conn.execute("ALTER TABLE posts ADD COLUMN future_context TEXT")
+    result = save_review(state, queue.queue_digest, selected(queue), action())
+    assert isinstance(result, Err) and result.error.status == 409
+    assert "recorded schema" in result.error.detail
+
+
+@pytest.mark.parametrize("body", ['{"action_id":"private submitted text"}', "not json"])
+def test_invalid_review_body_does_not_echo_submitted_input(state, monkeypatch, body):  # noqa: F811
+    monkeypatch.setattr(grading_api, "DB_PATH", state.db_path)
+    with TestClient(grading_api.app, headers={"Host": "localhost"}) as client:
+        response = client.post(f"/review-queues/{'a' * 64}/evaluations/1/actions", content=body)
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid review request"}
+
+
+@pytest.mark.parametrize("error", [ClientDisconnect, OSError])
+def test_review_body_read_failure_is_a_known_rejection(state, monkeypatch, error):  # noqa: F811
+    async def broken_body(self):
+        raise error("private receive failure")
+
+    monkeypatch.setattr(grading_api, "DB_PATH", state.db_path)
+    monkeypatch.setattr(Request, "body", broken_body)
+    with TestClient(grading_api.app, headers={"Host": "localhost"}) as client:
+        response = client.post(f"/review-queues/{'a' * 64}/evaluations/1/actions", content="{}")
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid request body"}

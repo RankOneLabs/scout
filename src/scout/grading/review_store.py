@@ -10,6 +10,8 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from scout.config import HUMAN_GRADE_SCHEMA_VERSION, GradeRecord
 from scout.grading.artifacts import ArtifactDigest
 from scout.grading.assistance_population import read_population
@@ -23,6 +25,10 @@ from scout.result import Err, Ok, Result
 from scout.storage.grades import GradeValidationError
 from scout.storage.migrations import grade_revision_comparison_shape
 from scout.storage.state import StateManager
+
+
+class ReviewConflict(ValueError):
+    """Known precondition failure at the review IO boundary, safe to discard/reload."""
 
 
 def review_source(
@@ -92,11 +98,19 @@ def current_revision(state: StateManager, evaluation_id: int) -> int | None:
     ).fetchone()
     if row is None:
         if state.get_grade_id_for_evaluation(evaluation_id) is not None:
-            raise ValueError("Grade is missing its pinned revision")
+            raise ReviewConflict("Grade is missing its pinned revision; remediate the grade first")
         return None
     grade = state.get_grade_row_by_id(row["grade_id"])
-    if grade is None or json.loads(row["payload"]) != grade_revision_comparison_shape(grade):
-        raise ValueError("Grade differs from its pinned revision")
+    try:
+        matches = grade is not None and json.loads(
+            row["payload"]
+        ) == grade_revision_comparison_shape(grade)
+    except (ValueError, TypeError) as exc:
+        raise ReviewConflict(
+            "Grade revision payload is invalid; remediate the grade first"
+        ) from exc
+    if not matches:
+        raise ReviewConflict("Grade differs from its pinned revision; remediate the grade first")
     return int(row["id"])
 
 
@@ -107,6 +121,8 @@ def save_review(
     try:
         with state.db.begin_immediate():
             return _save_review_in_transaction(state, queue_digest, evaluation_id, request)
+    except ReviewConflict as exc:
+        return Err(ReviewError(evaluation_id=evaluation_id, detail=str(exc), status=409))
     except GradeValidationError as exc:
         return Err(
             ReviewError(evaluation_id=evaluation_id, detail="; ".join(exc.errors), status=400)
@@ -149,7 +165,16 @@ def _save_review_in_transaction(
     post_row = state.conn.execute(
         "SELECT * FROM posts WHERE id = ?", (recorded.post_id,)
     ).fetchone()
-    if post_row is None or RecordedPost.model_validate(dict(post_row)) != source.value.post:
+    if post_row is None:
+        return failure("Post context changed since selection; create a new queue")
+    try:
+        live_post = RecordedPost.model_validate(dict(post_row))
+    except ValidationError:
+        return failure(
+            "Post context no longer matches the recorded schema; "
+            "create a new queue after updating Scout"
+        )
+    if live_post != source.value.post:
         return failure("Post context changed since selection; create a new queue")
     # Queue grades must describe the same recorded input, not a rescore or a
     # changed project/dossier. Never attach a grade to a sibling evaluation.

@@ -1085,6 +1085,34 @@ def test_legacy_inline_population_replays(request_data, runtime):
     )
 
 
+@pytest.mark.parametrize("version", ["1", "2"])
+def test_bundle_encodes_population_once_without_changing_outputs(
+    request_data, runtime, monkeypatch, version
+):
+    from unittest.mock import Mock
+
+    from scout.grading import assistance_store
+
+    request = replace(
+        request_data,
+        producer_version=version,
+        population=request_data.population.model_copy(update={"grouping_posts": ()}),
+    )
+    expected = assistance_store.derive_assistance(request)
+    retained = Mock(wraps=assistance_store.retain_population)
+    inline = Mock(wraps=assistance_store.encode_population)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(assistance_store, "retain_population", retained)
+        scoped.setattr(assistance_store, "encode_population", inline)
+        built = build_assistance_bundle(request, runtime)
+    assert isinstance(built, Ok), built
+    assert Ok(built.value.outputs) == expected
+    assert (retained.call_count, inline.call_count) == ((1, 0) if version == "2" else (0, 1))
+    assert verify_assistance_replay(built.value.bundle) == Ok(
+        ReplayVerification(replayed_lineage_count=1)
+    )
+
+
 @pytest.mark.parametrize(
     "command", ["assistance-preview", "assistance-run", "assistance-replay", "assistance-report"]
 )

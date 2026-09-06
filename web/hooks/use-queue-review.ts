@@ -6,6 +6,8 @@ import { startReviewClock, transitionReviewClock, type ReviewClock, type ReviewC
 import type { QueueReviewItem, ReviewAction, ReviewPriceBasis, ReviewRequest } from "@/types/review-queues";
 
 const sessionSchema = z.object({ elapsedMs: z.number().nonnegative(), pendingBody: z.string().nullable() });
+const errorResponseSchema = z.object({ detail: z.string().optional() });
+const PERSIST_ERROR = "Cannot persist review timing. Reload with session storage available before reviewing.";
 
 export function useQueueReview(input: {
   digest: string; item: QueueReviewItem; pricing: ReviewPriceBasis | null; onSaved: () => Promise<void>;
@@ -14,6 +16,7 @@ export function useQueueReview(input: {
   const clock = useRef<ReviewClock | null>(null);
   const pendingBody = useRef<string | null>(null);
   const busyRef = useRef(false);
+  const storageError = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hasPending, setHasPending] = useState(false);
@@ -22,15 +25,25 @@ export function useQueueReview(input: {
   const [error, setError] = useState<string | null>(null);
 
   const transition = useCallback((event: ReviewClockEvent) => {
-    if (!clock.current) return;
+    if (!clock.current || storageError.current !== null) return false;
     clock.current = transitionReviewClock(clock.current, event, performance.now());
     setElapsedMs(Math.floor(clock.current.elapsedMs));
     setPaused(clock.current.paused);
     // A pending request retains its original timing bytes across retry/reload.
-    sessionStorage.setItem(key, JSON.stringify({ elapsedMs: clock.current.elapsedMs, pendingBody: pendingBody.current }));
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ elapsedMs: clock.current.elapsedMs, pendingBody: pendingBody.current }));
+      return true;
+    } catch {
+      storageError.current = PERSIST_ERROR;
+      setReady(false);
+      setError(PERSIST_ERROR);
+      return false;
+    }
   }, [key]);
 
   useEffect(() => {
+    setReady(false);
+    storageError.current = null;
     let restored: z.infer<typeof sessionSchema> = { elapsedMs: 0, pendingBody: null };
     try {
       const raw = sessionStorage.getItem(key);
@@ -67,6 +80,7 @@ export function useQueueReview(input: {
   }, [key, transition]);
 
   const send = useCallback(async () => {
+    if (storageError.current !== null) throw new Error(storageError.current);
     if (busyRef.current || pendingBody.current === null) throw new Error("No retryable request, or save in progress");
     busyRef.current = true;
     setBusy(true);
@@ -76,22 +90,22 @@ export function useQueueReview(input: {
         method: "POST", headers: { "Content-Type": "application/json" }, body: pendingBody.current,
       });
       if (!response.ok) {
-        const body = await response.json() as { detail?: string };
         // A known rejection made no write. Transport/5xx failures remain pending.
         if (response.status >= 400 && response.status < 500) {
           pendingBody.current = null;
           setHasPending(false);
           transition("failed");
         }
-        throw new Error(body.detail ?? `Review save failed (${response.status})`);
+        const body = errorResponseSchema.safeParse(await response.json().catch(() => null));
+        throw new Error((body.success ? body.data.detail : null) ?? `Review save failed (${response.status})`);
       }
       // Refresh can fail after a committed save; retry remains the same action.
       await input.onSaved();
       pendingBody.current = null;
       setHasPending(false);
-      transition("saved");
+      if (!transition("saved")) throw new Error(PERSIST_ERROR);
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "Save failed; retry the same action";
+      const message = storageError.current ?? (reason instanceof Error ? reason.message : "Save failed; retry the same action");
       setError(message);
       throw new Error(message);
     } finally {
@@ -101,8 +115,9 @@ export function useQueueReview(input: {
   }, [input, transition]);
 
   const submit = useCallback(async (action: ReviewAction) => {
+    if (storageError.current !== null) throw new Error(storageError.current);
     if (!ready || !clock.current || busyRef.current || pendingBody.current !== null) throw new Error("Resolve the pending request before another action");
-    transition("submit");
+    if (!transition("submit")) throw new Error(PERSIST_ERROR);
     const request: ReviewRequest = {
       action_id: crypto.randomUUID(), expected_grade_revision_id: input.item.current_revision_id,
       expected_action_id: input.item.disposition?.action_id ?? null, action,
@@ -113,7 +128,7 @@ export function useQueueReview(input: {
     };
     pendingBody.current = JSON.stringify(request);
     setHasPending(true);
-    transition("tick");
+    if (!transition("tick")) throw new Error(PERSIST_ERROR);
     await send();
   }, [input, ready, send, transition]);
 

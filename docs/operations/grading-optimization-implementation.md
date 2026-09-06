@@ -59,6 +59,8 @@ revision without regrading or claiming a duration. Invalid/currently incomplete
 grades remain **needs regrade**. Grade detail links back to every recorded review
 action, queue, and pinned revision. Repeated queue generation and action retries
 do not replace observations.
+Missing or drifted pinned revisions also appear as **needs regrade** and reject
+queue actions with 409; remediate the grade before retrying.
 
 ### Timing and retries
 
@@ -77,6 +79,10 @@ the page. A successful retry never adds another grade revision or time charge.
 An acknowledged 4xx rejection leaves the timer's accumulated review work available
 to the corrected action. Missing timing is `{elapsed_ms: null, method: null}`,
 never zero. Reconciliation has unavailable timing and is not billed as labor.
+Non-JSON 4xx responses are still known rejections and release the pending action.
+If session-storage writes fail, new submissions stop with a recovery message;
+restore storage availability and reload. An already persisted pending action
+keeps its original ID for safe retry, even if clearing it after a save failed.
 
 ### Costs and preservation
 

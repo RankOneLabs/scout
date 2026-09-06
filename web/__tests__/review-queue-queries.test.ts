@@ -12,8 +12,14 @@ beforeEach(() => {
     CREATE TABLE analysis_artifacts(digest TEXT PRIMARY KEY, content BLOB, recorded_at TEXT);
     CREATE TABLE analysis_lineage(digest TEXT PRIMARY KEY);
     CREATE TABLE review_dispositions(sequence INTEGER PRIMARY KEY, queue_digest TEXT, disposition_json TEXT);
-    CREATE TABLE grades(id INTEGER PRIMARY KEY, evaluation_id INTEGER, schema_version INTEGER, needs_regrade INTEGER, relevance_judgment TEXT, dimensions TEXT);
-    CREATE TABLE grade_revisions(id INTEGER PRIMARY KEY, grade_id INTEGER, evaluation_id INTEGER, revision INTEGER);
+    CREATE TABLE grades(id INTEGER PRIMARY KEY, evaluation_id INTEGER, schema_version INTEGER, needs_regrade INTEGER, relevance_judgment TEXT, dimensions TEXT,
+      post_id INTEGER, scan_id INTEGER, source TEXT, graded_at TEXT, rejection_reason TEXT,
+      comment_quality INTEGER, comment_issue TEXT, action_judgment TEXT, failure_note TEXT,
+      factual_offending_claim TEXT, factual_disposition TEXT, factual_contradicting_evidence TEXT,
+      context_missing_input TEXT, posture_should_have_been TEXT, implication_implied_claim TEXT,
+      implication_missing_support TEXT, reply_revision_id INTEGER);
+    CREATE TABLE grade_revisions(id INTEGER PRIMARY KEY, grade_id INTEGER, evaluation_id INTEGER, revision INTEGER, payload TEXT);
+    CREATE TABLE reply_draft_revisions(id INTEGER PRIMARY KEY, reply_text TEXT);
   `);
 });
 afterEach(() => db.close());
@@ -47,6 +53,26 @@ function seedQueue(version: "1" | "2" = "2") {
   return { digest, postDigest, contextDigest };
 }
 
+function seedGrade() {
+  // Mirrors the Python revision payload, independently of the projection query.
+  const payload = {
+    id: 1, evaluation_id: 123, schema_version: 3, needs_regrade: 0,
+    relevance_judgment: "correct", dimensions: ["usefulness", "factual"],
+    post_id: 456, scan_id: null, source: "web", graded_at: "2026-09-05T00:00:00Z",
+    rejection_reason: null, comment_quality: null, comment_issue: null,
+    action_judgment: "fail", failure_note: "Synthetic note", factual_offending_claim: null,
+    factual_disposition: null, factual_contradicting_evidence: null, context_missing_input: null,
+    posture_should_have_been: null, implication_implied_claim: null,
+    implication_missing_support: null, reply_revision_id: 2, edited_text: "Pinned correction",
+  };
+  db.prepare(`INSERT INTO grades (id, evaluation_id, schema_version, needs_regrade,
+    relevance_judgment, dimensions, post_id, source, graded_at, action_judgment, failure_note, reply_revision_id)
+    VALUES (1, 123, 3, 0, 'correct', ?, 456, 'web', ?, 'fail', 'Synthetic note', 2)`)
+    .run(JSON.stringify(payload.dimensions), payload.graded_at);
+  db.prepare("INSERT INTO reply_draft_revisions VALUES (2, ?)").run(payload.edited_text);
+  db.prepare("INSERT INTO grade_revisions VALUES (9, 1, 123, 1, ?)").run(JSON.stringify(payload));
+}
+
 describe("retained queue projection", () => {
   it.each(["1", "2"] as const)("reads frozen post/context and exact evaluation for producer %s", (version) => {
     const { digest } = seedQueue(version);
@@ -71,9 +97,23 @@ describe("retained queue projection", () => {
   });
   it("detects an external grade by the current immutable revision", () => {
     const { digest } = seedQueue();
-    db.exec("INSERT INTO grades VALUES (1, 123, 3, 0, 'correct', NULL); INSERT INTO grade_revisions VALUES (9, 1, 123, 1)");
+    seedGrade();
     const result = getReviewQueue(digest);
     expect(result.ok && result.value.items[0].status).toBe("graded_elsewhere");
     expect(result.ok && result.value.items[0].current_revision_id).toBe(9);
+  });
+  it.each([
+    "DELETE FROM grade_revisions",
+    "UPDATE grades SET failure_note = 'Drifted'",
+    "UPDATE reply_draft_revisions SET reply_text = 'Drifted correction'",
+    "UPDATE grade_revisions SET payload = 'invalid json'",
+  ])("surfaces revision damage as needs_regrade: %s", (damage) => {
+    const { digest } = seedQueue();
+    seedGrade();
+    db.exec(damage);
+    const result = getReviewQueue(digest);
+    expect(result.ok && result.value.items[0].status).toBe("needs_regrade");
+    const list = listReviewQueues("synthetic");
+    expect(list.ok && list.value[0].graded_elsewhere).toBe(0);
   });
 });

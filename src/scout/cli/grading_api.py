@@ -45,7 +45,8 @@ import anyio.from_thread
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from starlette.requests import ClientDisconnect
 
 from scout.config import DB_PATH, FEEDBACK_DB_PATH, TRACE_DB_PATH, GradeRecord
 from scout.storage.state import (
@@ -370,9 +371,12 @@ def review_action_endpoint(queue_digest: str, evaluation_id: int, request: Reque
 
     try:
         payload = anyio.from_thread.run(request.body)
+    except (ClientDisconnect, OSError, anyio.EndOfStream, anyio.BrokenResourceError):
+        return JSONResponse(status_code=400, content={"detail": "Invalid request body"})
+    try:
         action = ReviewRequest.model_validate_json(payload)
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    except ValidationError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid review request"})
     if (
         len(queue_digest) != 64
         or any(char not in "0123456789abcdef" for char in queue_digest)

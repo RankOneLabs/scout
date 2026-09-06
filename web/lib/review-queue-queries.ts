@@ -1,5 +1,6 @@
 // Read-only projection of retained Scout artifacts and current revision links.
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { getGradeByEvaluationId } from "@/lib/queries";
@@ -13,7 +14,9 @@ import {
 import type { Grade } from "@/types/schema";
 
 interface ArtifactRow { digest: string; content: Buffer; recorded_at: string }
-interface RevisionRow { id: number }
+// Both JSON documents mirror migrations.grade_revision_comparison_shape,
+// including legacy fields and reply text resolved through its pinned revision.
+interface RevisionRow { id: number | null; payload: string | null; current_payload: string }
 interface DispositionRow { disposition_json: string }
 interface CurrentReviewState {
   grade: Grade | null;
@@ -71,9 +74,37 @@ function dispositionsForQueue(digest: string): ReviewDisposition[] {
 
 function currentReviewState(evaluationId: number, disposition: ReviewDisposition | null): CurrentReviewState {
   const grade = getGradeByEvaluationId(evaluationId);
-  const revision = getDb().prepare("SELECT r.id FROM grade_revisions r JOIN grades g ON g.id = r.grade_id WHERE g.evaluation_id = ? AND r.evaluation_id = ? ORDER BY r.revision DESC LIMIT 1").get(evaluationId, evaluationId) as RevisionRow | undefined;
+  const revision = getDb().prepare(`SELECT r.id, r.payload,
+    json_object(
+      'id', g.id, 'evaluation_id', g.evaluation_id, 'post_id', g.post_id,
+      'scan_id', g.scan_id, 'source', g.source, 'graded_at', g.graded_at,
+      'relevance_judgment', g.relevance_judgment, 'rejection_reason', g.rejection_reason,
+      'comment_quality', g.comment_quality, 'comment_issue', g.comment_issue,
+      'schema_version', g.schema_version, 'needs_regrade', g.needs_regrade,
+      'action_judgment', g.action_judgment, 'dimensions', json(NULLIF(g.dimensions, '')),
+      'failure_note', g.failure_note, 'factual_offending_claim', g.factual_offending_claim,
+      'factual_disposition', g.factual_disposition,
+      'factual_contradicting_evidence', g.factual_contradicting_evidence,
+      'context_missing_input', g.context_missing_input,
+      'posture_should_have_been', g.posture_should_have_been,
+      'implication_implied_claim', g.implication_implied_claim,
+      'implication_missing_support', g.implication_missing_support,
+      'reply_revision_id', g.reply_revision_id, 'edited_text', reply.reply_text
+    ) AS current_payload
+    FROM grades g LEFT JOIN grade_revisions r ON r.grade_id = g.id AND r.evaluation_id = g.evaluation_id
+    LEFT JOIN reply_draft_revisions reply ON reply.id = g.reply_revision_id
+    WHERE g.evaluation_id = ? ORDER BY r.revision DESC LIMIT 1`).get(evaluationId) as RevisionRow | undefined;
+  const revisionMatches = revision !== undefined && revision.payload !== null
+    && isDeepStrictEqual(safeRevisionPayload(revision.payload), safeRevisionPayload(revision.current_payload));
   return { grade, current_revision_id: revision?.id ?? null, disposition,
-    status: selectReviewStatus({ grade, revisionId: revision?.id ?? null, disposition }) };
+    status: grade !== null && !revisionMatches ? "needs_regrade"
+      : selectReviewStatus({ grade, revisionId: revision?.id ?? null, disposition }) };
+}
+
+function safeRevisionPayload(payload: string): unknown {
+  // Corrupt stored revision JSON is a remediation state, not a queue-read failure.
+  try { return JSON.parse(payload) as unknown; }
+  catch { return undefined; }
 }
 
 function queueDetail(digest: string): QueueDetail {
