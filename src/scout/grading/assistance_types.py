@@ -7,15 +7,25 @@ Human labels come only from CorpusMember; rejected decisions never become labels
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal, NewType, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from scout.dossiers.resolver import DossierResolution
 from scout.grading.artifacts import ArtifactDigest, DigestReference
 from scout.grading.snapshots import RecordedEvaluation, RecordedPost
 
 GroupId = NewType("GroupId", str)
+
+# The versions of scout.grading.assistance retained by the store. Derive runtime
+# membership from the type rather than keeping another independently edited list.
+AssistanceProducerVersion = Literal["1", "2", "3"]
+ASSISTANCE_PRODUCER_VERSIONS: tuple[AssistanceProducerVersion, ...] = get_args(
+    AssistanceProducerVersion
+)
+ASSISTANCE_PRODUCER_VERSION_ADAPTER: TypeAdapter[AssistanceProducerVersion] = TypeAdapter(
+    AssistanceProducerVersion
+)
 
 
 class AssistanceDocument(BaseModel):
@@ -134,6 +144,19 @@ class AssistanceConfig(AssistanceDocument):
     heldout_fraction: float = Field(default=0.2, gt=0, lt=1)
     ranked: RankedSelector | None = Field(default_factory=TfidfSelector)
     random: RandomSelector
+
+
+def producer_version_for(
+    config: AssistanceConfig, *, legacy_inline: bool = False
+) -> AssistanceProducerVersion:
+    """Current writer mapping, with explicit inline-v1 support for historical replay.
+
+    Positive similarity never had an inline producer; requesting legacy encoding
+    cannot make that selector valid under v1.
+    """
+    if isinstance(config.ranked, PositiveSimilaritySelector):
+        return "3"
+    return "1" if legacy_inline else "2"
 
 
 class SelectionReference(AssistanceDocument):

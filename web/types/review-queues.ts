@@ -2,6 +2,9 @@
 import { z } from "zod";
 import type { Grade, GradeInput } from "@/types/schema";
 
+// Mirror assistance_types.ASSISTANCE_PRODUCER_VERSIONS; checked against Python.
+export const ASSISTANCE_PRODUCER_VERSIONS: readonly string[] = ["1", "2", "3"];
+
 export const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 export type QueueDigest = z.infer<typeof digestSchema>;
 export const queueSourceSchema = z.object({

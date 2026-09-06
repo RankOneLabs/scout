@@ -45,14 +45,15 @@ SELECTOR_WIRE = record_wire(
     "kind population_evaluation_ids selected_evaluation_ids scores explanation_method",
     scores=ArrayWire(SCORE_WIRE),
 )
+ITEMS_WIRE = ArrayWire(
+    record_wire(
+        "duplicate_key sources",
+        sources=ArrayWire(record_wire("evaluation_id ranked_position random_position")),
+    )
+)
 QUEUE_WIRE = record_wire(
     "format project_key population_digest items ranked random",
-    items=ArrayWire(
-        record_wire(
-            "duplicate_key sources",
-            sources=ArrayWire(record_wire("evaluation_id ranked_position random_position")),
-        )
-    ),
+    items=ITEMS_WIRE,
     ranked=SELECTOR_WIRE,
     random=SELECTOR_WIRE,
 )
@@ -73,7 +74,7 @@ POSITIVE_SELECTOR_WIRE = record_wire(
 )
 POSITIVE_QUEUE_WIRE = record_wire(
     "format project_key population_digest items ranked random",
-    items=next(field.layout for field in QUEUE_WIRE.fields if field.name == "items"),
+    items=ITEMS_WIRE,
     ranked=POSITIVE_SELECTOR_WIRE,
     random=SELECTOR_WIRE,
 )

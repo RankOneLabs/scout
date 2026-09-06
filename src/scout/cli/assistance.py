@@ -44,6 +44,7 @@ from scout.grading.assistance_types import (
     ExecutionTiming,
     PositiveSimilaritySelector,
     ReplayUnavailable,
+    producer_version_for,
 )
 from scout.grading.assistance_wire import OBSERVATION_WIRE_V2, encode_queue
 from scout.grading.snapshots import CorpusSnapshot
@@ -227,7 +228,7 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
             population=captured.value,
             config=config,
             provenance_queues=provenance,
-            producer_version="3" if isinstance(config.ranked, PositiveSimilaritySelector) else "2",
+            producer_version=producer_version_for(config),
         ),
         runtime.value,
     )

@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getReviewQueue, listReviewQueues } from "@/lib/review-queue-queries";
-import type { ReviewQueue } from "@/types/review-queues";
+import { ASSISTANCE_PRODUCER_VERSIONS, type ReviewQueue } from "@/types/review-queues";
 
 let db: Database.Database;
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
@@ -77,6 +79,14 @@ function seedGrade() {
 }
 
 describe("retained queue projection", () => {
+  it("keeps supported producer versions in parity with the Python authority", () => {
+    const versions: unknown = JSON.parse(execFileSync("uv", ["run", "--no-sync", "python", "-c", `
+import json
+from scout.grading.assistance_types import ASSISTANCE_PRODUCER_VERSIONS
+print(json.dumps(ASSISTANCE_PRODUCER_VERSIONS))
+`], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8", timeout: 20_000 }));
+    expect(ASSISTANCE_PRODUCER_VERSIONS).toEqual(versions);
+  });
   it.each(["1", "2", "3"] as const)("reads frozen post/context and exact evaluation for producer %s", (version) => {
     const { digest } = seedQueue(version);
     const result = getReviewQueue(digest);

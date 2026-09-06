@@ -6,6 +6,7 @@ import { getDb } from "@/lib/db";
 import { getGradeByEvaluationId } from "@/lib/queries";
 import { selectReviewCosts, selectReviewStatus } from "@/lib/review-selectors";
 import {
+  ASSISTANCE_PRODUCER_VERSIONS,
   digestSchema, dossierContextSchema, recordedEvaluationSchema, recordedPostSchema,
   rejectedInputSchema, reviewQueueSchema,
   type QueueDetail, type QueueReviewItem, type QueueSummary, type RejectedInput,
@@ -44,7 +45,7 @@ function artifact(digest: string): unknown {
 function queueProducers() {
   const rows = getDb().prepare("SELECT a.digest, a.content, a.recorded_at FROM analysis_lineage l JOIN analysis_artifacts a ON a.digest = l.digest ORDER BY a.recorded_at DESC, a.digest").all() as ArtifactRow[];
   return rows.map((row) => ({ row, lineage: lineageSchema.parse(artifact(row.digest)) }))
-    .filter(({ lineage }) => lineage.kind === "scout.grading.assistance" && lineage.process.id === lineage.kind && ["1", "2", "3"].includes(lineage.process.version) && lineage.outputs.length === 4);
+    .filter(({ lineage }) => lineage.kind === "scout.grading.assistance" && lineage.process.id === lineage.kind && ASSISTANCE_PRODUCER_VERSIONS.includes(lineage.process.version) && lineage.outputs.length === 4);
 }
 
 function populationInputs(digest: string): RejectedInput[] {

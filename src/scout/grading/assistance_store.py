@@ -50,8 +50,11 @@ from scout.grading.assistance import (
 )
 from scout.grading.assistance_population import read_population, retain_population
 from scout.grading.assistance_types import (
+    ASSISTANCE_PRODUCER_VERSION_ADAPTER,
+    ASSISTANCE_PRODUCER_VERSIONS,
     AssistanceConfig,
     AssistanceOutputs,
+    AssistanceProducerVersion,
     AssistanceReport,
     ExecutionTiming,
     FittedPositiveTfidf,
@@ -71,6 +74,7 @@ from scout.grading.assistance_types import (
     SelectionReference,
     SelectorResult,
     TrainingExample,
+    producer_version_for,
 )
 from scout.grading.assistance_wire import encode_config, encode_outputs, encode_population
 from scout.grading.snapshots import (
@@ -149,7 +153,7 @@ class AssistanceRequest:
     population: RejectedPopulation
     config: AssistanceConfig
     provenance_queues: tuple[ArtifactDigest, ...] = ()
-    producer_version: Literal["1", "2", "3"] = "2"
+    producer_version: AssistanceProducerVersion = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,7 +320,7 @@ def supports_assistance(lineage: ArtifactLineage) -> bool:
     return (
         lineage.kind == "scout.grading.assistance"
         and lineage.process.id == "scout.grading.assistance"
-        and lineage.process.version in ("1", "2", "3")
+        and lineage.process.version in ASSISTANCE_PRODUCER_VERSIONS
     )
 
 
@@ -458,11 +462,10 @@ def derive_assistance(
 def build_assistance_bundle(
     request: AssistanceRequest, runtime: RetainedRuntime
 ) -> Result[AssistanceExecution, ArtifactError]:
-    if (
-        isinstance(request.config.ranked, PositiveSimilaritySelector)
-        and request.producer_version != "3"
+    if request.producer_version != producer_version_for(
+        request.config, legacy_inline=request.producer_version == "1"
     ):
-        return Err(ArtifactError("assistance", None, "Positive similarity requires producer 3"))
+        return Err(ArtifactError("assistance", None, "Selector/producer version mismatch"))
     # Only explicitly consumed provenance is a gate for a new run.
     prior = verify_provenance(request.bundle, request.provenance_queues)
     if isinstance(prior, Err):
@@ -539,9 +542,11 @@ def replay_assistance_lineage(
         if isinstance(population, Err):
             return population
         config = AssistanceConfig.model_validate_json(contents[lineage.process.config_digest])
-        if isinstance(config.ranked, PositiveSimilaritySelector) and lineage.process.version != "3":
+        if lineage.process.version != producer_version_for(
+            config, legacy_inline=lineage.process.version == "1"
+        ):
             return Err(
-                ArtifactError("replay_assistance", None, "Invalid positive selector producer")
+                ArtifactError("replay_assistance", None, "Selector/producer version mismatch")
             )
         examples = load_training_examples(bundle, lineage.inputs[0], lineage.inputs[2:])
         if isinstance(examples, Err):
@@ -591,7 +596,7 @@ def replay_assistance_lineage(
                 population=population.value,
                 config=config,
                 provenance_queues=lineage.inputs[2:],
-                producer_version=TypeAdapter(Literal["1", "2", "3"]).validate_python(
+                producer_version=ASSISTANCE_PRODUCER_VERSION_ADAPTER.validate_python(
                     lineage.process.version
                 ),
             )

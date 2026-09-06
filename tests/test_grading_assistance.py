@@ -42,6 +42,7 @@ from scout.grading.assistance_store import (
     load_training_examples,
     outputs_match,
     read_rejected_population,
+    replay_assistance_lineage,
     resolve_queue_outcomes,
     verify_assistance_replay,
 )
@@ -55,6 +56,7 @@ from scout.grading.assistance_types import (
     ReviewOutcome,
     SelectionReference,
     TfidfSelector,
+    producer_version_for,
 )
 from scout.grading.assistance_wire import encode_outputs, encode_queue
 from scout.grading.snapshots import CorpusSelection, build_snapshot_bundle, read_grade_population
@@ -1179,6 +1181,45 @@ def positive_request(request_data):
     )
 
 
+@pytest.mark.parametrize(
+    ("ranked", "current", "legacy"),
+    [(None, "2", "1"), (TfidfSelector(), "2", "1"), (PositiveSimilaritySelector(), "3", "3")],
+)
+def test_producer_mapping_preserves_explicit_legacy_encoding(ranked, current, legacy):
+    config = AssistanceConfig(ranked=ranked, random=RandomSelector(count=2, seed=17))
+    assert producer_version_for(config) == current
+    assert producer_version_for(config, legacy_inline=True) == legacy
+
+
+@pytest.mark.parametrize(
+    ("ranked", "invalid_version"),
+    [
+        (None, "3"),
+        (TfidfSelector(), "3"),
+        (PositiveSimilaritySelector(), "1"),
+        (PositiveSimilaritySelector(), "2"),
+    ],
+)
+def test_bundle_and_replay_reject_selector_producer_mismatches(
+    request_data, runtime, ranked, invalid_version
+):
+    config = AssistanceConfig(ranked=ranked, random=RandomSelector(count=2, seed=17))
+    request = replace(request_data, config=config, producer_version=producer_version_for(config))
+    rejected = build_assistance_bundle(replace(request, producer_version=invalid_version), runtime)
+    assert isinstance(rejected, Err)
+    assert rejected.error.detail == "Selector/producer version mismatch"
+    built = build_assistance_bundle(request, runtime)
+    assert isinstance(built, Ok)
+    lineage = built.value.lineage.model_copy(
+        update={
+            "process": built.value.lineage.process.model_copy(update={"version": invalid_version}),
+        }
+    )
+    replayed = replay_assistance_lineage(lineage, built.value.bundle)
+    assert isinstance(replayed, Err)
+    assert replayed.error.detail == "Selector/producer version mismatch"
+
+
 def test_positive_similarity_needs_no_negative_labels(request_data, examples):
     request = positive_request(request_data)
     positives = tuple(item for item in examples if item.is_relevant)
@@ -1309,6 +1350,45 @@ def test_positive_similarity_has_pinned_wire_bytes():
         b'"random":{"kind":"seeded_random","count":5,"seed":29,'
         b'"design":"srs_without_replacement_evaluations/v1"}}'
     )
+
+
+@pytest.mark.parametrize("positive_similarity", [False, True])
+def test_both_queue_layouts_preserve_pinned_item_bytes(positive_similarity):
+    from scout.grading.assistance_types import (
+        QueueSource,
+        ReviewQueue,
+        ReviewQueueItem,
+        SelectorResult,
+    )
+
+    queue = ReviewQueue(
+        project_key="synthetic",
+        population_digest="a" * 64,
+        items=(
+            ReviewQueueItem(
+                duplicate_key="b" * 64,
+                sources=(QueueSource(evaluation_id=101, ranked_position=1, random_position=None),),
+            ),
+        ),
+        ranked=PositiveSimilarityResult(
+            population_evaluation_ids=(101,),
+            selected_evaluation_ids=(101,),
+            scores=(),
+        )
+        if positive_similarity
+        else None,
+        random=SelectorResult(
+            kind="seeded_random",
+            population_evaluation_ids=(101,),
+            selected_evaluation_ids=(101,),
+        ),
+    )
+    assert (
+        b'"items":[{"duplicate_key":"'
+        + b"b" * 64
+        + b'","sources":[{"evaluation_id":101,"ranked_position":1,'
+        b'"random_position":null}]}],"ranked":'
+    ) in encode_queue(queue)
 
 
 @pytest.mark.parametrize("positive_similarity", [False, True])

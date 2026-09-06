@@ -8,7 +8,7 @@ export function selectReviewScore(score: QueueReviewItem["score"]): ReviewScoreP
     ? `Similarity to confirmed positives: ${score.similarity.toFixed(3)} (cosine similarity, not a relevance probability or human label)`
     : `Selector probability: ${score.probability.toFixed(3)} (ranking evidence, not a human label)`;
   const terms = score.explanation.map((term) => `${term.term} (${term.contribution.toFixed(3)})`).join(", ");
-  return { summary, explanation: `${isSimilarity ? "TF-IDF × positive centroid" : "TF-IDF × coefficient"}: ${terms}` };
+  return { summary, explanation: `${isSimilarity ? "TF-IDF × positive centroid" : "TF-IDF × coefficient"}: ${terms || "no shared terms"}` };
 }
 
 export function selectReviewStatus(input: {

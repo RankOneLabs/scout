@@ -18,6 +18,12 @@ describe("queue review projections", () => {
   it("keeps legacy classifier labeling", () => {
     expect(selectReviewScore({ evaluation_id: 1, probability: 0.75, explanation: [] })?.summary).toContain("Selector probability: 0.750");
   });
+  it.each([
+    { evaluation_id: 1, similarity: 0, explanation: [] },
+    { evaluation_id: 1, probability: 0.5, explanation: [] },
+  ])("shows a fallback for empty term explanations: %j", (score) => {
+    expect(selectReviewScore(score)?.explanation).toMatch(/: no shared terms$/);
+  });
   it("does not manufacture score evidence for random-only items", () => {
     expect(selectReviewScore(null)).toBeNull();
   });
