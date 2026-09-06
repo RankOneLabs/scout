@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from scout.replay.experiments import BATCH_CANDIDATE_CONFIG_VERSION, DEFAULT_BATCH_VARIANT_NAME
+from scout.replay.tasks import RelevanceScore, RelevanceTask
 from scout.storage.state import StateManager
 
 REPORT_SCHEMA_VERSION = 2
@@ -107,7 +108,7 @@ def _collect_parents(
         if run is None:
             raise ReportError(f"no experiment_runs row with id={experiment_run_id}")
         config = json.loads(run["candidate_config"])
-        if config.get("version") != BATCH_CANDIDATE_CONFIG_VERSION:
+        if config.get("version") not in (BATCH_CANDIDATE_CONFIG_VERSION, 5):
             raise ReportError(
                 f"experiment_run {experiment_run_id} is not a batch/sweep parent "
                 f"(candidate_config version {config.get('version')!r} != "
@@ -122,6 +123,150 @@ def _collect_parents(
             f"-- found {len(plan_hashes)} distinct plan_sha256 values: {sorted(plan_hashes)}"
         )
     return parents
+
+
+@dataclass(frozen=True, slots=True)
+class RelevanceReportCase:
+    phase_run_id: int
+    variant: str
+    baseline_model: str
+    baseline_prompt_sha256: str
+    status: str
+    score: RelevanceScore | None
+    actual_usd: float | None
+
+
+def _relevance_confusion(scores: list[RelevanceScore], *, candidate: bool) -> dict[str, int]:
+    counts = {"true_positive": 0, "true_negative": 0, "false_positive": 0, "false_negative": 0}
+    for score in scores:
+        prediction = score.candidate_relevant if candidate else score.baseline_relevant
+        key = ("true" if prediction == score.target.is_relevant else "false") + (
+            "_positive" if prediction else "_negative"
+        )
+        counts[key] += 1
+    return counts
+
+
+def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) -> dict[str, Any]:
+    task = RelevanceTask.model_validate(parents[0]["task"])
+    if any(
+        parent.get("phase") != "relevance" or parent.get("task") != task.model_dump(mode="json")
+        for parent in parents
+    ):
+        raise ReportError("Relevance report parents do not share a task/population")
+    cases: list[RelevanceReportCase] = []
+    for parent in parents:
+        latest = {
+            attempt["phase_run_id"]: attempt
+            for attempt in state.list_experiment_attempts(parent["experiment_run_id"])
+        }
+        for phase_run_id, attempt in sorted(latest.items()):
+            evidence = json.loads(attempt["baseline_evidence"])
+            score = None
+            if attempt["status"] == "complete":
+                comparison = state.get_trace_comparison(attempt["id"])
+                if comparison is None or comparison["score_evidence"] is None:
+                    raise ReportError("Completed relevance attempt lacks score evidence")
+                score = RelevanceScore.model_validate_json(comparison["score_evidence"])
+                if (
+                    score.target.model_dump(mode="json") != evidence["target"]
+                    or score.target.task != task
+                ):
+                    raise ReportError("Relevance score differs from pinned target")
+            cases.append(
+                RelevanceReportCase(
+                    phase_run_id=phase_run_id,
+                    variant=parent["variant_name"],
+                    baseline_model=evidence["baseline_model"],
+                    baseline_prompt_sha256=evidence["baseline_prompt_sha256"],
+                    status=attempt["status"],
+                    score=score,
+                    actual_usd=attempt["candidate_cost"],
+                )
+            )
+    variants = sorted(parent["variant_name"] for parent in parents)
+    segment_keys = sorted({(case.baseline_model, case.baseline_prompt_sha256) for case in cases})
+    segments = []
+    for model, prompt in segment_keys:
+        members = [
+            case
+            for case in cases
+            if (case.baseline_model, case.baseline_prompt_sha256) == (model, prompt)
+        ]
+        by_variant = {
+            variant: [
+                case for case in members if case.variant == variant and case.score is not None
+            ]
+            for variant in variants
+        }
+        common = set.intersection(
+            *[{case.phase_run_id for case in values} for values in by_variant.values()]
+        )
+        summaries = []
+        for variant, values in by_variant.items():
+            scores = [
+                case.score
+                for case in values
+                if case.phase_run_id in common and case.score is not None
+            ]
+            summaries.append(
+                {
+                    "variant": variant,
+                    "scored_case_count": len(values),
+                    "common_case_count": len(scores),
+                    "baseline_confusion": _relevance_confusion(scores, candidate=False),
+                    "candidate_confusion": _relevance_confusion(scores, candidate=True),
+                    "baseline_accuracy": sum(score.baseline_correct for score in scores)
+                    / len(scores)
+                    if scores
+                    else None,
+                    "candidate_accuracy": sum(score.candidate_correct for score in scores)
+                    / len(scores)
+                    if scores
+                    else None,
+                    "accuracy_delta": sum(score.accuracy_delta for score in scores) / len(scores)
+                    if scores
+                    else None,
+                }
+            )
+        segments.append(
+            {"baseline_model": model, "baseline_prompt_sha256": prompt, "variants": summaries}
+        )
+    return {
+        "version": 3,
+        "task": task.model_dump(mode="json"),
+        "experiment_run_ids": sorted(parent["experiment_run_id"] for parent in parents),
+        "plan_sha256": parents[0]["plan_sha256"],
+        "population_phase_run_ids": parents[0]["phase_run_ids"],
+        "source_exclusions": parents[0]["source_exclusions"],
+        "skipped_pairs": [
+            {"variant": parent["variant_name"], **pair}
+            for parent in parents
+            for pair in parent["skipped_pairs"]
+        ],
+        "segments": segments,
+        "cases": [
+            {
+                "phase_run_id": case.phase_run_id,
+                "variant": case.variant,
+                "status": case.status,
+                "score": case.score.model_dump(mode="json") if case.score else None,
+                "actual_usd": case.actual_usd,
+            }
+            for case in cases
+        ],
+        "cost": {
+            "task": "relevance",
+            "actual_usd": _total_actual_cost_including_superseded(
+                state, [parent["experiment_run_id"] for parent in parents]
+            ),
+        },
+        "interpretation": (
+            "Accuracy on the selected labeled corpus only. Ranked discovery yield and "
+            "random-slice population rates are separate review reports. Variant comparisons "
+            "use common successful cases within each baseline model/prompt segment."
+        ),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +517,13 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
     if duplicate_ids:
         raise ReportError(f"duplicate experiment_run_id(s) are not allowed: {duplicate_ids}")
     parents = _collect_parents(state, experiment_run_ids)
+    if any(parent["version"] == 5 for parent in parents):
+        if any(parent["version"] != 5 for parent in parents):
+            raise ReportError("Cannot combine drafting and relevance tasks in one report")
+        try:
+            return _build_relevance_report(state, parents)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ReportError("Invalid retained relevance report evidence") from exc
     plan_sha256 = parents[0]["plan_sha256"]
     population = tuple(parents[0].get("phase_run_ids", ()))
     dropped_duplicates = tuple(parents[0].get("dropped_duplicate_phase_run_ids", ()))
@@ -484,6 +636,28 @@ def _format_usd(value: float | None) -> str:
 
 def render_markdown(report: dict[str, Any]) -> str:
     """Render Markdown exclusively from an already-built report document."""
+    if report.get("version") == 3:
+        lines = [
+            "# Scout relevance replay report",
+            "",
+            report["interpretation"],
+            "",
+            f"Snapshot: `{report['task']['snapshot_digest']}`; "
+            f"partition: `{report['task']['partition']}`",
+            "",
+        ]
+        for segment in report["segments"]:
+            lines.extend(
+                [f"## {segment['baseline_model']} / {segment['baseline_prompt_sha256']}", ""]
+            )
+            for variant in segment["variants"]:
+                lines.append(
+                    f"- {variant['variant']}: {variant['common_case_count']} paired cases; "
+                    f"baseline accuracy {variant['baseline_accuracy']}; "
+                    f"candidate accuracy {variant['candidate_accuracy']}; "
+                    f"delta {variant['accuracy_delta']}"
+                )
+        return "\n".join(lines) + "\n"
     coverage = report["correction_coverage"]
     skipped_counts = coverage["skipped"]
     lines = [
@@ -560,11 +734,15 @@ def render_markdown(report: dict[str, Any]) -> str:
                          "| delta | est. USD | actual USD |")
             lines.append("|---|---|---|---|---|---|---|---|")
             for case in segment["cases"]:
-                baseline_dist = "n/a" if case["baseline_distance"] is None else (
-                    f"{case['baseline_distance']:.4f}"
+                baseline_dist = (
+                    "n/a"
+                    if case["baseline_distance"] is None
+                    else (f"{case['baseline_distance']:.4f}")
                 )
-                candidate_dist = "n/a" if case["candidate_distance"] is None else (
-                    f"{case['candidate_distance']:.4f}"
+                candidate_dist = (
+                    "n/a"
+                    if case["candidate_distance"] is None
+                    else (f"{case['candidate_distance']:.4f}")
                 )
                 delta = "n/a" if case["delta"] is None else f"{case['delta']:.4f}"
                 est = _format_usd(case["estimated_usd"])

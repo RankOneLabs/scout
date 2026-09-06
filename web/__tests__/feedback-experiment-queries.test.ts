@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import type { CandidateConfigV5, RelevanceCaseEvidence, RelevanceScoreEvidence, RelevanceTarget } from "@/types/feedback-experiments";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scout-experiment-queries-"));
 const dbPath = path.join(tmpDir, "scout.db");
@@ -17,6 +18,62 @@ function stamp(n: number): string {
 
 const BASELINE_PROMPT = "You are Scout's relevance evaluator. Unicode: café 🧠";
 const CANDIDATE_PROMPT = "You are Scout's stricter relevance evaluator.";
+
+describe("relevance batch evidence", () => {
+  it("reads the relevance run and attempt without presenting drafting distance", async () => {
+    const { getExperimentDetail, getExperimentRunDetail } = await import("@/lib/feedback-experiment-queries");
+    const { computeDecisionMetrics, computeAttemptVerdict } = await import("@/lib/experiment-presentation");
+    const db = new Database(dbPath);
+    const original = db.prepare("SELECT candidate_config FROM experiment_runs WHERE id=1").get() as { candidate_config: string };
+    const priorEvidence = db.prepare("SELECT baseline_evidence FROM evaluation_experiments WHERE id=1").get() as { baseline_evidence: string };
+    const target: RelevanceTarget = {
+      task: { kind: "relevance", snapshot_digest: "a".repeat(64), partition_digest: null, partition: "all" },
+      evaluation_id: 1, grade_revision_id: 42, input_digest: "b".repeat(64), project_key: "gateway", is_relevant: true, provenance: [],
+    };
+    const config: CandidateConfigV5 = {
+      version: 5, phase: "relevance", task: target.task, source_exclusions: [], variant_name: "default",
+      model_override: "candidate-model", system_prompt_override: CANDIDATE_PROMPT,
+      system_prompt_override_sha256: createHash("sha256").update(CANDIDATE_PROMPT).digest("hex"),
+      grader_attached: true, sweep: null, plan_sha256: "c".repeat(64), phase_run_ids: [10],
+      dropped_duplicate_phase_run_ids: [], skipped_pairs: [],
+    };
+    const evidence: RelevanceCaseEvidence = {
+      version: 3, task: "relevance", target, recorded_input_sha256: "d".repeat(64),
+      baseline_model: "baseline-model", baseline_prompt_sha256: "e".repeat(64), baseline_prompt_reused: false,
+      candidate_model: "candidate-model", candidate_prompt_sha256: config.system_prompt_override_sha256 ?? "",
+      estimated_usd: 0.1, worker_configuration: {
+        phase: "relevance", model: "candidate-model", system_prompt_sha256: "f".repeat(64), output_schema_sha256: "a".repeat(64),
+        max_tool_calls: 1, max_llm_calls: 4, max_parse_retries: 2, jig_revision: "a".repeat(40),
+        grader_version: "relevance_exact_match/v1", assembler_version: null, tools: [],
+        include_memory_in_prompt: false, include_feedback_in_prompt: false,
+      },
+    };
+    const score: RelevanceScoreEvidence = {
+      format: "scout.relevance-score/v1", grader_version: "relevance_exact_match/v1", target,
+      baseline_relevant: true, candidate_relevant: true, baseline_correct: true, candidate_correct: true, accuracy_delta: 0,
+    };
+    try {
+      db.prepare("UPDATE experiment_runs SET candidate_config=? WHERE id=1").run(JSON.stringify(config));
+      db.prepare("UPDATE evaluation_experiments SET baseline_evidence=? WHERE id=1").run(JSON.stringify(evidence));
+      db.prepare("UPDATE trace_comparisons SET score_evidence=? WHERE experiment_id=1").run(JSON.stringify(score));
+      const detail = getExperimentDetail(1);
+      if (detail === null) throw new Error("Missing test experiment");
+      expect(detail.comparison?.score_evidence).toEqual(score);
+      expect(computeDecisionMetrics(detail.comparison)[0].label).toBe("Relevance accuracy");
+      expect(computeAttemptVerdict(detail).label).toBe("Same relevance accuracy");
+      const run = getExperimentRunDetail(1)?.run;
+      expect(run?.relevance_accuracy?.candidate_mean).toBe(1);
+      expect(run?.correction_distance.available).toBe(false);
+      db.prepare("UPDATE trace_comparisons SET score_evidence=? WHERE experiment_id=1").run(JSON.stringify({ ...score, candidate_correct: false }));
+      expect(() => getExperimentDetail(1)).toThrow(/expected shape/);
+    } finally {
+      db.prepare("UPDATE experiment_runs SET candidate_config=? WHERE id=1").run(original.candidate_config);
+      db.prepare("UPDATE evaluation_experiments SET baseline_evidence=? WHERE id=1").run(priorEvidence.baseline_evidence);
+      db.prepare("UPDATE trace_comparisons SET score_evidence=NULL WHERE experiment_id=1").run();
+      db.close();
+    }
+  });
+});
 
 function traceDiffJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -464,6 +521,7 @@ describe("getExperimentDetail", () => {
     expect(detail.attempt_number).toBe(1);
     expect(detail.supersedes_experiment_id).toBeNull();
     expect(detail.baseline_evidence.baseline_prompt_reused).toBe(false);
+    if (detail.baseline_evidence.version === 3) throw new Error("Expected historical evidence");
     expect(detail.baseline_evidence.reply_revision_id).toBeUndefined();
 
     expect(detail.baseline.phase_run_id).toBe(10);
@@ -514,6 +572,10 @@ describe("getExperimentDetail", () => {
     expect(detail.experiment_run.candidate_config.grader_attached).toBe(true);
     expect(detail.experiment_run.candidate_config.phase).toBe("reply_draft");
 
+    if (detail.baseline_evidence.version === 3) throw new Error("Expected drafting evidence");
+    const score = detail.comparison?.score_evidence;
+    if (score == null || "format" in score) throw new Error("Expected drafting score");
+
     expect(detail.baseline_evidence.reply_revision_id).toBe(42);
     expect(detail.baseline_evidence.project_key).toBe("gateway");
     expect(detail.baseline_evidence.dossier_summary_id).toBe("gateway-dossier");
@@ -521,10 +583,10 @@ describe("getExperimentDetail", () => {
 
     expect(detail.comparison).not.toBeNull();
     expect(detail.comparison!.score_evidence).not.toBeNull();
-    expect(detail.comparison!.score_evidence!.baseline_distance).toBe(0.4);
-    expect(detail.comparison!.score_evidence!.candidate_distance).toBe(0.1);
-    expect(detail.comparison!.score_evidence!.delta).toBe(-0.3);
-    expect(detail.comparison!.score_evidence!.reply_revision_id).toBe(42);
+    expect(score.baseline_distance).toBe(0.4);
+    expect(score.candidate_distance).toBe(0.1);
+    expect(score.delta).toBe(-0.3);
+    expect(score.reply_revision_id).toBe(42);
   });
 
   it("leaves score_evidence null for an ungraded (relevance) comparison", async () => {

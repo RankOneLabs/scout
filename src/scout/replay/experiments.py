@@ -76,7 +76,19 @@ from scout.replay.pricing import (
     load_pricing_catalog,
     price_pair,
 )
+from scout.replay.tasks import (
+    RELEVANCE_GRADER_VERSION,
+    RelevanceCaseEvidence,
+    RelevanceCaseSource,
+    RelevanceGrader,
+    RelevancePopulation,
+    RelevanceTask,
+    ReplayWorkerConfiguration,
+    load_relevance_population,
+    relevance_score,
+)
 from scout.resources import runtime_resource
+from scout.result import Err
 from scout.scanning.schemas import CritiquePhaseOutput, RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.state import ExperimentCASError, StateManager
 from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
@@ -279,25 +291,6 @@ class ReplyCorrectionOracle:
     dossier_summary_id: str
     dossier_revision: str
     dossier: DossierSummary
-
-
-@dataclass(frozen=True, slots=True)
-class ReplayWorkerConfiguration:
-    """Exact controlled replay worker settings, captured before an attempt can spend."""
-
-    phase: str
-    model: str
-    system_prompt_sha256: str
-    output_schema_sha256: str
-    max_tool_calls: int
-    max_llm_calls: int
-    max_parse_retries: int
-    jig_revision: str
-    grader_version: str | None
-    assembler_version: str
-    tools: tuple[str, ...]
-    include_memory_in_prompt: bool
-    include_feedback_in_prompt: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,6 +640,7 @@ def build_candidate_plan(
     *,
     model_override: str | None,
     system_prompt_override: str | None,
+    relevance_grader: bool = False,
 ) -> CandidateReplayPlan:
     """Decide the candidate's model and system prompt, hash both prompts
     and the recorded input, and serialize the frozen v2 candidate-only
@@ -673,7 +667,7 @@ def build_candidate_plan(
     baseline_prompt_reused = candidate_prompt_sha256 == baseline_prompt_sha256
     recorded_input_sha256 = _sha256_utf8(baseline.recorded_input)
     is_no_op = candidate_model == baseline.baseline_model and baseline_prompt_reused
-    grader_attached = baseline.phase == "reply_draft"
+    grader_attached = baseline.phase == "reply_draft" or relevance_grader
 
     candidate_config_json = _canonical_json(
         {
@@ -960,6 +954,7 @@ async def _run_candidate_and_complete(
     plan: CandidateReplayPlan,
     oracle: ReplyCorrectionOracle | None,
     baseline_distance: float | None,
+    relevance: RelevanceCaseSource | None = None,
 ) -> tuple[str, int, float | None]:
     """Shared candidate-execution core for one already-'running' attempt:
     runs the candidate, records its trace, scores it (when `oracle` is
@@ -979,9 +974,13 @@ async def _run_candidate_and_complete(
         baseline, plan, llm=candidate_llm, tracer=tracer, feedback=feedback,
     )
     grader = (
-        ReplyCorrectionGrader(dossier=oracle.dossier, correction_text=oracle.correction_text)
-        if oracle is not None
-        else None
+        RelevanceGrader(relevance.target)
+        if relevance is not None
+        else (
+            ReplyCorrectionGrader(dossier=oracle.dossier, correction_text=oracle.correction_text)
+            if oracle is not None
+            else None
+        )
     )
 
     try:
@@ -1038,6 +1037,30 @@ async def _run_candidate_and_complete(
         raise CandidateExecutionError(_STAGE_MESSAGES["candidate_execution"])
 
     score_evidence_json: str | None = None
+    if relevance is not None:
+        try:
+            baseline_output = _resolve_relevance_output(baseline.root_span)
+            candidate_output = _resolve_relevance_output(candidate_root)
+            score = relevance_score(
+                relevance.target, baseline_output.relevant, candidate_output.relevant
+            )
+            matching = [
+                item
+                for item in (agent_result.scores or [])
+                if item.dimension == RELEVANCE_GRADER_VERSION
+            ]
+            if len(matching) != 1 or matching[0].value != float(score.candidate_correct):
+                raise ComparisonConstructionError(
+                    "Candidate relevance grade differs from retained output"
+                )
+            score_evidence_json = _canonical_json(score.model_dump(mode="json"))
+        except (ValueError, ComparisonConstructionError) as exc:
+            state.fail_experiment(
+                experiment_id, error_detail="Relevance score evidence could not be verified"
+            )
+            raise ComparisonConstructionError(
+                "Relevance score evidence could not be verified"
+            ) from exc
     if oracle is not None:
         assert baseline_distance is not None
         try:
@@ -1374,6 +1397,11 @@ class BatchSelector:
     scan_id: int | None = None
     from_utc: str | None = None
     to_utc: str | None = None
+    relevance_task: RelevanceTask | None = None
+
+    @classmethod
+    def by_relevance_corpus(cls, task: RelevanceTask) -> BatchSelector:
+        return cls(kind="relevance_corpus", relevance_task=task)
 
     @classmethod
     def by_phase_run_ids(cls, phase_run_ids: list[int] | tuple[int, ...]) -> BatchSelector:
@@ -1392,6 +1420,8 @@ class BatchSelector:
         return cls(kind="graded_with_corrections")
 
     def canonical(self) -> dict[str, Any]:
+        if self.kind == "relevance_corpus" and self.relevance_task is not None:
+            return {"kind": self.kind, "task": self.relevance_task.model_dump(mode="json")}
         if self.kind == "phase_run_ids":
             return {"kind": self.kind, "phase_run_ids": sorted(self.phase_run_ids)}
         if self.kind == "scan_id":
@@ -1517,32 +1547,64 @@ class BatchCase:
     oracle: ReplyCorrectionOracle | None
     oracle_error: str | None
     baseline_usage: TokenUsage | None
+    relevance: RelevanceCaseSource | None = None
+
+
+def _resolve_relevance_output(root: Span) -> RelevancePhaseOutput:
+    side = _side_evidence(root)
+    if not side.complete:
+        raise ComparisonConstructionError("Relevance trace lacks complete structured output")
+    output = RelevancePhaseOutput.model_validate(side.value, strict=True)
+    if _sha256_utf8(_canonical_json(side.value)) != side.sha256:
+        raise ComparisonConstructionError("Relevance structured-output digest mismatch")
+    return output
 
 
 async def _resolve_batch_case(
-    state: StateManager, tracer: TracingLogger, phase_run_id: int, *, dossier_root: Path,
+    state: StateManager,
+    tracer: TracingLogger,
+    phase_run_id: int,
+    *,
+    dossier_root: Path,
+    relevance: RelevanceCaseSource | None = None,
 ) -> BatchCase:
     baseline = await resolve_baseline(state, tracer, phase_run_id)
-    if baseline.phase != "reply_draft":
+    phase = "relevance" if relevance is not None else "reply_draft"
+    if baseline.phase != phase:
         raise SelectorResolutionError(
-            f"phase_run_id={phase_run_id} resolved to phase {baseline.phase!r}, not 'reply_draft'"
+            f"phase_run_id={phase_run_id} resolved to phase {baseline.phase!r}, not {phase!r}"
         )
     phase_run = state.get_phase_run(phase_run_id)
     assert phase_run is not None
 
     oracle: ReplyCorrectionOracle | None = None
     oracle_error: str | None = None
-    try:
-        oracle = resolve_reply_correction_oracle(state, phase_run, dossier_root=dossier_root)
-    except CorrectionOracleResolutionError as exc:
-        oracle_error = str(exc)
+    if relevance is not None:
+        if phase_run != dataclasses.asdict(relevance.phase_run):
+            raise SelectorResolutionError("Live phase identity differs from the frozen corpus")
+        output = _resolve_relevance_output(baseline.root_span)
+        if relevance.source.evaluation is None or output.relevant != bool(
+            relevance.source.evaluation.relevant
+        ):
+            raise SelectorResolutionError(
+                "Relevance output differs from frozen evaluation decision"
+            )
+    else:
+        try:
+            oracle = resolve_reply_correction_oracle(state, phase_run, dossier_root=dossier_root)
+        except CorrectionOracleResolutionError as exc:
+            oracle_error = str(exc)
 
     spans = await tracer.get_trace(baseline.baseline_trace_id)
     baseline_usage = aggregate_baseline_usage(spans)
 
     return BatchCase(
-        phase_run_id=phase_run_id, baseline=baseline, oracle=oracle,
-        oracle_error=oracle_error, baseline_usage=baseline_usage,
+        phase_run_id=phase_run_id,
+        baseline=baseline,
+        oracle=oracle,
+        oracle_error=oracle_error,
+        baseline_usage=baseline_usage,
+        relevance=relevance,
     )
 
 
@@ -1575,7 +1637,7 @@ def _classify_pair(
             reason="candidate model and system prompt are identical to the baseline",
             plan=plan, price_estimate=None,
         )
-    if case.oracle is None:
+    if case.oracle is None and case.relevance is None:
         return PairClassification(
             phase_run_id=case.phase_run_id, variant_name=variant_name, classification="unscored",
             reason=case.oracle_error, plan=plan, price_estimate=None,
@@ -1644,6 +1706,7 @@ class BatchPlan:
     skip_policy: SkipPolicy
     pricing_catalog: PricingCatalog
     sweep: SweepDefinition | None
+    relevance_population: RelevancePopulation | None = None
 
     def pair_for(self, phase_run_id: int, variant_name: str) -> PairClassification:
         for pair in self.pairs:
@@ -1692,7 +1755,7 @@ def _build_canonical_plan_document(
                         "dossier_revision": case.oracle.dossier_revision,
                     }
                     if case.oracle is not None
-                    else None
+                    else (case.relevance.target.model_dump(mode="json") if case.relevance else None)
                 ),
                 "oracle_error": case.oracle_error,
                 "baseline_usage": (
@@ -1741,7 +1804,9 @@ def _build_canonical_plan_document(
             "source_url": pricing_catalog.source_url,
             "as_of": pricing_catalog.as_of,
         },
-        "max_llm_calls_per_case": PHASE_REPLAY_CONFIGS["reply_draft"].max_llm_calls,
+        "max_llm_calls_per_case": PHASE_REPLAY_CONFIGS[
+            next(iter(cases.values())).baseline.phase
+        ].max_llm_calls,
     }
 
 
@@ -1766,12 +1831,32 @@ async def build_batch_plan(
     """
     if not variants:
         raise SelectorResolutionError("a batch plan requires at least one candidate variant")
+    if (selector.kind == "relevance_corpus") != (selector.relevance_task is not None):
+        raise SelectorResolutionError(
+            "Relevance task and corpus selector must be supplied together"
+        )
 
-    population = resolve_batch_population(state, selector)
+    relevance_population = None
+    relevance_by_phase: dict[int, RelevanceCaseSource] = {}
+    if selector.relevance_task is not None:
+        loaded = load_relevance_population(state, selector.relevance_task)
+        if isinstance(loaded, Err):
+            raise SelectorResolutionError(loaded.error.detail)
+        relevance_population = loaded.value
+        relevance_by_phase = {case.phase_run.id: case for case in loaded.value.cases}
+        population = BatchPopulation(
+            tuple(relevance_by_phase), loaded.value.dropped_duplicate_phase_run_ids
+        )
+    else:
+        population = resolve_batch_population(state, selector)
     cases: dict[int, BatchCase] = {}
     for phase_run_id in population.phase_run_ids:
         cases[phase_run_id] = await _resolve_batch_case(
-            state, tracer, phase_run_id, dossier_root=dossier_root,
+            state,
+            tracer,
+            phase_run_id,
+            dossier_root=dossier_root,
+            relevance=relevance_by_phase.get(phase_run_id),
         )
 
     pairs: list[PairClassification] = []
@@ -1782,6 +1867,7 @@ async def build_batch_plan(
                 case.baseline,
                 model_override=variant.model_override,
                 system_prompt_override=variant.system_prompt_override,
+                relevance_grader=case.relevance is not None,
             )
             pairs.append(_classify_pair(case, plan, pricing_catalog, variant.name))
 
@@ -1789,6 +1875,11 @@ async def build_batch_plan(
         selector=selector, population=population, variants=variants, cases=cases,
         pairs=pairs, skip_policy=skip_policy, pricing_catalog=pricing_catalog, sweep=sweep,
     )
+    if relevance_population is not None:
+        plan_document["version"] = 3
+        plan_document["source_exclusions"] = [
+            item.model_dump(mode="json") for item in relevance_population.exclusions
+        ]
     plan_json = _canonical_json(plan_document)
     plan_sha256 = _sha256_utf8(plan_json)
     return BatchPlan(
@@ -1802,6 +1893,7 @@ async def build_batch_plan(
         skip_policy=skip_policy,
         pricing_catalog=pricing_catalog,
         sweep=sweep,
+        relevance_population=relevance_population,
     )
 
 
@@ -1854,7 +1946,7 @@ async def preview_batch_replay(
                 + pair.price_estimate.estimated_usd
             )
             total += pair.price_estimate.estimated_usd
-    max_calls = PHASE_REPLAY_CONFIGS["reply_draft"].max_llm_calls
+    max_calls = PHASE_REPLAY_CONFIGS[next(iter(plan.cases.values())).baseline.phase].max_llm_calls
     scored = counts.get("scored", 0)
     return BatchPreview(
         plan=plan,
@@ -1901,6 +1993,7 @@ def build_batch_candidate_config(
     phase_run_ids: tuple[int, ...],
     dropped_duplicate_phase_run_ids: tuple[int, ...],
     skipped_pairs: tuple[dict[str, Any], ...],
+    relevance_population: RelevancePopulation | None = None,
 ) -> str:
     """Serialize one batch/sweep experiment_runs parent's shared override
     policy (see BATCH_CANDIDATE_CONFIG_VERSION for why the resolved
@@ -1920,7 +2013,17 @@ def build_batch_candidate_config(
     """
     return _canonical_json(
         {
-            "version": BATCH_CANDIDATE_CONFIG_VERSION,
+            "version": BATCH_CANDIDATE_CONFIG_VERSION if relevance_population is None else 5,
+            **(
+                {
+                    "task": relevance_population.cases[0].target.task.model_dump(mode="json"),
+                    "source_exclusions": [
+                        item.model_dump(mode="json") for item in relevance_population.exclusions
+                    ],
+                }
+                if relevance_population is not None
+                else {}
+            ),
             "phase": phase,
             "variant_name": variant_name,
             "model_override": model_override,
@@ -1958,18 +2061,28 @@ def replay_worker_configuration(plan: CandidateReplayPlan) -> ReplayWorkerConfig
         phase=plan.phase, model=plan.candidate_model,
         system_prompt_sha256=plan.candidate_prompt_sha256,
         output_schema_sha256=_sha256_utf8(_canonical_json(phase.output_schema.model_json_schema())),
-        max_tool_calls=phase.max_tool_calls, max_llm_calls=phase.max_llm_calls,
-        max_parse_retries=phase.max_parse_retries, jig_revision=JIG_REVISION,
-        grader_version=NORMALIZED_EDIT_DISTANCE_GRADER_VERSION if plan.grader_attached else None,
-        assembler_version=DRAFT_TEXT_ASSEMBLER_VERSION,
-        tools=(), include_memory_in_prompt=False, include_feedback_in_prompt=False,
+        max_tool_calls=phase.max_tool_calls,
+        max_llm_calls=phase.max_llm_calls,
+        max_parse_retries=phase.max_parse_retries,
+        jig_revision=JIG_REVISION,
+        grader_version=(
+            RELEVANCE_GRADER_VERSION
+            if plan.phase == "relevance"
+            else NORMALIZED_EDIT_DISTANCE_GRADER_VERSION
+        )
+        if plan.grader_attached
+        else None,
+        assembler_version=DRAFT_TEXT_ASSEMBLER_VERSION if plan.phase == "reply_draft" else None,
+        tools=(),
+        include_memory_in_prompt=False,
+        include_feedback_in_prompt=False,
     )
 
 
 def build_batch_case_evidence(
     case: BatchCase,
     plan: CandidateReplayPlan,
-    oracle: ReplyCorrectionOracle,
+    oracle: ReplyCorrectionOracle | None,
     price_estimate: PriceEstimate | None,
 ) -> str:
     """Serialize one batch/sweep case's fully-resolved candidate identity,
@@ -1977,6 +2090,24 @@ def build_batch_case_evidence(
     time (see BATCH_CASE_EVIDENCE_VERSION) — the evidence a batch/sweep
     child (evaluation_experiments.baseline_evidence) carries, since the
     parent's candidate_config only records the override *policy*."""
+    if case.relevance is not None:
+        evidence = RelevanceCaseEvidence.model_validate(
+            {
+                "version": 3,
+                "task": "relevance",
+                "recorded_input_sha256": plan.recorded_input_sha256,
+                "baseline_model": case.baseline.baseline_model,
+                "baseline_prompt_sha256": plan.baseline_prompt_sha256,
+                "baseline_prompt_reused": plan.baseline_prompt_reused,
+                "candidate_model": plan.candidate_model,
+                "candidate_prompt_sha256": plan.candidate_prompt_sha256,
+                "worker_configuration": dataclasses.asdict(replay_worker_configuration(plan)),
+                "estimated_usd": price_estimate.estimated_usd if price_estimate else None,
+                "target": case.relevance.target.model_dump(mode="json"),
+            }
+        )
+        return _canonical_json(evidence.model_dump(mode="json"))
+    assert oracle is not None
     return _canonical_json(
         {
             "version": BATCH_CASE_EVIDENCE_VERSION,
@@ -2040,11 +2171,12 @@ async def _execute_one_batch_attempt(
     case's failure; the caller loop continues to the next case."""
     plan = pair.plan
     oracle = case.oracle
-    assert oracle is not None, "a 'scored' pair always has a resolved oracle"
-
-    baseline_draft = _resolve_baseline_structured_draft(case.baseline.root_span)
-    baseline_text = assemble_draft_text(baseline_draft, oracle.dossier)
-    baseline_distance = normalized_edit_distance(baseline_text, oracle.correction_text)
+    assert oracle is not None or case.relevance is not None
+    baseline_distance = None
+    if oracle is not None:
+        baseline_draft = _resolve_baseline_structured_draft(case.baseline.root_span)
+        baseline_text = assemble_draft_text(baseline_draft, oracle.dossier)
+        baseline_distance = normalized_edit_distance(baseline_text, oracle.correction_text)
 
     baseline_evidence_json = build_batch_case_evidence(case, plan, oracle, pair.price_estimate)
     experiment_id = state.insert_experiment_attempt(
@@ -2057,8 +2189,15 @@ async def _execute_one_batch_attempt(
 
     try:
         candidate_trace_id, llm_call_count, candidate_cost = await _run_candidate_and_complete(
-            state=state, tracer=tracer, feedback=feedback, experiment_id=experiment_id,
-            baseline=case.baseline, plan=plan, oracle=oracle, baseline_distance=baseline_distance,
+            state=state,
+            tracer=tracer,
+            feedback=feedback,
+            experiment_id=experiment_id,
+            baseline=case.baseline,
+            plan=plan,
+            oracle=oracle,
+            baseline_distance=baseline_distance,
+            relevance=case.relevance,
         )
     except ReplayError as exc:
         current = state.get_experiment(experiment_id)
@@ -2135,13 +2274,15 @@ async def execute_batch_replay(
             if pair.variant_name == variant.name and pair.classification != "scored"
         )
         candidate_config_json = build_batch_candidate_config(
-            phase="reply_draft", variant_name=variant.name,
+            phase=next(iter(plan.cases.values())).baseline.phase,
+            variant_name=variant.name,
             model_override=variant.model_override,
             system_prompt_override=variant.system_prompt_override,
             grader_attached=True, sweep=sweep, plan_sha256=plan.plan_sha256,
             phase_run_ids=plan.phase_run_ids,
             dropped_duplicate_phase_run_ids=plan.dropped_duplicate_phase_run_ids,
             skipped_pairs=skipped_pairs,
+            relevance_population=plan.relevance_population,
         )
         run_name = name if variant.name == DEFAULT_BATCH_VARIANT_NAME else f"{name}:{variant.name}"
         experiment_run_id = state.create_experiment_run(
@@ -2173,7 +2314,10 @@ def _parse_batch_candidate_config(candidate_config_json: str) -> dict[str, Any]:
         raise RetryResolutionError(
             f"experiment_runs.candidate_config is not valid JSON: {exc}"
         ) from exc
-    if not isinstance(document, dict) or document.get("version") != BATCH_CANDIDATE_CONFIG_VERSION:
+    if not isinstance(document, dict) or document.get("version") not in (
+        BATCH_CANDIDATE_CONFIG_VERSION,
+        5,
+    ):
         raise RetryResolutionError(
             f"experiment_runs.candidate_config version {document.get('version')!r} is not a "
             f"batch/sweep candidate_config (expected {BATCH_CANDIDATE_CONFIG_VERSION!r}); only a "
@@ -2242,6 +2386,17 @@ async def retry_batch_replay(
     catalog = pricing_catalog if pricing_catalog is not None else load_pricing_catalog()
     root = _resolve_dossier_root(dossier_root)
 
+    relevance_by_phase: dict[int, RelevanceCaseSource] = {}
+    if config["version"] == 5:
+        try:
+            task = RelevanceTask.model_validate(config["task"])
+        except (ValueError, KeyError) as exc:
+            raise RetryResolutionError("Invalid pinned relevance task") from exc
+        loaded = load_relevance_population(state, task)
+        if isinstance(loaded, Err):
+            raise RetryResolutionError(loaded.error.detail)
+        relevance_by_phase = {case.phase_run.id: case for case in loaded.value.cases}
+
     attempts_out: list[BatchAttemptOutcome] = []
     for phase_run_id, failed_attempt in sorted(failed_cases.items()):
         try:
@@ -2254,8 +2409,16 @@ async def retry_batch_replay(
             raise RetryResolutionError(
                 f"phase_run_id={phase_run_id} has malformed pinned baseline evidence"
             )
-        case = await _resolve_batch_case(state, tracer, phase_run_id, dossier_root=root)
-        if case.oracle is None:
+        if config["version"] == 5 and phase_run_id not in relevance_by_phase:
+            raise RetryResolutionError("Failed attempt is outside the pinned relevance population")
+        case = await _resolve_batch_case(
+            state,
+            tracer,
+            phase_run_id,
+            dossier_root=root,
+            relevance=relevance_by_phase.get(phase_run_id),
+        )
+        if case.oracle is None and case.relevance is None:
             raise RetryResolutionError(
                 f"phase_run_id={phase_run_id} no longer resolves a correction oracle: "
                 f"{case.oracle_error}"
@@ -2263,6 +2426,7 @@ async def retry_batch_replay(
         plan = build_candidate_plan(
             case.baseline, model_override=model_override,
             system_prompt_override=system_prompt_override,
+            relevance_grader=case.relevance is not None,
         )
         if plan.is_no_op:
             raise RetryResolutionError(

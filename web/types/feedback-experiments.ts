@@ -132,6 +132,7 @@ export interface ExperimentRunSummary {
   total_cost: number | null;
   verdict: ExperimentRunVerdict;
   correction_distance: AggregateMetric;
+  relevance_accuracy?: AggregateMetric;
   cost: AggregateMetric;
   latency: AggregateMetric;
 }
@@ -145,11 +146,13 @@ export interface ExperimentRunCaseSummary {
 export interface ExperimentRunDetailResponse {
   run: ExperimentRunSummary;
   configuration: {
-    version: 2 | 4;
+    version: 2 | 4 | 5;
     phase: FeedbackPhase;
     grader_attached: boolean;
     identity: string;
     plan_sha256: string | null;
+    task?: RelevanceTask;
+    source_exclusions?: CandidateConfigV5["source_exclusions"];
   };
   cases: ExperimentRunCaseSummary[];
   skipped_pairs: CandidateConfigV4["skipped_pairs"];
@@ -195,7 +198,29 @@ export interface CandidateConfigV4 {
   }>;
 }
 
-export type CandidateConfig = CandidateConfigV2 | CandidateConfigV4;
+// Mirrors scout.replay.tasks.RelevanceTask/Target and relevance batch evidence.
+export interface RelevanceTask {
+  kind: "relevance";
+  snapshot_digest: string;
+  partition_digest: string | null;
+  partition: "all" | "train" | "heldout";
+}
+export interface RelevanceTarget {
+  task: RelevanceTask;
+  evaluation_id: number;
+  grade_revision_id: number;
+  input_digest: string;
+  project_key: string;
+  is_relevant: boolean;
+  provenance: Array<{ queue_digest: string; method: "random" | "ranked" }>;
+}
+export interface CandidateConfigV5 extends Omit<CandidateConfigV4, "version" | "phase"> {
+  version: 5;
+  phase: "relevance";
+  task: RelevanceTask;
+  source_exclusions: Array<{ evaluation_id: number; reason: "missing_complete_relevance_phase" }>;
+}
+export type CandidateConfig = CandidateConfigV2 | CandidateConfigV4 | CandidateConfigV5;
 
 // --- Baseline evidence (v2, evaluation_experiments.baseline_evidence) -----
 // The base shape (recorded_input_sha256/baseline_prompt_reused) is always
@@ -217,7 +242,7 @@ export interface BaselineEvidenceV2 {
   assembler_version?: string;
 }
 
-// Mirrors scout.replay.experiments.ReplayWorkerConfiguration, serialized by
+// Mirrors scout.replay.tasks.ReplayWorkerConfiguration, serialized by
 // build_batch_case_evidence before a replay attempt executes.
 export interface ReplayWorkerConfiguration {
   phase: FeedbackPhase;
@@ -232,7 +257,7 @@ export interface ReplayWorkerConfiguration {
   max_output_tokens?: number | null;
   jig_revision: string;
   grader_version: string | null;
-  assembler_version: string;
+  assembler_version: string | null;
   tools: string[];
   include_memory_in_prompt: boolean;
   include_feedback_in_prompt: boolean;
@@ -258,7 +283,15 @@ export interface BatchCaseEvidenceV1 {
   assembler_version: string;
 }
 
-export type BaselineEvidence = BaselineEvidenceV2 | BatchCaseEvidenceV1;
+export interface RelevanceCaseEvidence extends Pick<BatchCaseEvidenceV1,
+  "recorded_input_sha256" | "baseline_model" | "baseline_prompt_sha256" | "baseline_prompt_reused" |
+  "candidate_model" | "candidate_prompt_sha256" | "estimated_usd"> {
+  version: 3;
+  task: "relevance";
+  worker_configuration: ReplayWorkerConfiguration;
+  target: RelevanceTarget;
+}
+export type BaselineEvidence = BaselineEvidenceV2 | BatchCaseEvidenceV1 | RelevanceCaseEvidence;
 
 // --- Score evidence (trace_comparisons.score_evidence JSON column) --------
 // Present only for a completed attempt that ran with Scout's
@@ -267,7 +300,7 @@ export type BaselineEvidence = BaselineEvidenceV2 | BatchCaseEvidenceV1;
 // baseline_distance: negative unambiguously means the candidate is closer
 // to the pinned correction than the historical baseline was.
 
-export interface ScoreEvidence {
+export interface ReplyScoreEvidence {
   grader_version: string;
   assembler_version: string;
   correction_sha256: string;
@@ -277,6 +310,18 @@ export interface ScoreEvidence {
   delta: number;
   grader_attached: true;
 }
+
+export interface RelevanceScoreEvidence {
+  format: "scout.relevance-score/v1";
+  grader_version: "relevance_exact_match/v1";
+  target: RelevanceTarget;
+  baseline_relevant: boolean;
+  candidate_relevant: boolean;
+  baseline_correct: boolean;
+  candidate_correct: boolean;
+  accuracy_delta: -1 | 0 | 1;
+}
+export type ScoreEvidence = ReplyScoreEvidence | RelevanceScoreEvidence;
 
 // --- Jig TraceDiff (trace_comparisons.trace_diff JSON column) -------------
 // One-to-one mirror of jig.replay.diff.TraceDiff via dataclasses.asdict +

@@ -179,6 +179,32 @@ def _batch_args(**overrides) -> argparse.Namespace:
 
 
 class TestBatchReplayFeedback:
+    @pytest.mark.parametrize("kind", ["reply_draft", "relevance"])
+    def test_task_is_selected_by_config(self, kind, tmp_path) -> None:
+        config = tmp_path / "task.json"
+        document = {"kind": kind}
+        if kind == "relevance":
+            document["snapshot_digest"] = "a" * 64
+        config.write_text(json.dumps(document))
+        selector = replay_cli._resolve_batch_selector(
+            _batch_args(
+                task_config=str(config),
+                graded_with_corrections=kind == "reply_draft",
+            )
+        )
+        assert selector.kind == (
+            "relevance_corpus" if kind == "relevance" else "graded_with_corrections"
+        )
+
+    def test_relevance_config_cannot_silently_mix_with_drafting_selector(self, tmp_path) -> None:
+        config = tmp_path / "task.json"
+        config.write_text(json.dumps({"kind": "relevance", "snapshot_digest": "a" * 64}))
+        with pytest.raises(SystemExit) as error:
+            replay_cli._resolve_batch_selector(
+                _batch_args(task_config=str(config), graded_with_corrections=True)
+            )
+        assert error.value.code == 2
+
     def test_blank_name_rejected_before_any_async_work(self) -> None:
         with pytest.raises(SystemExit) as exc_info:
             replay_cli.batch_replay_feedback(_batch_args(name="  ", phase_run_id=[1]))

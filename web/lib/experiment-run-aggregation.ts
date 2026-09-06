@@ -91,7 +91,7 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
 
   let skipped = 0;
   let planned = byPhaseRun.size;
-  if (config.version === 4) {
+  if (config.version !== 2) {
     const plannedIds = new Set(config.phase_run_ids);
     if (plannedIds.size !== config.phase_run_ids.length) fail("duplicate planned phase run");
     const skippedIds = new Set<number>();
@@ -111,11 +111,16 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
   for (const attempt of latest) statusCounts[attempt.row.status] += 1;
 
   const correctionPairs: Array<[number, number]> = [];
+  const relevancePairs: Array<[number, number]> = [];
   const costPairs: Array<[number, number]> = [];
   const latencyPairs: Array<[number, number]> = [];
   for (const attempt of latest) {
     if (attempt.row.status !== "complete") continue;
-    if (attempt.score_evidence) correctionPairs.push([attempt.score_evidence.baseline_distance, attempt.score_evidence.candidate_distance]);
+    if (attempt.score_evidence) {
+      const score = attempt.score_evidence;
+      if ("format" in score) relevancePairs.push([Number(score.baseline_correct), Number(score.candidate_correct)]);
+      else correctionPairs.push([score.baseline_distance, score.candidate_distance]);
+    }
     if (attempt.cost_delta_available && attempt.baseline_cost !== undefined && attempt.candidate_verified_cost !== undefined) {
       costPairs.push([attempt.baseline_cost, attempt.candidate_verified_cost]);
     }
@@ -124,14 +129,16 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     }
   }
   const correction = metric(correctionPairs);
+  const relevance = metric(relevancePairs);
+  const qualityDelta = config.phase === "relevance" ? (relevance.mean_delta === null ? null : -relevance.mean_delta) : correction.mean_delta;
   const cost = metric(costPairs);
   const latency = metric(latencyPairs);
   let verdict: ExperimentRunSummary["verdict"];
   if (statusCounts.running + statusCounts.queued > 0) verdict = "pending";
   else if (statusCounts.failed > 0 && statusCounts.complete === 0) verdict = "failed";
-  else if (!correction.available) verdict = "not_graded";
-  else if (correction.mean_delta! < 0) verdict = "candidate_recommended";
-  else if (correction.mean_delta! > 0) verdict = "candidate_not_recommended";
+  else if (qualityDelta === null) verdict = "not_graded";
+  else if (qualityDelta < 0) verdict = "candidate_recommended";
+  else if (qualityDelta > 0) verdict = "candidate_not_recommended";
   else verdict = "no_measurable_difference";
 
   const costs = input.attempts.map((attempt) => attempt.row.candidate_cost);
@@ -153,6 +160,7 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     total_cost: costs.some((cost) => cost === null) ? null : costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0),
     verdict,
     correction_distance: correction,
+    relevance_accuracy: relevance,
     cost,
     latency,
   };

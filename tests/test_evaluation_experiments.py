@@ -38,6 +38,10 @@ from scout.dossiers.resolver import (
     ResolutionMetadata,
 )
 from scout.grading.correction import ReplyCorrectionGrader, normalized_edit_distance
+from scout.grading.snapshots import CorpusSelection, build_snapshot_bundle, read_grade_population
+from scout.replay.reporting import build_batch_report
+from scout.replay.tasks import RelevanceTask, load_relevance_population
+from scout.result import Ok
 from scout.scanning.schemas import RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.state import StateManager
 from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
@@ -327,6 +331,208 @@ def _seed_phase_run(
         snapshot_phase_id=snapshot_phase_id,
         phase=phase, trace_id=trace_id, model=model, status=status,
     )
+
+
+async def _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path) -> RelevanceTask:
+    _patch_resolve_dossier(monkeypatch)
+    monkeypatch.setattr("scout.grading.snapshots.resolve_dossier", ee.resolve_dossier)
+    for relevant in (False, True):
+        payload = {**RELEVANCE_PAYLOAD, "relevant": relevant}
+        trace_id = await _make_baseline_trace(tracer, feedback, payload=payload)
+        phase_id = _seed_phase_run(state, trace_id=trace_id, model="claude-haiku-4-5-20251001")
+        phase = state.get_phase_run(phase_id)
+        with state.db.transaction():
+            cursor = state.conn.execute(
+                "INSERT INTO evaluations(post_id, scan_id, relevant, score, reason, relevant_to, "
+                "surface_status, project_key, dossier_revision, dossier_summary_id) "
+                "VALUES (?, ?, ?, 0.9, 'synthetic', '[\"gateway\"]', "
+                "?, 'gateway', ?, 'gateway-dossier')",
+                (
+                    phase["post_id"],
+                    phase["scan_id"],
+                    int(relevant),
+                    "surfaced" if relevant else "not_relevant",
+                    "a" * 40,
+                ),
+            )
+            evaluation_id = cursor.lastrowid
+            state.conn.execute(
+                "UPDATE evaluation_phase_runs SET evaluation_id = ? WHERE id = ?",
+                (evaluation_id, phase_id),
+            )
+        state.save_grade(
+            GradeRecord(
+                post_id=phase["post_id"],
+                evaluation_id=evaluation_id,
+                source="web",
+                graded_at=datetime.now(UTC),
+                relevance_judgment="correct",
+                action_judgment="accept",
+                schema_version=3,
+            )
+        )
+    with state.db.read_transaction():
+        population = read_grade_population(state.conn, tmp_path)
+    assert isinstance(population, Ok)
+    snapshot = build_snapshot_bundle(
+        population.value, CorpusSelection(project_key="gateway"), b"synthetic"
+    )
+    assert isinstance(snapshot, Ok)
+    assert state.artifacts.import_bundle(snapshot.value) == Ok(None)
+    return RelevanceTask(snapshot_digest=snapshot.value.lineages[0].outputs[0])
+
+
+class TestRelevanceBatch:
+    async def test_frozen_positive_and_negative_labels_need_no_draft(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        loaded = load_relevance_population(state, task)
+        assert isinstance(loaded, Ok)
+        assert [case.target.is_relevant for case in loaded.value.cases] == [False, True]
+        assert state.conn.execute("SELECT COUNT(*) FROM draft_comments").fetchone()[0] == 0
+        with state.db.transaction():
+            state.conn.execute("UPDATE grades SET needs_regrade=1")
+        assert load_relevance_population(state, task) == loaded
+
+    async def test_relevance_preview_execute_and_retry_keep_pinned_targets(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        candidate = _FakeLLMClient(
+            [], model="claude-sonnet-4-20250514", error=RuntimeError("offline")
+        )
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate})
+        selector = ee.BatchSelector.by_relevance_corpus(task)
+        variants = (ee.BatchVariant("default", "claude-sonnet-4-20250514", None),)
+        preview = await ee.preview_batch_replay(
+            state=state,
+            tracer=tracer,
+            selector=selector,
+            variants=variants,
+            skip_policy=ee.SkipPolicy(),
+        )
+        assert preview.scored_count == 2
+        assert state.conn.execute("SELECT COUNT(*) FROM experiment_runs").fetchone()[0] == 0
+        outcome = await ee.execute_batch_replay(
+            state=state,
+            tracer=tracer,
+            feedback=feedback,
+            name="relevance-smoke",
+            selector=selector,
+            variants=variants,
+            skip_policy=ee.SkipPolicy(),
+            authorize_plan_sha256=preview.plan.plan_sha256,
+        )
+        assert [attempt.status for attempt in outcome.attempts] == ["failed", "failed"]
+        run_id = outcome.experiment_run_ids["default"]
+        _stub_from_model(
+            monkeypatch,
+            {
+                "claude-sonnet-4-20250514": _FakeLLMClient(
+                    [
+                        _submit_response(RELEVANCE_PAYLOAD),
+                        _submit_response(RELEVANCE_PAYLOAD),
+                    ],
+                    model="claude-sonnet-4-20250514",
+                )
+            },
+        )
+        retried = await ee.retry_batch_replay(
+            state=state, tracer=tracer, feedback=feedback, experiment_run_id=run_id
+        )
+        assert [attempt.status for attempt in retried.attempts] == ["complete", "complete"]
+        scores = [
+            json.loads(state.get_trace_comparison(attempt.experiment_id)["score_evidence"])
+            for attempt in retried.attempts
+        ]
+        assert [score["candidate_correct"] for score in scores] == [False, True]
+        assert [score["accuracy_delta"] for score in scores] == [-1, 0]
+        assert all(
+            score["target"]["task"]["snapshot_digest"] == task.snapshot_digest for score in scores
+        )
+        report = build_batch_report(state, experiment_run_ids=[run_id])
+        assert report["segments"][0]["variants"][0]["candidate_confusion"] == {
+            "true_positive": 1,
+            "true_negative": 0,
+            "false_positive": 1,
+            "false_negative": 0,
+        }
+        assert report["task"]["snapshot_digest"] == task.snapshot_digest
+
+    async def test_authorization_binds_the_frozen_task(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        candidate = _FakeLLMClient([], model="claude-sonnet-4-20250514")
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate})
+        with pytest.raises(ee.PlanAuthorizationError):
+            await ee.execute_batch_replay(
+                state=state,
+                tracer=tracer,
+                feedback=feedback,
+                name="wrong-plan",
+                selector=ee.BatchSelector.by_relevance_corpus(task),
+                variants=(ee.BatchVariant("default", "claude-sonnet-4-20250514", None),),
+                skip_policy=ee.SkipPolicy(),
+                authorize_plan_sha256="0" * 64,
+            )
+        assert state.conn.execute("SELECT COUNT(*) FROM experiment_runs").fetchone()[0] == 0
+
+    async def test_duplicate_posts_cannot_cross_a_pinned_partition(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        from scout.grading.assistance_types import FrozenPartition, GroupId, PartitionMember
+
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        loaded = load_relevance_population(state, task)
+        assert isinstance(loaded, Ok)
+        partition = FrozenPartition(
+            snapshot_digest=task.snapshot_digest,
+            members=tuple(
+                PartitionMember(
+                    evaluation_id=case.target.evaluation_id,
+                    input_digest=case.target.input_digest,
+                    group_id=GroupId(str(index) * 64),
+                    partition="train" if index == 0 else "heldout",
+                    exposed=False,
+                    provenance=(),
+                )
+                for index, case in enumerate(loaded.value.cases)
+            ),
+        )
+        stored = state.artifacts.put(partition.model_dump_json().encode())
+        assert isinstance(stored, Ok)
+        result = load_relevance_population(
+            state,
+            RelevanceTask(
+                snapshot_digest=task.snapshot_digest,
+                partition_digest=stored.value,
+                partition="heldout",
+            ),
+        )
+        assert isinstance(result, ee.Err)
+        assert "crosses partitions" in result.error.detail
 
 
 class TestResolveBaseline:
