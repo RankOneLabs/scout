@@ -227,6 +227,9 @@ export interface ReplayWorkerConfiguration {
   max_tool_calls: number;
   max_llm_calls: number;
   max_parse_retries: number;
+  // Retained producer b9c4786 added an optional completion bound. Older
+  // captures may omit it or record null; neither implies a current default.
+  max_output_tokens?: number | null;
   jig_revision: string;
   grader_version: string | null;
   assembler_version: string;

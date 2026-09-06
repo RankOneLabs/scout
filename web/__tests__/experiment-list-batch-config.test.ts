@@ -154,6 +154,19 @@ describe("listExperiments — batch/sweep candidate config", () => {
     expect(listExperimentRuns({}).data).toHaveLength(2);
   });
 
+  // Producer b9c4786 persisted this nullable field in the same worker wire
+  // shape. Keep these synthetic historical cases alongside the current producer.
+  it.each([4096, null])("reads historical worker completion bound %s through list and detail APIs", async (limit) => {
+    setWorkerConfiguration({ ...worker, max_output_tokens: limit });
+    const { GET } = await import("@/app/api/feedback/experiment-runs/route");
+    const response = await GET(new NextRequest("http://localhost/api/feedback/experiment-runs", {
+      headers: { host: "localhost" },
+    }));
+    expect(response.status).toBe(200);
+    const { getExperimentRunDetail } = await import("@/lib/feedback-experiment-queries");
+    expect(getExperimentRunDetail(1)?.run.attempted_case_count).toBe(1);
+  });
+
   it.each([
     ["null configuration", (): unknown => null],
     ["missing field", (): unknown => ({ ...worker, model: undefined })],
@@ -164,6 +177,10 @@ describe("listExperiments — batch/sweep candidate config", () => {
     ["invalid phase", (): unknown => ({ ...worker, phase: "unknown" })],
     ["invalid tool", (): unknown => ({ ...worker, tools: [42] })],
     ["string boolean", (): unknown => ({ ...worker, include_memory_in_prompt: "false" })],
+    ["string output bound", (): unknown => ({ ...worker, max_output_tokens: "4096" })],
+    ["fractional output bound", (): unknown => ({ ...worker, max_output_tokens: 1.5 })],
+    ["zero output bound", (): unknown => ({ ...worker, max_output_tokens: 0 })],
+    ["negative output bound", (): unknown => ({ ...worker, max_output_tokens: -1 })],
   ] as const)("still rejects %s in retained worker evidence", async (_label, invalid) => {
     setWorkerConfiguration(invalid());
     const { listExperimentRuns, DataIntegrityError } = await import("@/lib/feedback-experiment-queries");
