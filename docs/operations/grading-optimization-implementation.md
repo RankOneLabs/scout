@@ -116,14 +116,6 @@ is no intermediate deployment or automatic paid experiment.
 
 ## Workflow step 2: local grading assistance
 
-Relevance rejections retain their routed project through the phase result and
-terminal outcome, allowing persistence to pin the matching dossier summary and
-revision. A rejection with no known project remains unscoped and is excluded
-from project queues; it is never assigned to the only active project by inference.
-This is a forward-write fix, not a historical provenance backfill. Existing
-unscoped rows remain excluded until their context can be recovered from evidence
-under a separately reviewed procedure. Critic rejections remain a distinct outcome.
-
 The executable path is a nested pipeline, recorded with the existing four-part
 `scout.grading.assistance` lineage (new writes use producer version `2`): retained corpus and
 candidate population → grouped partition → train-only fit → independent
@@ -318,6 +310,18 @@ receipts report `unverified_here` separately from replayed and unsupported linea
 The existing `fix/experiment-token-limits` branch at `c66a01c` remains separate.
 Reconcile its three unmerged fixes before the experiment work depends on them;
 Step 1's artifact model does not depend on those execution fixes.
+
+### Scan persistence for relevance rejections
+
+Relevance rejections retain their routed or labeled project through the phase
+result and terminal outcome: the route wins, with the model's first nonblank
+`relevant_to` label as the existing fallback when no route is available. This
+allows persistence to pin the matching dossier summary and revision. A rejection
+with no known project remains unscoped and is excluded from project queues; it is
+never assigned to the only active project by inference.
+This is a forward-write fix, not a historical provenance backfill. Existing
+unscoped rows remain excluded until their context can be recovered from evidence
+under a separately reviewed procedure. Critic rejections remain a distinct outcome.
 
 ## Named model and actual sources
 

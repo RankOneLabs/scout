@@ -8,8 +8,9 @@ import logging
 import platform
 import sqlite3
 from argparse import Namespace
-from contextlib import AbstractContextManager
-from dataclasses import replace
+from collections.abc import AsyncIterator
+from contextlib import AbstractContextManager, asynccontextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,7 +56,7 @@ from scout.grading.assistance_store import (
     capture_runtime,
     read_rejected_population,
 )
-from scout.grading.assistance_types import AssistanceConfig, RandomSelector
+from scout.grading.assistance_types import AssistanceConfig, RandomSelector, RejectedPopulation
 from scout.grading.feedback import (
     PersistedFeedbackPhase,
     PersistedFeedbackSnapshot,
@@ -2435,13 +2436,21 @@ def _t002_message(platform_id: str, when: datetime) -> Message:
     )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("has_route", [True, False])
-async def test_relevance_rejection_preserves_context_through_scan_and_review_queue(
+@dataclass(frozen=True)
+class _RejectionScanFixture:
+    state: StateManager
+    scan_id: int
+    resolution: DossierResolution
+    population: RejectedPopulation
+
+
+@asynccontextmanager
+async def _rejection_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
     has_route: bool,
-) -> None:
+) -> AsyncIterator[_RejectionScanFixture]:
     """Real phase/persistence/artifact path; only LLM and dossier IO are substituted."""
     revision = "b" * 40
     dossier = _t001_dossier()
@@ -2522,18 +2531,36 @@ async def test_relevance_rejection_preserves_context_through_scan_and_review_que
         with state.db.read_transaction():
             population = read_rejected_population(state.conn, "gw", tmp_path)
         assert isinstance(population, Ok), population
-        candidates, exclusions = eligible_candidates(population.value, ())
-        if not has_route:
-            assert not candidates
-            assert {item.reason for item in exclusions} == {"missing_project_context"}
-            return
+        yield _RejectionScanFixture(state, scan_id, resolution, population.value)
+
+
+@pytest.mark.asyncio
+async def test_unrouted_relevance_rejection_remains_excluded_with_configured_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with _rejection_scan(tmp_path, monkeypatch, has_route=False) as scan:
+        candidates, exclusions = eligible_candidates(scan.population, ())
+        assert not candidates
+        assert {item.reason for item in exclusions} == {"missing_project_context"}
+
+
+@pytest.mark.asyncio
+async def test_routed_relevance_rejection_preserves_context_through_scan_and_review_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with _rejection_scan(tmp_path, monkeypatch, has_route=True) as scan:
+        state = scan.state
+        rows = state.conn.execute("SELECT * FROM evaluations ORDER BY id").fetchall()
+        candidates, exclusions = eligible_candidates(scan.population, ())
         assert len(candidates) == 2
         assert not exclusions
         state.save_grade(
             GradeRecord(
                 post_id=rows[0]["post_id"],
                 evaluation_id=rows[0]["id"],
-                scan_id=scan_id,
+                scan_id=scan.scan_id,
                 source="cli",
                 graded_at=datetime.now(UTC),
                 relevance_judgment="correct",
@@ -2579,7 +2606,7 @@ async def test_relevance_rejection_preserves_context_through_scan_and_review_que
         with state.db.read_transaction():
             source = review_source(state, assistance.value.lineage.outputs[2], rows[1]["id"])
         assert isinstance(source, Ok), source
-        assert source.value.context == resolution
+        assert source.value.context == scan.resolution
 
 
 @pytest.mark.asyncio
