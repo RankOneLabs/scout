@@ -118,7 +118,9 @@ describe("queue review browser lifecycle", () => {
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body);
   });
   it.each([true, false])("retries after leaving with identical bytes (randomUUID available: %s)", async (hasRandomUUID) => {
-    if (!hasRandomUUID) vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    const randomUUID = vi.fn().mockReturnValue("12345678-1234-4234-8234-123456789abc");
+    const getRandomValues = vi.fn((bytes: Uint8Array) => bytes.fill(0xab));
+    vi.stubGlobal("crypto", { randomUUID: hasRandomUUID ? randomUUID : undefined, getRandomValues });
     const fetcher = vi.fn().mockRejectedValueOnce(new Error("lost response"))
       .mockResolvedValueOnce(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
@@ -137,6 +139,8 @@ describe("queue review browser lifecycle", () => {
     expect(fetcher.mock.calls[1][0]).toContain("/evaluations/123/actions");
     expect(onSaved).toHaveBeenCalledOnce();
     expect(resumed.result.current.hasPending).toBe(false);
+    expect(randomUUID).toHaveBeenCalledTimes(hasRandomUUID ? 1 : 0);
+    expect(getRandomValues).toHaveBeenCalledTimes(hasRandomUUID ? 0 : 1);
   });
   it("keeps a second action from racing a pending save", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
