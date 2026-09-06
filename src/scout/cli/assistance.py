@@ -56,6 +56,7 @@ ASSISTANCE_COMMANDS = (
     "assistance-run",
     "assistance-replay",
     "assistance-report",
+    "assistance-review-costs",
 )
 
 
@@ -101,6 +102,8 @@ def add_assistance_parsers(
             )
         if command == "assistance-report":
             child.add_argument("--snapshot", required=True, help="New snapshot of reviewed grades")
+        if command == "assistance-review-costs":
+            child.add_argument("--queue", required=True)
 
 
 def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
@@ -108,6 +111,10 @@ def run_assistance(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]
     started = perf_counter()
     cpu_started = process_time()
     with read_only_connection(args.db_path) as conn:
+        if args.analysis_command == "assistance-review-costs":
+            from scout.grading.review_costs import read_review_costs
+
+            return read_review_costs(conn, ArtifactDigest(args.queue))
         roots = tuple(
             ArtifactDigest(value)
             for value in (

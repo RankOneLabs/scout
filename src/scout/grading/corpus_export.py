@@ -91,7 +91,12 @@ def _analysis_tables(source: sqlite3.Connection) -> tuple[str, ...]:
     )
     if present and present != ANALYSIS_TABLES:
         raise GradingExportError("incomplete analysis artifact schema")
-    return present
+    reviews = source.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_dispositions'"
+    ).fetchone()
+    if reviews and not present:
+        raise GradingExportError("review dispositions require retained analysis artifacts")
+    return (*present, "review_dispositions") if reviews else present
 
 
 #: Every reference the exported set carries within itself, as
@@ -272,6 +277,65 @@ def _verify_references(destination: sqlite3.Connection) -> None:
             )
 
 
+def _verify_review_dispositions(destination: sqlite3.Connection) -> None:
+    """Check observation identity and pinned references, including skipped items."""
+    from scout.grading.assistance_types import ReviewQueue
+    from scout.grading.review_types import ReviewDisposition, ReviewRequest
+
+    for (
+        action_id,
+        queue_digest,
+        evaluation_id,
+        grade_revision_id,
+        request_json,
+        disposition_json,
+    ) in destination.execute(
+        "SELECT action_id, queue_digest, evaluation_id, grade_revision_id, "
+        "request_json, disposition_json FROM review_dispositions"
+    ):
+        try:
+            observation = ReviewDisposition.model_validate_json(disposition_json)
+            request = ReviewRequest.model_validate_json(request_json)
+            if (
+                observation.action_id != action_id
+                or observation.queue_digest != queue_digest
+                or observation.evaluation_id != evaluation_id
+                or observation.grade_revision_id != grade_revision_id
+                or observation.action_id != request.action_id
+                or observation.action != request.action
+                or observation.timing != request.timing
+                or observation.pricing != request.pricing
+            ):
+                raise ValueError("Observation differs from its indexed identity or request")
+            queue_row = destination.execute(
+                "SELECT content FROM analysis_artifacts WHERE digest = ?",
+                (observation.queue_digest,),
+            ).fetchone()
+            if queue_row is None:
+                raise ValueError("Missing retained queue")
+            queue = ReviewQueue.model_validate_json(queue_row[0])
+            if not any(
+                source.evaluation_id == observation.evaluation_id
+                for item in queue.items
+                for source in item.sources
+            ):
+                raise ValueError("Observation not in recorded queue")
+            evaluation = destination.execute(
+                "SELECT id FROM evaluations WHERE id = ?", (observation.evaluation_id,)
+            ).fetchone()
+            if evaluation is None:
+                raise ValueError("Missing evaluation")
+            if observation.grade_revision_id is not None:
+                revision = destination.execute(
+                    "SELECT evaluation_id FROM grade_revisions WHERE id = ?",
+                    (observation.grade_revision_id,),
+                ).fetchone()
+                if revision is None or revision[0] != observation.evaluation_id:
+                    raise ValueError("Mismatched grade revision")
+        except ValueError as exc:
+            raise GradingExportError(f"Invalid review disposition: {exc}") from exc
+
+
 def _verify_grades_are_present(destination: sqlite3.Connection) -> None:
     """An export of zero grades is almost certainly the wrong database.
 
@@ -318,6 +382,8 @@ def export_grading_corpus(source_db_path: str, destination_path: str) -> Grading
                 _verify_row_counts(source, written, exported_tables)
                 _verify_references(written)
                 _verify_grades_are_present(written)
+                if "review_dispositions" in analysis_tables:
+                    _verify_review_dispositions(written)
                 if analysis_tables:
                     if isinstance(read_artifact_bundle(written), Err):
                         raise GradingExportError(

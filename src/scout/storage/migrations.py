@@ -3017,6 +3017,14 @@ def _migrate_to_39(conn: sqlite3.Connection) -> None:
     conn.execute(GRADE_REVISION_NO_REPLACE)
 
 
+def _migrate_to_40(conn: sqlite3.Connection) -> None:
+    """Immutable, idempotent grading-assistance source observations."""
+    from scout.storage.schema import REVIEW_SCHEMA_STATEMENTS
+
+    for statement in REVIEW_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3056,4 +3064,5 @@ MIGRATIONS: dict[int, Migration] = {
     37: _migrate_to_37,
     38: _migrate_to_38,
     39: _migrate_to_39,
+    40: _migrate_to_40,
 }
