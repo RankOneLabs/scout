@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import platform
 import sqlite3
 from argparse import Namespace
 from contextlib import AbstractContextManager
@@ -38,14 +39,31 @@ from scout.config import (
     SourceAuthor,
     SourceParent,
 )
-from scout.dossiers.resolver import DossierFact, DossierResource, DossierSummary
+from scout.dossiers.resolver import (
+    DossierFact,
+    DossierResolution,
+    DossierResource,
+    DossierSummary,
+    ResolutionMetadata,
+)
 from scout.errors import PlatformFetchFailure
+from scout.grading.artifacts import ProducerEnvironment, digest_artifact
+from scout.grading.assistance import eligible_candidates
+from scout.grading.assistance_store import (
+    AssistanceRequest,
+    build_assistance_bundle,
+    capture_runtime,
+    read_rejected_population,
+)
+from scout.grading.assistance_types import AssistanceConfig, RandomSelector
 from scout.grading.feedback import (
     PersistedFeedbackPhase,
     PersistedFeedbackSnapshot,
     legacy_feedback_bundle,
 )
+from scout.grading.review_store import review_source
 from scout.grading.service import format_grading_signals
+from scout.grading.snapshots import CorpusSelection, build_snapshot_bundle, read_grade_population
 from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
 from scout.result import Err, Ok
 from scout.scanning.prefilter import RoutedMessage
@@ -2415,6 +2433,153 @@ def _t002_message(platform_id: str, when: datetime) -> Message:
         content=f"message {platform_id}",
         created_at=when,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_route", [True, False])
+async def test_relevance_rejection_preserves_context_through_scan_and_review_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    has_route: bool,
+) -> None:
+    """Real phase/persistence/artifact path; only LLM and dossier IO are substituted."""
+    revision = "b" * 40
+    dossier = _t001_dossier()
+    resolution = DossierResolution(
+        summary=dossier,
+        metadata=ResolutionMetadata(
+            project_key="gw",
+            summary_id="gw-dossier",
+            revision=revision,
+            path="synthetic.yaml",
+        ),
+        known_gaps=(),
+    )
+
+    def resolve(repository: Path, pinned: str, project: str, summary: str) -> DossierResolution:
+        assert (pinned, project, summary) == (revision, "gw", "gw-dossier")
+        return resolution
+
+    monkeypatch.setattr("scout.grading.snapshots.resolve_dossier", resolve)
+    monkeypatch.setattr("scout.grading.assistance_store.resolve_dossier", resolve)
+    llm = _ScriptedLLMClient([_t002_not_relevant_response(), _t002_not_relevant_response()])
+    real_build = scan_runner.build_scout_phase_configs
+
+    def scripted_configs(**kwargs):
+        configs = real_build(**kwargs)
+        return replace(configs, relevance=configs.relevance.with_(llm=llm))
+
+    monkeypatch.setattr(scan_runner, "build_scout_phase_configs", scripted_configs)
+    with StateManager(str(tmp_path / "scout.db")) as state:
+        state.upsert_project(
+            "gw",
+            "Gateway",
+            "Synthetic project",
+            "https://example.com",
+            dossier_summary_id="gw-dossier",
+        )
+        state.upsert_keyword("gw", "agent")
+        route = replace(_route(), id=state.list_keywords()[0]["id"]) if has_route else None
+        messages = [_t002_message(f"rejection-{index}", datetime.now(UTC)) for index in range(2)]
+        scan_id = state.start_scan()
+        feedback_snapshot = state.record_feedback_snapshot(scan_id, mode="shadow")
+        tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
+        feedback = SQLiteFeedbackLoop(db_path=str(tmp_path / "feedback.db"))
+        try:
+            _, relevant_count, _, failures = await scan_runner.score_messages(
+                [RoutedMessage(message=message, keyword_route=route) for message in messages],
+                messages,
+                MODES["lead_gen"],
+                _t001_projects(),
+                {},
+                "claude-haiku-4-5-20251001",
+                "claude-haiku-4-5-20251001",
+                "claude-haiku-4-5-20251001",
+                tracer,
+                feedback,
+                state,
+                scan_id,
+                str(tmp_path / "digest.md"),
+                dossier_summaries={"gw": dossier},
+                dossier_revision=revision,
+                feedback_snapshot=feedback_snapshot,
+            )
+        finally:
+            await tracer.flush()
+            await tracer.close()
+            await feedback.close()
+        assert not failures
+        assert relevant_count == 0
+        assert len(llm.calls) == 2  # Rejection must not trigger drafting or critique.
+        rows = state.conn.execute("SELECT * FROM evaluations ORDER BY id").fetchall()
+        assert len(rows) == 2
+        assert all(row["surface_status"] == "not_relevant" for row in rows)
+        assert all(row["project_key"] == ("gw" if has_route else None) for row in rows)
+        assert all(
+            row["dossier_summary_id"] == ("gw-dossier" if has_route else None) for row in rows
+        )
+        assert all(row["dossier_revision"] == revision for row in rows)
+        with state.db.read_transaction():
+            population = read_rejected_population(state.conn, "gw", tmp_path)
+        assert isinstance(population, Ok), population
+        candidates, exclusions = eligible_candidates(population.value, ())
+        if not has_route:
+            assert not candidates
+            assert {item.reason for item in exclusions} == {"missing_project_context"}
+            return
+        assert len(candidates) == 2
+        assert not exclusions
+        state.save_grade(
+            GradeRecord(
+                post_id=rows[0]["post_id"],
+                evaluation_id=rows[0]["id"],
+                scan_id=scan_id,
+                source="cli",
+                graded_at=datetime.now(UTC),
+                relevance_judgment="correct",
+                action_judgment="accept",
+            )
+        )
+        with state.db.read_transaction():
+            grades = read_grade_population(state.conn, tmp_path)
+            population = read_rejected_population(state.conn, "gw", tmp_path)
+        assert isinstance(grades, Ok), grades
+        assert isinstance(population, Ok), population
+        lock = (Path(__file__).parents[1] / "uv.lock").read_bytes()
+        environment = (
+            ProducerEnvironment(
+                code_revision="a" * 40,
+                dependency_lock_digest=digest_artifact(lock),
+                python_version=platform.python_version(),
+            )
+            .model_dump_json()
+            .encode()
+        )
+        snapshot = build_snapshot_bundle(
+            grades.value, CorpusSelection(project_key="gw"), environment
+        )
+        assert isinstance(snapshot, Ok), snapshot
+        runtime = capture_runtime(environment, lock)
+        assert isinstance(runtime, Ok), runtime
+        assistance = build_assistance_bundle(
+            AssistanceRequest(
+                bundle=snapshot.value,
+                snapshot_digest=snapshot.value.lineages[0].outputs[0],
+                population=population.value,
+                config=AssistanceConfig(ranked=None, random=RandomSelector(count=1, seed=17)),
+            ),
+            runtime.value,
+        )
+        assert isinstance(assistance, Ok), assistance
+        assert state.artifacts.import_bundle(assistance.value.bundle) == Ok(None)
+        queue = assistance.value.outputs.queue
+        assert [source.evaluation_id for item in queue.items for source in item.sources] == [
+            rows[1]["id"]
+        ]
+        with state.db.read_transaction():
+            source = review_source(state, assistance.value.lineage.outputs[2], rows[1]["id"])
+        assert isinstance(source, Ok), source
+        assert source.value.context == resolution
 
 
 @pytest.mark.asyncio

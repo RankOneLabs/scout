@@ -116,6 +116,14 @@ is no intermediate deployment or automatic paid experiment.
 
 ## Workflow step 2: local grading assistance
 
+Relevance rejections retain their routed project through the phase result and
+terminal outcome, allowing persistence to pin the matching dossier summary and
+revision. A rejection with no known project remains unscoped and is excluded
+from project queues; it is never assigned to the only active project by inference.
+This is a forward-write fix, not a historical provenance backfill. Existing
+unscoped rows remain excluded until their context can be recovered from evidence
+under a separately reviewed procedure. Critic rejections remain a distinct outcome.
+
 The executable path is a nested pipeline, recorded with the existing four-part
 `scout.grading.assistance` lineage (new writes use producer version `2`): retained corpus and
 candidate population → grouped partition → train-only fit → independent
