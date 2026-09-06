@@ -3,11 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { startReviewClock, transitionReviewClock, type ReviewClock, type ReviewClockEvent } from "@/lib/review-clock";
-import type { QueueReviewItem, ReviewAction, ReviewPriceBasis, ReviewRequest } from "@/types/review-queues";
+import type { QueueReviewItem, ReviewAction, ReviewPriceBasis, ReviewRequest, ReviewResult } from "@/types/review-queues";
 
 const sessionSchema = z.object({ elapsedMs: z.number().nonnegative(), pendingBody: z.string().nullable() });
 const errorResponseSchema = z.object({ detail: z.string().optional() });
 const PERSIST_ERROR = "Cannot persist review timing. Reload with session storage available before reviewing.";
+
+function createReviewActionId(): ReviewResult<ReviewRequest["action_id"]> {
+  try {
+    if (typeof crypto.randomUUID === "function") return { ok: true, value: crypto.randomUUID() };
+    // randomUUID requires a secure context; getRandomValues also works on HTTP.
+    // Preserve the UUID v4 wire contract with cryptographically secure bytes.
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return { ok: true, value: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` };
+  } catch {
+    return { ok: false, error: "Cannot generate a secure review action ID. Reload in a browser with Web Crypto available." };
+  }
+}
 
 export function useQueueReview(input: {
   digest: string; item: QueueReviewItem; pricing: ReviewPriceBasis | null; onSaved: () => Promise<void>;
@@ -117,9 +132,14 @@ export function useQueueReview(input: {
   const submit = useCallback(async (action: ReviewAction) => {
     if (storageError.current !== null) throw new Error(storageError.current);
     if (!ready || !clock.current || busyRef.current || pendingBody.current !== null) throw new Error("Resolve the pending request before another action");
+    const actionId = createReviewActionId();
+    if (!actionId.ok) {
+      setError(actionId.error);
+      throw new Error(actionId.error);
+    }
     if (!transition("submit")) throw new Error(PERSIST_ERROR);
     const request: ReviewRequest = {
-      action_id: crypto.randomUUID(), expected_grade_revision_id: input.item.current_revision_id,
+      action_id: actionId.value, expected_grade_revision_id: input.item.current_revision_id,
       expected_action_id: input.item.disposition?.action_id ?? null, action,
       timing: action.kind === "reconcile" ? { elapsed_ms: null, method: null } : {
         elapsed_ms: Math.floor(clock.current.elapsedMs), method: "active-visible-idle60/v1",
