@@ -19,7 +19,7 @@ from pathlib import Path
 from time import perf_counter, process_time
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from scout.dossiers.resolver import DossierResolution, DossierResolutionError, resolve_dossier
 from scout.grading.artifacts import (
@@ -44,18 +44,27 @@ from scout.grading.assistance import (
     execute_assistance,
     freeze_partition,
     population_grouping_posts,
+    select_positive_ranked,
     select_random,
     select_ranked,
 )
 from scout.grading.assistance_population import read_population, retain_population
 from scout.grading.assistance_types import (
+    ASSISTANCE_PRODUCER_VERSION_ADAPTER,
+    ASSISTANCE_PRODUCER_VERSIONS,
     AssistanceConfig,
     AssistanceOutputs,
+    AssistanceProducerVersion,
     AssistanceReport,
     ExecutionTiming,
+    FittedPositiveTfidf,
+    FittedSelector,
     FittedTfidf,
     FrozenPartition,
     GroupingPost,
+    PositiveSimilarityResult,
+    PositiveSimilaritySelector,
+    RankedResult,
     RejectedInput,
     RejectedPopulation,
     ReplayUnavailable,
@@ -65,6 +74,7 @@ from scout.grading.assistance_types import (
     SelectionReference,
     SelectorResult,
     TrainingExample,
+    producer_version_for,
 )
 from scout.grading.assistance_wire import encode_config, encode_outputs, encode_population
 from scout.grading.snapshots import (
@@ -143,7 +153,7 @@ class AssistanceRequest:
     population: RejectedPopulation
     config: AssistanceConfig
     provenance_queues: tuple[ArtifactDigest, ...] = ()
-    producer_version: Literal["1", "2"] = "2"
+    producer_version: AssistanceProducerVersion = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,7 +320,7 @@ def supports_assistance(lineage: ArtifactLineage) -> bool:
     return (
         lineage.kind == "scout.grading.assistance"
         and lineage.process.id == "scout.grading.assistance"
-        and lineage.process.version in ("1", "2")
+        and lineage.process.version in ASSISTANCE_PRODUCER_VERSIONS
     )
 
 
@@ -437,7 +447,7 @@ def derive_assistance(
     if population_digest is None:
         population_digest = (
             retain_population(request.population).digest
-            if request.producer_version == "2"
+            if request.producer_version != "1"
             else digest_artifact(encode_population(request.population))
         )
     return execute_assistance(
@@ -452,12 +462,16 @@ def derive_assistance(
 def build_assistance_bundle(
     request: AssistanceRequest, runtime: RetainedRuntime
 ) -> Result[AssistanceExecution, ArtifactError]:
+    if request.producer_version != producer_version_for(
+        request.config, legacy_inline=request.producer_version == "1"
+    ):
+        return Err(ArtifactError("assistance", None, "Selector/producer version mismatch"))
     # Only explicitly consumed provenance is a gate for a new run.
     prior = verify_provenance(request.bundle, request.provenance_queues)
     if isinstance(prior, Err):
         return prior
     started, cpu_started = perf_counter(), process_time()
-    if request.producer_version == "2":
+    if request.producer_version != "1":
         retained_population = retain_population(request.population)
         population_digest = retained_population.digest
         population_artifacts = retained_population.artifacts
@@ -528,6 +542,12 @@ def replay_assistance_lineage(
         if isinstance(population, Err):
             return population
         config = AssistanceConfig.model_validate_json(contents[lineage.process.config_digest])
+        if lineage.process.version != producer_version_for(
+            config, legacy_inline=lineage.process.version == "1"
+        ):
+            return Err(
+                ArtifactError("replay_assistance", None, "Selector/producer version mismatch")
+            )
         examples = load_training_examples(bundle, lineage.inputs[0], lineage.inputs[2:])
         if isinstance(examples, Err):
             return examples
@@ -576,7 +596,9 @@ def replay_assistance_lineage(
                 population=population.value,
                 config=config,
                 provenance_queues=lineage.inputs[2:],
-                producer_version="1" if lineage.process.version == "1" else "2",
+                producer_version=ASSISTANCE_PRODUCER_VERSION_ADAPTER.validate_python(
+                    lineage.process.version
+                ),
             )
         )
         if isinstance(derived, Err):
@@ -614,8 +636,41 @@ def validate_retained_selection(
     if request.config.ranked is None:
         if model is not None or ranked is not None or outputs.report.heldout is not None:
             return failure
+    elif isinstance(request.config.ranked, PositiveSimilaritySelector):
+        if not isinstance(model, FittedPositiveTfidf) or not isinstance(
+            ranked, PositiveSimilarityResult
+        ):
+            return failure
+        positive_ids = {item.evaluation_id for item in examples if item.is_relevant}
+        if (
+            outputs.report.heldout is not None
+            or not model.vocabulary
+            or len(set(model.vocabulary)) != len(model.vocabulary)
+            or len(model.idf) != len(model.vocabulary)
+            or len(model.centroid) != len(model.vocabulary)
+            or any(value < 1 for value in model.idf)
+            or any(value < 0 for value in model.centroid)
+            or not math.isclose(
+                math.fsum(value * value for value in model.centroid), 1, abs_tol=1e-10
+            )
+            or not model.train_evaluation_ids
+            or model.train_evaluation_ids
+            != tuple(
+                member.evaluation_id
+                for member in outputs.partition.members
+                if member.partition == "train" and member.evaluation_id in positive_ids
+            )
+            or sorted(score.evaluation_id for score in ranked.scores) != sorted(candidate_ids)
+        ):
+            return failure
+        if select_positive_ranked(ranked.scores, candidates, request.config.ranked) != ranked:
+            return failure
     else:
-        if model is None or ranked is None or outputs.report.heldout is None:
+        if (
+            not isinstance(model, FittedTfidf)
+            or not isinstance(ranked, SelectorResult)
+            or outputs.report.heldout is None
+        ):
             return failure
         if (
             not model.vocabulary
@@ -665,7 +720,7 @@ def read_assistance_outputs(
                 partition=FrozenPartition.model_validate_json(contents[lineage.outputs[0]]),
                 model=None
                 if contents[lineage.outputs[1]] == b"null"
-                else FittedTfidf.model_validate_json(contents[lineage.outputs[1]]),
+                else TypeAdapter(FittedSelector).validate_json(contents[lineage.outputs[1]]),
                 queue=ReviewQueue.model_validate_json(contents[lineage.outputs[2]]),
                 report=AssistanceReport.model_validate_json(contents[lineage.outputs[3]]),
             )
@@ -674,12 +729,24 @@ def read_assistance_outputs(
         return Err(ArtifactError("read_assistance", None, "Invalid assistance output documents"))
 
 
-def _selectors_match(left: SelectorResult | None, right: SelectorResult | None) -> bool:
+def _selectors_match(left: RankedResult | None, right: RankedResult | None) -> bool:
     if left is None or right is None:
         return left is right
     if left.model_copy(update={"scores": ()}) != right.model_copy(update={"scores": ()}):
         return False
     if len(left.scores) != len(right.scores):
+        return False
+    if isinstance(left, PositiveSimilarityResult) and isinstance(right, PositiveSimilarityResult):
+        return all(
+            a.evaluation_id == b.evaluation_id
+            and tuple(t.term for t in a.explanation) == tuple(t.term for t in b.explanation)
+            and _numbers_match(
+                (a.similarity, *(t.contribution for t in a.explanation)),
+                (b.similarity, *(t.contribution for t in b.explanation)),
+            )
+            for a, b in zip(left.scores, right.scores, strict=True)
+        )
+    if not isinstance(left, SelectorResult) or not isinstance(right, SelectorResult):
         return False
     for a, b in zip(left.scores, right.scores, strict=True):
         if a.evaluation_id != b.evaluation_id or tuple(t.term for t in a.explanation) != tuple(
@@ -708,11 +775,21 @@ def outputs_match(left: AssistanceOutputs, right: AssistanceOutputs) -> bool:
             b.vocabulary,
         ):
             return False
-        if not _numbers_match(
-            (*a.idf, *a.coefficients, a.intercept), (*b.idf, *b.coefficients, b.intercept)
-        ):
+        if isinstance(a, FittedPositiveTfidf) and isinstance(b, FittedPositiveTfidf):
+            if len(a.centroid) != len(a.vocabulary) or len(b.centroid) != len(b.vocabulary):
+                return False
+            if not _numbers_match((*a.idf, *a.centroid), (*b.idf, *b.centroid)):
+                return False
+        elif isinstance(a, FittedTfidf) and isinstance(b, FittedTfidf):
+            if len(a.coefficients) != len(a.vocabulary) or len(b.coefficients) != len(b.vocabulary):
+                return False
+            if not _numbers_match(
+                (*a.idf, *a.coefficients, a.intercept), (*b.idf, *b.coefficients, b.intercept)
+            ):
+                return False
+        else:
             return False
-        if len(a.idf) != len(a.vocabulary) or len(a.coefficients) != len(a.vocabulary):
+        if len(a.idf) != len(a.vocabulary):
             return False
     left_queue = left.queue.model_copy(update={"ranked": None})
     right_queue = right.queue.model_copy(update={"ranked": None})

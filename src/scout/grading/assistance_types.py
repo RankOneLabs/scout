@@ -7,15 +7,25 @@ Human labels come only from CorpusMember; rejected decisions never become labels
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal, NewType, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from scout.dossiers.resolver import DossierResolution
 from scout.grading.artifacts import ArtifactDigest, DigestReference
 from scout.grading.snapshots import RecordedEvaluation, RecordedPost
 
 GroupId = NewType("GroupId", str)
+
+# The versions of scout.grading.assistance retained by the store. Derive runtime
+# membership from the type rather than keeping another independently edited list.
+AssistanceProducerVersion = Literal["1", "2", "3"]
+ASSISTANCE_PRODUCER_VERSIONS: tuple[AssistanceProducerVersion, ...] = get_args(
+    AssistanceProducerVersion
+)
+ASSISTANCE_PRODUCER_VERSION_ADAPTER: TypeAdapter[AssistanceProducerVersion] = TypeAdapter(
+    AssistanceProducerVersion
+)
 
 
 class AssistanceDocument(BaseModel):
@@ -112,15 +122,41 @@ class RandomSelector(AssistanceDocument):
     )
 
 
-type SelectorConfig = Annotated[TfidfSelector | RandomSelector, Field(discriminator="kind")]
+class PositiveSimilaritySelector(AssistanceDocument):
+    """Cosine retrieval against confirmed-positive TF-IDF centroid, not classification."""
+
+    kind: Literal["tfidf_positive_similarity"] = "tfidf_positive_similarity"
+    count: int = Field(default=20, ge=1)
+    max_features: int = Field(default=20000, ge=1)
+
+
+type RankedSelector = Annotated[
+    TfidfSelector | PositiveSimilaritySelector, Field(discriminator="kind")
+]
+type SelectorConfig = Annotated[
+    TfidfSelector | PositiveSimilaritySelector | RandomSelector, Field(discriminator="kind")
+]
 
 
 class AssistanceConfig(AssistanceDocument):
     format: Literal["scout.assistance-config/v1"] = "scout.assistance-config/v1"
     seed: int = Field(default=0, ge=0, le=4294967295)
     heldout_fraction: float = Field(default=0.2, gt=0, lt=1)
-    ranked: TfidfSelector | None = Field(default_factory=TfidfSelector)
+    ranked: RankedSelector | None = Field(default_factory=TfidfSelector)
     random: RandomSelector
+
+
+def producer_version_for(
+    config: AssistanceConfig, *, legacy_inline: bool = False
+) -> AssistanceProducerVersion:
+    """Current writer mapping, with explicit inline-v1 support for historical replay.
+
+    Positive similarity never had an inline producer; requesting legacy encoding
+    cannot make that selector valid under v1.
+    """
+    if isinstance(config.ranked, PositiveSimilaritySelector):
+        return "3"
+    return "1" if legacy_inline else "2"
 
 
 class SelectionReference(AssistanceDocument):
@@ -165,6 +201,19 @@ class FittedTfidf(AssistanceDocument):
     iterations: int
 
 
+class FittedPositiveTfidf(AssistanceDocument):
+    """Positive train IDs and fitted sklearn vocabulary/IDF plus unit-length mean vector."""
+
+    format: Literal["scout.tfidf-positive-centroid/v1"] = "scout.tfidf-positive-centroid/v1"
+    train_evaluation_ids: tuple[int, ...]
+    vocabulary: tuple[str, ...]
+    idf: tuple[float, ...]
+    centroid: tuple[float, ...]
+
+
+type FittedSelector = Annotated[FittedTfidf | FittedPositiveTfidf, Field(discriminator="format")]
+
+
 class TermContribution(AssistanceDocument):
     term: str
     contribution: float
@@ -186,6 +235,27 @@ class SelectorResult(AssistanceDocument):
     explanation_method: Literal["tfidf-times-coefficient/v1"] | None = None
 
 
+class SimilarityCandidate(AssistanceDocument):
+    evaluation_id: int
+    similarity: float = Field(ge=0, le=1)
+    explanation: tuple[TermContribution, ...]
+
+
+class PositiveSimilarityResult(AssistanceDocument):
+    kind: Literal["tfidf_positive_similarity"] = "tfidf_positive_similarity"
+    population_evaluation_ids: tuple[int, ...]
+    selected_evaluation_ids: tuple[int, ...]
+    scores: tuple[SimilarityCandidate, ...]
+    explanation_method: Literal["tfidf-times-positive-centroid/v1"] = (
+        "tfidf-times-positive-centroid/v1"
+    )
+
+
+type RankedResult = Annotated[
+    SelectorResult | PositiveSimilarityResult, Field(discriminator="kind")
+]
+
+
 class QueueSource(AssistanceDocument):
     evaluation_id: int
     ranked_position: int | None
@@ -204,7 +274,7 @@ class ReviewQueue(AssistanceDocument):
     project_key: str
     population_digest: DigestReference
     items: tuple[ReviewQueueItem, ...]
-    ranked: SelectorResult | None
+    ranked: RankedResult | None
     random: SelectorResult
 
 
@@ -258,7 +328,7 @@ class AssistanceReport(AssistanceDocument):
 @dataclass(frozen=True, slots=True)
 class AssistanceOutputs:
     partition: FrozenPartition
-    model: FittedTfidf | None
+    model: FittedSelector | None
     queue: ReviewQueue
     report: AssistanceReport
 

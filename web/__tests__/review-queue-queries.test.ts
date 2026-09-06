@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getReviewQueue, listReviewQueues } from "@/lib/review-queue-queries";
-import type { ReviewQueue } from "@/types/review-queues";
+import { ASSISTANCE_PRODUCER_VERSIONS, type ReviewQueue } from "@/types/review-queues";
 
 let db: Database.Database;
 vi.mock("@/lib/db", () => ({ getDb: () => db }));
@@ -31,7 +33,7 @@ function retain(value: unknown): string {
   return digest;
 }
 
-function seedQueue(version: "1" | "2" = "2") {
+function seedQueue(version: "1" | "2" | "3" = "2") {
   const post = { id: 456, content: "Synthetic post", url: null, author_name: "Synthetic author", channel_name: "Test", parent_text: "Recorded parent", parent_author_name: "Parent" };
   const context = {
     summary: { project_key: "synthetic", last_reviewed: "2026-01-01", reviewer: "Synthetic", facts: [], resources: [], prohibitions: [], references: [] },
@@ -41,11 +43,14 @@ function seedQueue(version: "1" | "2" = "2") {
   const postDigest = retain(post);
   const contextDigest = retain(context);
   const inputDigest = retain({ format: "scout.rejected-input/v2", evaluation, post_digest: postDigest, context_digest: contextDigest, has_grade: false });
-  const populationDigest = version === "2" ? retain({ format: "scout.rejected-population/v2", items: [inputDigest], grouping_posts: [], project_key: "synthetic" })
+  const populationDigest = version !== "1" ? retain({ format: "scout.rejected-population/v2", items: [inputDigest], grouping_posts: [], project_key: "synthetic" })
     : retain({ format: "scout.rejected-population/v1", project_key: "synthetic", items: [{ evaluation, post, context, has_grade: false }] });
   const queue: ReviewQueue = { format: "scout.review-queue/v1", project_key: "synthetic", population_digest: populationDigest,
     items: [{ duplicate_key: "a".repeat(64), sources: [{ evaluation_id: 123, ranked_position: null, random_position: 1 }] }],
-    ranked: null, random: { kind: "seeded_random", population_evaluation_ids: [123], selected_evaluation_ids: [123], scores: [], explanation_method: null } };
+    ranked: version !== "3" ? null : { kind: "tfidf_positive_similarity", population_evaluation_ids: [123], selected_evaluation_ids: [123],
+      scores: [{ evaluation_id: 123, similarity: 0.75, explanation: [{ term: "agent", contribution: 0.75 }] }],
+      explanation_method: "tfidf-times-positive-centroid/v1" },
+    random: { kind: "seeded_random", population_evaluation_ids: [123], selected_evaluation_ids: [123], scores: [], explanation_method: null } };
   const digest = retain(queue);
   const lineageDigest = retain({ kind: "scout.grading.assistance", inputs: ["a".repeat(64), populationDigest],
     outputs: ["b".repeat(64), "c".repeat(64), digest, "d".repeat(64)], process: { id: "scout.grading.assistance", version } });
@@ -74,7 +79,15 @@ function seedGrade() {
 }
 
 describe("retained queue projection", () => {
-  it.each(["1", "2"] as const)("reads frozen post/context and exact evaluation for producer %s", (version) => {
+  it("keeps supported producer versions in parity with the Python authority", () => {
+    const versions: unknown = JSON.parse(execFileSync("uv", ["run", "--no-sync", "python", "-c", `
+import json
+from scout.grading.assistance_types import ASSISTANCE_PRODUCER_VERSIONS
+print(json.dumps(ASSISTANCE_PRODUCER_VERSIONS))
+`], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8", timeout: 20_000 }));
+    expect(ASSISTANCE_PRODUCER_VERSIONS).toEqual(versions);
+  });
+  it.each(["1", "2", "3"] as const)("reads frozen post/context and exact evaluation for producer %s", (version) => {
     const { digest } = seedQueue(version);
     const result = getReviewQueue(digest);
     expect(result.ok).toBe(true);
@@ -82,6 +95,14 @@ describe("retained queue projection", () => {
     expect(result.value.items[0].recorded.post?.content).toBe("Synthetic post");
     expect(result.value.items[0].source.evaluation_id).toBe(123);
     expect(result.value.items[0].status).toBe("pending");
+  });
+  it("retains positive similarity evidence without calling it a probability", () => {
+    const { digest } = seedQueue("3");
+    const result = getReviewQueue(digest);
+    expect(result.ok && result.value.items[0].score).toEqual({
+      evaluation_id: 123, similarity: 0.75, explanation: [{ term: "agent", contribution: 0.75 }],
+    });
+    expect(listReviewQueues("synthetic").ok).toBe(true);
   });
   it("lists queues without loading the population or dossier blobs", () => {
     const { contextDigest } = seedQueue();

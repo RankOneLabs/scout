@@ -117,7 +117,8 @@ is no intermediate deployment or automatic paid experiment.
 ## Workflow step 2: local grading assistance
 
 The executable path is a nested pipeline, recorded with the existing four-part
-`scout.grading.assistance` lineage (new writes use producer version `2`): retained corpus and
+`scout.grading.assistance` lineage (classifier/random writes use producer `2`,
+positive-similarity writes use producer `3`): retained corpus and
 candidate population → grouped partition → train-only fit → independent
 ranked/random selection → queue and comparison report. Four ordered output
 digests address the partition, fitted model (`null` for random-only), queue, and
@@ -197,7 +198,7 @@ post identity, and duplicate content (NFKC, casefold, collapsed whitespace).
 Message identity follows the database's `(platform, platform_msg_id)` uniqueness.
 Ungraded recorded posts can bridge graded groups and are included in grouping.
 Missing ancestry is not invented. Known prompt-exposed groups stay in training.
-Held-out groups prefer examples with explicit random selection provenance; ties
+For the logistic classifier, held-out groups prefer examples with explicit random selection provenance; ties
 use the seeded digest order. Both training and held-out sets must have two classes;
 the requested held-out fraction is rounded up at group granularity (minimum two
 groups). An infeasible split is an explicit limitation, never cross-project pooling.
@@ -211,6 +212,46 @@ IDF, and classifier. The recorded probability threshold for held-out comparison
 is 0.5; it is not tuned on the held-out set. The explanation method is
 `tfidf-times-coefficient/v1`: up to eight largest absolute per-term contributions
 to the logit. Scores are model outputs, not calibrated error-rate claims.
+
+### Confirmed-positive similarity review
+
+To highlight **LLM-negative posts for human review**, choose the retrieval selector
+instead of the logistic classifier:
+
+```json
+{
+  "format": "scout.assistance-config/v1",
+  "ranked": {"kind": "tfidf_positive_similarity", "count": 20, "max_features": 20000},
+  "random": {"kind": "seeded_random", "count": 5, "seed": 29}
+}
+```
+
+Use this config with the same `assistance-preview` / `assistance-run` commands below.
+Adjust the random count to the eligible pool before running. The confirmed positives
+come from the snapshot's human relevance targets, never from LLM decisions alone.
+Only positive training examples fit the vocabulary and IDF. Their L2-normalized
+TF-IDF vectors are averaged and the resulting centroid is normalized to unit length.
+Candidate text is transformed with that frozen vocabulary/IDF and ranked by cosine
+similarity to the centroid. No human negatives or two-class split are required;
+one usable positive reference is sufficient. This is retrieval, not classifier
+evaluation: the automatic partition marks the reference corpus as train and the
+held-out comparison is absent. Execution still enforces explicit train/held-out
+separation; held-out positives never contribute to fitting.
+
+The UI labels the score **similarity to confirmed positives**, not a relevance
+probability. Explanations show up to eight largest `TF-IDF × positive centroid`
+term contributions (`tfidf-times-positive-centroid/v1`). Zero-overlap candidates
+remain in the independent random sampling frame but are not ranked highlights.
+Ties use evaluation ID after rounding to 12 decimal places. All existing candidate
+exclusions and thread/duplicate grouping protections apply. No grades are written
+by selection, and no classifier accuracy or ranked-queue error rate is reported.
+
+Producer `3` retains the positive reference IDs, vocabulary, IDF, centroid, similarity
+scores, config, source/runtime pins and ordinary queue provenance. Producers `1`
+and `2` retain their original encodings and replay behavior. Readers must support
+producer `3` before publishing this selector's queues to a live review workspace.
+
+### Selection and review
 
 The ranked selector deduplicates before applying its count (default 20). Random
 selection is simple random sampling without replacement over eligible evaluation

@@ -21,16 +21,21 @@ from scout.grading.assistance_types import (
     CandidateExclusion,
     CandidateExclusionReason,
     ConfusionCounts,
+    FittedPositiveTfidf,
+    FittedSelector,
     FittedTfidf,
     FrozenPartition,
     GroupId,
     GroupingPost,
     HeldoutComparison,
     PartitionMember,
+    PositiveSimilarityResult,
+    PositiveSimilaritySelector,
     QueueReviewReport,
     QueueSource,
     RandomRate,
     RandomSelector,
+    RankedResult,
     RejectedInput,
     RejectedPopulation,
     ReviewOutcome,
@@ -39,6 +44,7 @@ from scout.grading.assistance_types import (
     ReviewYield,
     ScoredCandidate,
     SelectorResult,
+    SimilarityCandidate,
     TermContribution,
     TfidfSelector,
     TrainingExample,
@@ -105,7 +111,9 @@ def freeze_partition(
     for item in examples:
         grouped.setdefault(groups[item.post.id], []).append(item)
     heldout: set[GroupId] = set()
-    if config.ranked is not None:
+    # Retrieval uses the reference corpus, not a classifier validation split.
+    # It still respects an explicit partition at the execution boundary.
+    if isinstance(config.ranked, TfidfSelector):
         if {item.is_relevant for item in examples} != {False, True}:
             return Err(ArtifactError("partition", snapshot, "Project needs two usable classes"))
         eligible = [key for key, items in grouped.items() if not any(i.exposed for i in items)]
@@ -218,7 +226,9 @@ def eligible_candidates(
     return tuple(candidates), tuple(exclusions)
 
 
-def _vectorizer(config: TfidfSelector, model: FittedTfidf | None = None) -> TfidfVectorizer:
+def _vectorizer(
+    config: TfidfSelector | PositiveSimilaritySelector, model: FittedSelector | None = None
+) -> TfidfVectorizer:
     import numpy as np
     from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -356,6 +366,104 @@ def select_random(
     )
 
 
+def fit_positive_tfidf(
+    train: tuple[TrainingExample, ...], config: PositiveSimilaritySelector
+) -> Result[FittedPositiveTfidf, ArtifactError]:
+    """Only confirmed positives in train contribute vocabulary, IDF, or centroid."""
+    import numpy as np
+    from threadpoolctl import threadpool_limits
+
+    positives = tuple(
+        sorted((item for item in train if item.is_relevant), key=lambda item: item.evaluation_id)
+    )
+    if not positives:
+        return Err(ArtifactError("fit_positive_tfidf", None, "No confirmed positive references"))
+    try:
+        with threadpool_limits(limits=1):
+            vectorizer = _vectorizer(config)
+            matrix = vectorizer.fit_transform([item.post.content or "" for item in positives])
+            centroid = np.asarray(matrix.mean(axis=0)).ravel()
+            norm = float(np.linalg.norm(centroid))
+            if norm == 0:
+                return Err(ArtifactError("fit_positive_tfidf", None, "Empty positive centroid"))
+            centroid /= norm
+            return Ok(
+                FittedPositiveTfidf(
+                    train_evaluation_ids=tuple(item.evaluation_id for item in positives),
+                    vocabulary=tuple(str(term) for term in vectorizer.get_feature_names_out()),
+                    idf=tuple(float(value) for value in vectorizer.idf_),
+                    centroid=tuple(float(value) for value in centroid),
+                )
+            )
+    except (ValueError, FloatingPointError):
+        return Err(ArtifactError("fit_positive_tfidf", None, "Cannot fit positive vocabulary"))
+
+
+def score_positive_similarity(
+    documents: tuple[tuple[int, str], ...],
+    model: FittedPositiveTfidf,
+    config: PositiveSimilaritySelector,
+) -> Result[tuple[SimilarityCandidate, ...], ArtifactError]:
+    from threadpoolctl import threadpool_limits
+
+    if not documents:
+        return Ok(())
+    try:
+        with threadpool_limits(limits=1):
+            matrix = _vectorizer(config, model).transform([text for _, text in documents])
+            scores: list[SimilarityCandidate] = []
+            for index, (evaluation_id, _) in enumerate(documents):
+                row = matrix.getrow(index)
+                contributions = tuple(
+                    TermContribution(
+                        term=model.vocabulary[int(column)],
+                        contribution=float(value) * model.centroid[int(column)],
+                    )
+                    for column, value in zip(row.indices, row.data, strict=True)
+                )
+                # Roundoff at the unit-vector boundary is not evidence > 1.
+                similarity = min(1.0, max(0.0, math.fsum(t.contribution for t in contributions)))
+                scores.append(
+                    SimilarityCandidate(
+                        evaluation_id=evaluation_id,
+                        similarity=similarity,
+                        explanation=tuple(
+                            sorted(contributions, key=lambda item: (-item.contribution, item.term))[
+                                :8
+                            ]
+                        ),
+                    )
+                )
+            return Ok(tuple(scores))
+    except (ValueError, IndexError, FloatingPointError):
+        return Err(ArtifactError("score_positive_similarity", None, "Invalid retained model"))
+
+
+def select_positive_ranked(
+    scores: tuple[SimilarityCandidate, ...],
+    candidates: tuple[RejectedInput, ...],
+    config: PositiveSimilaritySelector,
+) -> PositiveSimilarityResult:
+    by_id = {item.evaluation.id: item for item in candidates}
+    ordered = sorted(scores, key=lambda item: (-round(item.similarity, 12), item.evaluation_id))
+    selected: list[int] = []
+    seen: set[ArtifactDigest] = set()
+    for score in ordered:
+        post = by_id[score.evaluation_id].post
+        # Zero-overlap documents stay in the random frame, not the highlights.
+        if post is None or round(score.similarity, 12) <= 0:
+            continue
+        key = duplicate_key(post)
+        if key not in seen and len(selected) < config.count:
+            selected.append(score.evaluation_id)
+            seen.add(key)
+    return PositiveSimilarityResult(
+        population_evaluation_ids=tuple(sorted(by_id)),
+        selected_evaluation_ids=tuple(selected),
+        scores=tuple(ordered),
+    )
+
+
 def select_ranked(
     scores: tuple[ScoredCandidate, ...],
     candidates: tuple[RejectedInput, ...],
@@ -384,7 +492,7 @@ def select_ranked(
 
 def assemble_queue(
     population: RejectedPopulation,
-    ranked: SelectorResult | None,
+    ranked: RankedResult | None,
     random_result: SelectorResult,
     *,
     population_digest: ArtifactDigest | None = None,
@@ -464,10 +572,30 @@ def execute_assistance(
     random_result = select_random(tuple(item.evaluation.id for item in candidates), config.random)
     if isinstance(random_result, Err):
         return random_result
-    model = None
-    ranked = None
+    model: FittedSelector | None = None
+    ranked: RankedResult | None = None
     heldout = None
-    if config.ranked is not None:
+    if isinstance(config.ranked, PositiveSimilaritySelector):
+        train_ids = {item.evaluation_id for item in partition.members if item.partition == "train"}
+        positive_model = fit_positive_tfidf(
+            tuple(item for item in examples if item.evaluation_id in train_ids), config.ranked
+        )
+        if isinstance(positive_model, Err):
+            return positive_model
+        model = positive_model.value
+        similarities = score_positive_similarity(
+            tuple(
+                (item.evaluation.id, item.post.content or "")
+                for item in candidates
+                if item.post is not None
+            ),
+            model,
+            config.ranked,
+        )
+        if isinstance(similarities, Err):
+            return similarities
+        ranked = select_positive_ranked(similarities.value, candidates, config.ranked)
+    elif isinstance(config.ranked, TfidfSelector):
         train_ids = {item.evaluation_id for item in partition.members if item.partition == "train"}
         train = tuple(item for item in examples if item.evaluation_id in train_ids)
         test = tuple(item for item in examples if item.evaluation_id not in train_ids)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectReviewCosts, selectReviewStatus } from "@/lib/review-selectors";
+import { selectReviewCosts, selectReviewStatus, selectReviewScore } from "@/lib/review-selectors";
 import type { ReviewDisposition } from "@/types/review-queues";
 
 const observation: ReviewDisposition = {
@@ -9,6 +9,24 @@ const observation: ReviewDisposition = {
   pricing: { usd_per_hour: 36, basis: "Synthetic" },
 };
 describe("queue review projections", () => {
+  it("labels cosine evidence as positive similarity, never a classifier probability", () => {
+    expect(selectReviewScore({ evaluation_id: 1, similarity: 0.75, explanation: [{ term: "agent", contribution: 0.75 }] })).toEqual({
+      summary: "Similarity to confirmed positives: 0.750 (cosine similarity, not a relevance probability or human label)",
+      explanation: "TF-IDF × positive centroid: agent (0.750)",
+    });
+  });
+  it("keeps legacy classifier labeling", () => {
+    expect(selectReviewScore({ evaluation_id: 1, probability: 0.75, explanation: [] })?.summary).toContain("Selector probability: 0.750");
+  });
+  it.each([
+    { evaluation_id: 1, similarity: 0, explanation: [] },
+    { evaluation_id: 1, probability: 0.5, explanation: [] },
+  ])("shows a fallback for empty term explanations: %j", (score) => {
+    expect(selectReviewScore(score)?.explanation).toMatch(/: no shared terms$/);
+  });
+  it("does not manufacture score evidence for random-only items", () => {
+    expect(selectReviewScore(null)).toBeNull();
+  });
   it("deduplicates action IDs, counts skip time, and does not price unavailable time", () => {
     const unavailable = { ...observation, action_id: "missing", timing: { elapsed_ms: null, method: null } };
     expect(selectReviewCosts([observation, observation, unavailable])).toEqual({
