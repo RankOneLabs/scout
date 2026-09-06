@@ -175,6 +175,7 @@ const replayWorkerConfigurationSchema: z.ZodType<ReplayWorkerConfiguration> = z
     max_tool_calls: z.number().int().nonnegative(),
     max_llm_calls: z.number().int().positive(),
     max_parse_retries: z.number().int().nonnegative(),
+    max_output_tokens: z.number().int().positive().nullable().optional(),
     jig_revision: z.string().min(1),
     grader_version: z.string().min(1).nullable(),
     assembler_version: z.string().min(1),
