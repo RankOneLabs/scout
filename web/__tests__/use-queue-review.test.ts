@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useQueueReview } from "@/hooks/use-queue-review";
-import type { QueueReviewItem } from "@/types/review-queues";
+import type { QueueReviewItem, ReviewRequest } from "@/types/review-queues";
 
 const item: QueueReviewItem = {
   source: { evaluation_id: 123, ranked_position: null, random_position: 1 },
@@ -14,6 +14,39 @@ beforeEach(() => { sessionStorage.clear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("queue review browser lifecycle", () => {
+  it("saves a No grade with distinct UUIDs when HTTP does not expose randomUUID", async () => {
+    const getRandomValues = vi.fn(crypto.getRandomValues.bind(crypto));
+    vi.stubGlobal("crypto", { getRandomValues });
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const onSaved = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() => useQueueReview({ digest: "a".repeat(64), item, pricing: null, onSaved }));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    const action = { kind: "grade", grade: { relevance_judgment: "correct", action_judgment: "accept" } } as const;
+    await act(async () => { await result.current.submit(action); });
+    await act(async () => { await result.current.submit(action); });
+    const requests: ReviewRequest[] = fetcher.mock.calls.map(([, init]) => JSON.parse(init.body));
+    for (const request of requests) {
+      expect(request.action_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(request.action).toEqual(action);
+    }
+    expect(requests[0].action_id).not.toBe(requests[1].action_id);
+    expect(getRandomValues).toHaveBeenCalledTimes(2);
+    expect(onSaved).toHaveBeenCalledTimes(2);
+    expect(result.current.hasPending).toBe(false);
+  });
+  it("reports unavailable secure randomness without freezing an action", async () => {
+    vi.stubGlobal("crypto", { getRandomValues: vi.fn().mockImplementation(() => { throw new Error("Unavailable"); }) });
+    vi.stubGlobal("fetch", vi.fn());
+    const { result } = renderHook(() => useQueueReview({ digest: "a".repeat(64), item, pricing: null, onSaved: vi.fn() }));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    await act(async () => {
+      await expect(result.current.submit({ kind: "skip", reason: "Unsure" })).rejects.toThrow("Cannot generate a secure review action ID");
+    });
+    expect(result.current.error).toContain("Cannot generate a secure review action ID");
+    expect(result.current.hasPending).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it.each([
     [404, "<html>Not found</html>"], [413, ""], [400, "null"], [409, '{"detail":42}'],
   ])("clears rejected actions even with an unreadable %s error body", async (status, body) => {
@@ -84,7 +117,8 @@ describe("queue review browser lifecycle", () => {
     await act(async () => { await resumed.result.current.retry(); });
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body);
   });
-  it("retries a lost response after leaving and resuming with identical action and timing bytes", async () => {
+  it.each([true, false])("retries after leaving with identical bytes (randomUUID available: %s)", async (hasRandomUUID) => {
+    if (!hasRandomUUID) vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
     const fetcher = vi.fn().mockRejectedValueOnce(new Error("lost response"))
       .mockResolvedValueOnce(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
