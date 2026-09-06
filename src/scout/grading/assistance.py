@@ -376,6 +376,12 @@ def assemble_queue(
 
     ranked_ids = () if ranked is None else ranked.selected_evaluation_ids
     random_ids = random_result.selected_evaluation_ids
+    ranked_positions = {
+        evaluation_id: position for position, evaluation_id in enumerate(ranked_ids, 1)
+    }
+    random_positions = {
+        evaluation_id: position for position, evaluation_id in enumerate(random_ids, 1)
+    }
     by_id = {item.evaluation.id: item for item in population.items}
     grouped: dict[ArtifactDigest, list[QueueSource]] = {}
     for evaluation_id in dict.fromkeys((*ranked_ids, *random_ids)):
@@ -385,12 +391,8 @@ def assemble_queue(
         grouped.setdefault(duplicate_key(post), []).append(
             QueueSource(
                 evaluation_id=evaluation_id,
-                ranked_position=ranked_ids.index(evaluation_id) + 1
-                if evaluation_id in ranked_ids
-                else None,
-                random_position=random_ids.index(evaluation_id) + 1
-                if evaluation_id in random_ids
-                else None,
+                ranked_position=ranked_positions.get(evaluation_id),
+                random_position=random_positions.get(evaluation_id),
             )
         )
     # Preserve nonselected duplicates as source links, without pretending they

@@ -5,6 +5,7 @@ import math
 import platform
 from dataclasses import replace
 from datetime import UTC, date, datetime
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
 import pytest
@@ -456,6 +457,30 @@ def test_runtime_rejects_a_different_lock(runtime):
     )
 
 
+@pytest.mark.parametrize(
+    "missing_package", ["numpy", "scipy", "scikit-learn", "threadpoolctl", "pydantic"]
+)
+def test_runtime_missing_package_metadata_returns_structured_error(
+    runtime, monkeypatch, missing_package
+):
+    contents = {item.digest: item.content for item in runtime.artifacts}
+    versions = {item.name: item.version for item in runtime.identity.packages}
+
+    def lookup(name):
+        if name == missing_package:
+            raise PackageNotFoundError(name)
+        return versions[name]
+
+    monkeypatch.setattr("scout.grading.assistance_store.version", lookup)
+    result = capture_runtime(
+        contents[runtime.identity.declared_environment_digest],
+        contents[runtime.identity.lock_digest],
+    )
+    assert isinstance(result, Err)
+    assert result.error.operation == "capture_runtime"
+    assert result.error.detail == "Cannot capture declared/runtime pins"
+
+
 def test_ungraded_bridge_cannot_join_train_and_heldout(request_data, examples):
     root, leaf = examples[:2]
     leaf = replace(leaf, post=leaf.post.model_copy(update={"parent_id": "bridge"}))
@@ -505,6 +530,30 @@ def test_selected_duplicate_keeps_nonselected_source_link(request_data):
     assert len(queue.items) == 1
     assert [source.evaluation_id for source in queue.items[0].sources] == [100, 101]
     assert queue.items[0].sources[1].random_position is None
+
+
+def test_queue_preserves_selection_positions_and_order_with_overlap(request_data):
+    from scout.grading.assistance import assemble_queue
+    from scout.grading.assistance_types import SelectorResult
+
+    ranked = SelectorResult(
+        kind="tfidf_logistic",
+        population_evaluation_ids=(100, 101, 102, 103),
+        selected_evaluation_ids=(102, 100),
+    )
+    sample = SelectorResult(
+        kind="seeded_random",
+        population_evaluation_ids=(100, 101, 102, 103),
+        selected_evaluation_ids=(103, 100, 102),
+    )
+    queue = assemble_queue(request_data.population, ranked, sample)
+    assert [
+        [
+            (source.evaluation_id, source.ranked_position, source.random_position)
+            for source in item.sources
+        ]
+        for item in queue.items
+    ] == [[(102, 1, 3)], [(100, 2, 2), (101, None, None)], [(103, None, 1)]]
 
 
 @pytest.mark.parametrize("output_index", [0, 1, 2, 3])

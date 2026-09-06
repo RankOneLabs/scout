@@ -14,7 +14,7 @@ import sqlite3
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Literal
 
@@ -200,7 +200,7 @@ def capture_runtime(declared: bytes, lock: bytes) -> Result[RetainedRuntime, Art
         )
         content = encode_wire_v1(runtime, RUNTIME_WIRE)
         return Ok(RetainedRuntime(runtime, _retained((content, declared, lock, source))))
-    except (ValueError, OSError, TypeError, AttributeError):
+    except (ValueError, OSError, TypeError, AttributeError, PackageNotFoundError):
         return Err(ArtifactError("capture_runtime", None, "Cannot capture declared/runtime pins"))
 
 
