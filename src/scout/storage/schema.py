@@ -9,7 +9,32 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 39
+LATEST_SCHEMA_VERSION = 40
+
+REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS review_dispositions (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        action_id TEXT NOT NULL UNIQUE,
+        queue_digest TEXT NOT NULL REFERENCES analysis_artifacts(digest),
+        evaluation_id INTEGER NOT NULL REFERENCES evaluations(id),
+        grade_revision_id INTEGER REFERENCES grade_revisions(id),
+        request_json TEXT NOT NULL CHECK(json_valid(request_json)),
+        disposition_json TEXT NOT NULL CHECK(json_valid(disposition_json))
+    )""",
+    """CREATE INDEX IF NOT EXISTS review_dispositions_queue_evaluation
+        ON review_dispositions(queue_digest, evaluation_id, sequence)""",
+    """CREATE TRIGGER IF NOT EXISTS review_dispositions_no_update
+        BEFORE UPDATE ON review_dispositions BEGIN
+        SELECT RAISE(ABORT, 'review_dispositions is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS review_dispositions_no_delete
+        BEFORE DELETE ON review_dispositions BEGIN
+        SELECT RAISE(ABORT, 'review_dispositions is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS review_dispositions_no_replace
+        BEFORE INSERT ON review_dispositions
+        WHEN EXISTS (SELECT 1 FROM review_dispositions
+            WHERE sequence = NEW.sequence OR action_id = NEW.action_id)
+        BEGIN SELECT RAISE(ABORT, 'review_dispositions is immutable'); END""",
+)
 
 GRADE_REVISION_NO_REPLACE = """CREATE TRIGGER IF NOT EXISTS grade_revisions_no_replace
     BEFORE INSERT ON grade_revisions
@@ -958,6 +983,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 
 {';'.join(ARTIFACT_SCHEMA_STATEMENTS)};
 {GRADE_REVISION_NO_REPLACE};
+{';'.join(REVIEW_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

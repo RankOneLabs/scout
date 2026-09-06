@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useGradeDetail } from "@/hooks/use-grade-detail";
 import { GradeOverrideControl } from "@/components/molecules/GradeOverrideControl";
 import { DetailField } from "@/components/atoms/DetailField";
+import { ReviewProvenance } from "@/components/molecules/ReviewProvenance";
 import { parseUtc } from "@/lib/transforms";
 
 function fmt(iso: string | null): string {
@@ -33,6 +34,7 @@ export function GradeDetail({ gradeId }: { gradeId: number }) {
 
   return (
     <div className="space-y-6">
+      {identity.evaluation_id !== null && <ReviewProvenance key={identity.evaluation_id} evaluationId={identity.evaluation_id} />}
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Grade #{grade.id}</h1>
         <p className="mt-1 text-xs text-gray-600 dark:text-gray-500">

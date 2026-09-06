@@ -2,8 +2,10 @@
 
 Status: workflow step 1 merged into the epic through GitHub PR
 [#5](https://github.com/RankOneLabs/scout/pull/5): artifacts, schemas 38–39,
-persistence, export/import, and operator CLI. Workflow step 2 is implemented on
-`feat/grading-assistance-execution`, pending review into the same epic.
+persistence, export/import, and operator CLI. Workflow step 2 merged through
+[#6](https://github.com/RankOneLabs/scout/pull/6). Workflow step 3 is implemented
+on `feat/grading-review-workflow`, based on epic merge `b6e3d3e`, for review into
+the same epic.
 
 ## Branch and scope
 
@@ -15,6 +17,102 @@ Tests belong to their feature PRs, not separate smoke-test PRs.
 
 No PAA site, documentation, schema, or generalization work is in this iteration.
 No intermediate production rollout is implied by merging a feature into the epic.
+
+## Workflow step 3: review and attribution
+
+Open **Feedback → Review Queues** (`/feedback/review-queues`). Filter by project,
+open a retained queue, and select an exact evaluation. Ranked/random positions
+remain separate, including overlapping selections and duplicate-source IDs.
+The post, parent context, rejection explanation, dossier, and feature
+contributions come from retained bytes, not current project settings. Both
+producer-1 inline populations and producer-2 normalized populations are readable.
+Review does not require the selector's numerical runtime or trigger its replay.
+
+The existing grade controls are reused with a queue-specific writer. A Yes on
+a rejected post records a false negative with the shared causal grade contract;
+it **does not promote, draft, call a model, or retrain**. The normal scan grading
+page still has its existing promotion behavior, reachable via the source scan
+link. Promotion is intentionally outside the queue-save operation.
+
+Schema 40 adds `review_dispositions`, an append-only source-observation table:
+
+| Field | Source / meaning |
+| --- | --- |
+| `sequence`, `action_id` | DB order; browser-generated UUID identifying one submitted action |
+| `queue_digest`, `evaluation_id` | Retained queue output and exact selected evaluation |
+| `grade_revision_id` | Exact result of the existing grade writer, or reconciled revision; null on skip |
+| `request_json` | Versioned typed action, expected revision/action, timing, optional pricing basis |
+| `disposition_json` | `scout.review-disposition/v1` source observation, including server receipt time |
+
+No table is an independent queue authority: queue membership remains the retained
+artifact. UPDATE, DELETE, and REPLACE are blocked on review observations. Writes
+pass through Next.js's trusted-write guard and the existing authenticated Python
+sidecar. One `BEGIN IMMEDIATE` transaction checks the selected identity, unchanged
+source context, expected grade revision, and previous queue action, then invokes
+`StateManager.save_grade` and appends the disposition. A failed append rolls back
+the grade too. A stale writer receives 409 and must reload; no last-writer-wins
+overwrite is introduced by this entry point.
+
+Skip requires a reason and writes no grade. An externally saved or later revised
+grade appears as **graded elsewhere**; **Reconcile current grade** pins that
+revision without regrading or claiming a duration. Invalid/currently incomplete
+grades remain **needs regrade**. Grade detail links back to every recorded review
+action, queue, and pinned revision. Repeated queue generation and action retries
+do not replace observations.
+Missing or drifted pinned revisions also appear as **needs regrade** and reject
+queue actions with 409; remediate the grade before retrying.
+
+### Timing and retries
+
+`active-visible-idle60/v1` measures monotonic browser milliseconds while a single
+evaluation is displayed. It pauses on explicit pause, hidden tabs, and after 60
+seconds without a pointer/keyboard/scroll action. Activity/visibility or explicit
+resume restarts it without counting the idle gap. Submission and network wait
+are excluded. Returning to a queue restores measured time from session storage,
+without counting time away. This is a declared browser measurement, not an
+authenticated timesheet or proof of attention.
+
+Every submitted grade/revision or skip freezes its action ID, input, and elapsed
+time before sending. Unknown transport outcomes retain those exact bytes in
+session storage; **Retry pending action** reuses them, including after reopening
+the page. A successful retry never adds another grade revision or time charge.
+An acknowledged 4xx rejection leaves the timer's accumulated review work available
+to the corrected action. Missing timing is `{elapsed_ms: null, method: null}`,
+never zero. Reconciliation has unavailable timing and is not billed as labor.
+Non-JSON 4xx responses are still known rejections and release the pending action.
+If session-storage writes fail, new submissions stop with a recovery message;
+restore storage availability and reload. An already persisted pending action
+keeps its original ID for safe retry, even if clearing it after a save failed.
+
+### Costs and preservation
+
+The queue detail reports distinct measured action IDs, elapsed time, unavailable
+measurements, and the priced portion only. To price future actions, supply both
+USD/hour and an explicit rate basis before saving. With no basis, durations are
+reported alone. These are **corpus-building** costs, not costs attributed to any
+candidate relevance model, and they are separate from selector/inference costs.
+
+For machine-readable attribution into the existing operating-record component
+shape (no PAA schema changes):
+
+```sh
+uv run scout analysis assistance-review-costs --db-path /path/to/scout.db --queue DIGEST
+```
+
+Each line resolves one action and queue, with an existing `OperatingComponent`
+of kind `corpus_building_human_review`, quantity in milliseconds, and nullable USD
+price. Do not add both those lines and their displayed aggregate to a record.
+Reconciliations are links to external grades, not newly measured human work.
+
+Full Scout DB backups include the new table. The preservation corpus exporter
+also copies dispositions, checks queue/evaluation/revision links and request
+consistency, and reinstalls immutability triggers. `analysis export` continues to
+export immutable analysis artifacts only; it is not a backup of live grades or
+review observations. Use the DB backup or corpus preservation path for those.
+
+Validation uses synthetic queues and grades. Real-batch operator acceptance and
+the relevance/drafting experiment cycle remain the step-4 acceptance gate; there
+is no intermediate deployment or automatic paid experiment.
 
 ## Workflow step 2: local grading assistance
 

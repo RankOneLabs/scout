@@ -408,7 +408,9 @@ def load_corpus_snapshot(
         )
 
 
-def derive_assistance(request: AssistanceRequest) -> Result[AssistanceOutputs, ArtifactError]:
+def derive_assistance(
+    request: AssistanceRequest, *, population_digest: ArtifactDigest | None = None
+) -> Result[AssistanceOutputs, ArtifactError]:
     examples = load_training_examples(
         request.bundle, request.snapshot_digest, request.provenance_queues
     )
@@ -430,11 +432,14 @@ def derive_assistance(request: AssistanceRequest) -> Result[AssistanceOutputs, A
     )
     if isinstance(partition, Err):
         return partition
-    population_digest = (
-        retain_population(request.population).digest
-        if request.producer_version == "2"
-        else digest_artifact(encode_population(request.population))
-    )
+    # Bundle construction already encoded this population. Replay independently
+    # derives its canonical identity from the recorded source as before.
+    if population_digest is None:
+        population_digest = (
+            retain_population(request.population).digest
+            if request.producer_version == "2"
+            else digest_artifact(encode_population(request.population))
+        )
     return execute_assistance(
         examples.value,
         request.population,
@@ -452,19 +457,16 @@ def build_assistance_bundle(
     if isinstance(prior, Err):
         return prior
     started, cpu_started = perf_counter(), process_time()
-    result = derive_assistance(request)
+    if request.producer_version == "2":
+        retained_population = retain_population(request.population)
+        population_digest = retained_population.digest
+        population_artifacts = retained_population.artifacts
+    else:
+        population_artifacts = _retained((encode_population(request.population),))
+        population_digest = population_artifacts[0].digest
+    result = derive_assistance(request, population_digest=population_digest)
     if isinstance(result, Err):
         return result
-    retained_population = retain_population(request.population)
-    population = (
-        next(
-            item.content
-            for item in retained_population.artifacts
-            if item.digest == retained_population.digest
-        )
-        if request.producer_version == "2"
-        else encode_population(request.population)
-    )
     config = encode_config(request.config)
     outputs = encode_outputs(result.value)
     timing = ExecutionTiming(
@@ -473,7 +475,7 @@ def build_assistance_bundle(
     environment = encode_wire_v1(runtime.identity, RUNTIME_WIRE)
     lineage = ArtifactLineage(
         kind=TransformKind("scout.grading.assistance"),
-        inputs=(request.snapshot_digest, digest_artifact(population), *request.provenance_queues),
+        inputs=(request.snapshot_digest, population_digest, *request.provenance_queues),
         process=ArtifactProcess(
             id=ProcessId("scout.grading.assistance"),
             version=request.producer_version,
@@ -486,12 +488,7 @@ def build_assistance_bundle(
         (
             *(item.content for item in request.bundle.artifacts),
             *(item.content for item in runtime.artifacts),
-            *(
-                item.content
-                for item in retained_population.artifacts
-                if request.producer_version == "2"
-            ),
-            population,
+            *(item.content for item in population_artifacts),
             config,
             *outputs,
         )

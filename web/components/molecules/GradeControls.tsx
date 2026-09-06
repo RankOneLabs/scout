@@ -44,13 +44,15 @@ function deriveRelevanceJudgment(
 
 interface GradeControlsProps {
   postId: number;
-  scanId: number;
+  scanId: number | null;
   evaluationId?: number;
   predictedRelevant: boolean;
   existingGrade: Grade | null;
   /** Undefined means no draft row; null is an existing draft with empty text. */
   draftComment?: string | null;
   onGradeChange?: (grade: Grade) => void;
+  /** Queue review supplies an atomic grade/disposition writer; never promotes. */
+  saveGrade?: (input: GradeInput) => Promise<Grade>;
 }
 
 function selectEditedText(
@@ -98,6 +100,7 @@ export function GradeControls({
   existingGrade,
   draftComment,
   onGradeChange,
+  saveGrade,
 }: GradeControlsProps) {
   const correctedReplyId = useId();
   const [relevanceJudgment, setRelevanceJudgment] = useState<RelevanceJudgment | null>(
@@ -164,11 +167,19 @@ export function GradeControls({
     async (input: GradeInput) => {
       const snapshot = persistedRef.current;
       const promotesNegativeCase =
-        !predictedRelevant && input.relevance_judgment === "false_negative";
+        !saveGrade && !predictedRelevant && input.relevance_judgment === "false_negative";
       setSaving(true);
       setGeneratingDraft(promotesNegativeCase);
       setSaveError(null);
       try {
+        if (saveGrade) {
+          const grade = await saveGrade(input);
+          persistedRef.current = grade;
+          applyGrade(grade);
+          onGradeChange?.(grade);
+          return;
+        }
+        if (!evaluationId && scanId === null) throw new Error("Missing evaluation and scan identity");
         const endpoint = evaluationId
           ? promotesNegativeCase
             ? `/api/grades/${evaluationId}/promote`
@@ -198,10 +209,10 @@ export function GradeControls({
             : [];
           setSaveError(errors.join(" ") || errBody.detail || `Save failed (${res.status})`);
         }
-      } catch {
+      } catch (error) {
         if (!promotesNegativeCase) applyGrade(snapshot);
         setSaveError(
-          promotesNegativeCase
+          saveGrade && error instanceof Error ? error.message : promotesNegativeCase
             ? "Draft generation could not be completed — retry this case"
             : "Grade could not be saved — check your connection"
         );
@@ -210,7 +221,7 @@ export function GradeControls({
         setGeneratingDraft(false);
       }
     },
-    [postId, scanId, evaluationId, predictedRelevant, onGradeChange, applyGrade]
+    [postId, scanId, evaluationId, predictedRelevant, onGradeChange, applyGrade, saveGrade]
   );
 
   const hasDraftRow = draftComment !== undefined;
@@ -426,7 +437,9 @@ export function GradeControls({
           <span className="text-xs text-gray-600 dark:text-gray-500">
             {humanSaysIrrelevant
               ? "Why shouldn’t this post be surfaced?"
-              : "What’s wrong with the drafted response?"}
+              : !predictedRelevant && !hasDraftRow
+                ? "Why should this post have been surfaced?"
+                : "What’s wrong with the drafted response?"}
           </span>
 
           <div className="flex flex-wrap gap-1.5">
