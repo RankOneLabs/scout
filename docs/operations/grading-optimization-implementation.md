@@ -1,8 +1,9 @@
 # Scout grading optimization: implementation record
 
-Status: workflow step 1 is implemented in GitHub PR [#5](https://github.com/RankOneLabs/scout/pull/5):
-artifacts, schemas 38–39, persistence, export/import, and operator CLI. Review remains
-required before merging into the epic.
+Status: workflow step 1 merged into the epic through GitHub PR
+[#5](https://github.com/RankOneLabs/scout/pull/5): artifacts, schemas 38–39,
+persistence, export/import, and operator CLI. Workflow step 2 is implemented on
+`feat/grading-assistance-execution`, pending review into the same epic.
 
 ## Branch and scope
 
@@ -14,6 +15,171 @@ Tests belong to their feature PRs, not separate smoke-test PRs.
 
 No PAA site, documentation, schema, or generalization work is in this iteration.
 No intermediate production rollout is implied by merging a feature into the epic.
+
+## Workflow step 2: local grading assistance
+
+The executable path is a nested pipeline, recorded with the existing four-part
+`scout.grading.assistance` lineage (producer version `1`): retained corpus and
+candidate population → grouped partition → train-only fit → independent
+ranked/random selection → queue and comparison report. Four ordered output
+digests address the partition, fitted model (`null` for random-only), queue, and
+report. This adds no tables, plugin system, graph engine, grade mutation, or paid
+model execution. Earlier queue digests are explicit additional lineage inputs.
+
+The boundary types in `grading/assistance_types.py` mirror real sources:
+
+| Payload | Actual source |
+| --- | --- |
+| `RejectedInput` / `RejectedPopulation` | Recorded `evaluations`, `posts`, pinned dossier resolution, and observed grade presence |
+| `TrainingExample` | Selected `CorpusMember` plus its retained `FrozenGradeInput`; labels only from human judgments |
+| `FrozenPartition` | Corpus membership, grouping, seed policy, known prompt exposure, and explicitly supplied earlier selection provenance |
+| `FittedTfidf` | Fitted training-only vocabulary, IDF, binary coefficients/intercept, training IDs, and solver iteration count; JSON, not executable pickle |
+| `SelectorResult` / `ReviewQueue` | Exact eligible evaluation population and selection memberships, scores, contribution explanations, duplicate source links |
+| `AssistanceReport` | Queue counts, exclusions, overlap, deduplication, and held-out confusion counts beside a training-majority baseline |
+| `ExecutionObservation` | Measured wall/CPU duration and process peak RSS, linked to the queue and exact producing lineage digests |
+| `QueueReviewReport` | Queue/snapshot references and exact reviewed revision IDs; separate ranked yield and random-slice rate paths |
+
+`uv.lock` pins the approved runtime scikit-learn dependency. The existing Docker
+build installs it through `uv sync --frozen --no-dev`; no Dockerfile change is
+needed. Runtime capture checks the declared Python version and dependency-lock
+digest against the supplied bytes and checks installed numerical package versions
+against that lock. It retains the lock, declared Git revision, actual installed
+Scout Python source archive, Python/system/machine identity, and package versions.
+The source archive distinguishes a development tree from its declared Git pin.
+Only package source is captured, never environment variables, private runtime
+files, or arbitrary working-tree files.
+
+Numerical work is single-threaded. Vocabulary, partitions, sample membership,
+queue order, and report counts must replay exactly; floating model parameters,
+probabilities, and contributions allow an absolute tolerance of `1e-10` (zero
+relative tolerance). Ranking sorts probability rounded to 12 decimal places,
+then evaluation ID. The retained model and queue bytes/digests are never rewritten
+to match a rerun. An installed compatible v1 adapter may verify older source
+archives; changed numerical runtime pins require replay in the recorded
+environment. Retained source is evidence and is never automatically executed.
+Wire field order is explicit in `assistance_wire.py`, independent of operational
+model field order.
+
+### Selection and partition policy
+
+Execution reads one explicit corpus snapshot, not current grades for labels.
+Candidate capture reads a stable read-only DB view and releases it before fitting.
+Only same-project, ungraded `relevant=0` / `surface_status=not_relevant` evaluations
+with nonempty post text and available pinned dossier context are eligible. Legacy
+post-only grades also exclude candidates. Missing project metadata is an exclusion,
+never a keyword-based assignment. Rejection explanations are retained for display,
+but neither they nor rejection decisions are classifier features or training labels.
+
+Grouping takes connected components of recorded parent relationships, source
+post identity, and duplicate content (NFKC, casefold, collapsed whitespace).
+Message identity follows the database's `(platform, platform_msg_id)` uniqueness.
+Ungraded recorded posts can bridge graded groups and are included in grouping.
+Missing ancestry is not invented. Known prompt-exposed groups stay in training.
+Held-out groups prefer examples with explicit random selection provenance; ties
+use the seeded digest order. Both training and held-out sets must have two classes;
+the requested held-out fraction is rounded up at group granularity (minimum two
+groups). An infeasible split is an explicit limitation, never cross-project pooling.
+The fitting boundary tests and checks group separation and exact input membership.
+
+TF-IDF uses lowercased word unigrams/bigrams, two-or-more-character word tokens,
+no stop-word list, raw term frequency, smoothed IDF, and L2 normalization.
+Regularized logistic regression uses liblinear with L2 regularization, intercept,
+and a fixed `1e-8` solver tolerance. Only the training partition fits vocabulary,
+IDF, and classifier. The recorded probability threshold for held-out comparison
+is 0.5; it is not tuned on the held-out set. The explanation method is
+`tfidf-times-coefficient/v1`: up to eight largest absolute per-term contributions
+to the logit. Scores are model outputs, not calibrated error-rate claims.
+
+The ranked selector deduplicates before applying its count (default 20). Random
+selection is simple random sampling without replacement over eligible evaluation
+IDs, drawn independently of ranking. Its count and seed are required in the
+configuration; an oversized count fails rather than silently changing the sample.
+Related graded groups are excluded from the candidate pool, keeping this round's
+model-guided review away from held-out threads. Rate estimates therefore describe
+the **eligible frozen pool**, not every rejected post or overall recall.
+
+The queue merges display duplicates and ranked/random overlap but retains every
+sampled evaluation and both selection positions. Nonselected duplicate evaluations
+remain source links, not additional random members. Each evaluation needs its own
+grade write; a display duplicate never inherits another evaluation's judgment.
+Queue repetition reuses immutable artifacts and does not overwrite dispositions.
+The review/disposition UI, timing, reconciliation, and promotion controls remain
+workflow step 3. Execution observations are separate append-only source records,
+so timing does not change deterministic queue identity. Peak RSS is explicitly a
+process-lifetime high-water mark, not incremental model memory; unavailable metrics
+are null. No human review duration is fabricated by these commands.
+
+### Operator commands
+
+First create a corpus with the existing `analysis snapshot` command below. Its
+output digest is `SNAPSHOT` in these examples. Keep all config and output files in
+private runtime storage. Example configuration (choose random count for the actual
+rate question; `100` here is illustrative, not a default or precision guarantee):
+
+```json
+{
+  "seed": 17,
+  "heldout_fraction": 0.2,
+  "ranked": {
+    "kind": "tfidf_logistic",
+    "count": 20,
+    "regularization_c": 1.0,
+    "class_weight": "balanced",
+    "max_features": 20000,
+    "max_iterations": 1000
+  },
+  "random": {"kind": "seeded_random", "count": 100, "seed": 29}
+}
+```
+
+Set `ranked` to `null` for random-only selection; it requires no two-class fit or
+held-out comparison. The input still names a real retained corpus snapshot.
+Preview reports population counts and split/sampling limitations without fitting
+or saving anything. Empty-vocabulary or convergence failures are detected at fit.
+
+```bash
+uv run scout analysis assistance-preview --db-path data/scout.db \
+  --snapshot SNAPSHOT --dossier-root /private/dossiers --config /private/selector.json
+
+uv run scout analysis assistance-run --db-path data/scout.db \
+  --snapshot SNAPSHOT --dossier-root /private/dossiers --config /private/selector.json \
+  --environment /private/environment.json --lock uv.lock
+
+uv run scout analysis assistance-replay --db-path data/scout.db --queue QUEUE_DIGEST
+
+uv run scout analysis assistance-report --db-path data/scout.db \
+  --queue QUEUE_DIGEST --snapshot NEW_REVIEWED_SNAPSHOT
+```
+
+Receipts identify both the queue and its producing lineage. Different runs may
+produce identical queue bytes (for example, random-only runs with a changed
+unused partition seed). If a queue has multiple supported producers, replay and
+report require `--lineage LINEAGE_DIGEST` from the receipt; they never select an
+arbitrary run. Execution measurements always link the exact producer as well.
+
+For subsequent fits, repeat `--provenance-queue QUEUE_DIGEST` for earlier review
+queues. Only exact matching retained post/evaluation inputs receive that selection
+provenance. An edited post is not silently counted as a review of the old sampled
+input. Known feedback exposure also survives into the partition. No queue discovery
+or refitting happens automatically.
+
+`assistance-report` retains the sampled denominator and lists unreviewed IDs.
+Skips have no label and remain unreviewed. It emits a random-slice rate only after
+every sampled evaluation has an eligible exact-input human judgment; until then
+the rate and confidence interval are null. Complete samples use a 95% Wilson
+interval without finite-population correction (a conservative approximation),
+or the exact fraction for a full eligible-population census. Ranked discovery yield
+is a separate completed-review metric with both selected and reviewed counts;
+it never estimates a population rate. Report output includes source digests and
+grade revision IDs. It is a read-only projection, not a replacement for saved
+review dispositions. Missing/stale-context judgments remain in the denominator.
+
+Existing `analysis index`, `verify`, and preservation export/import understand
+the assistance producer. Known malformed outputs fail verification/import;
+unknown producer versions are reported without blocking supported ones. No command
+creates a database at a mistyped path or invokes human-positive promotion.
+The index decodes output shapes without refitting; `verify` and explicit replay
+perform the numerical derivation check.
 
 The existing `fix/experiment-token-limits` branch at `c66a01c` remains separate.
 Reconcile its three unmerged fixes before the experiment work depends on them;
