@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 
 from scout.grading.artifacts import (
+    ArtifactAppend,
     ArtifactBundle,
     ArtifactDigest,
     ArtifactError,
@@ -130,6 +131,24 @@ class ArtifactStore:
         except (sqlite3.Error, TransactionError):
             return Err(
                 ArtifactError("export_bundle", None, "Cannot open artifact read transaction")
+            )
+
+    def append(self, delta: ArtifactAppend) -> Result[None, ArtifactError]:
+        """Atomic producer append; only new bytes and their referenced existing rows."""
+        if len({item.digest for item in delta.artifacts}) != len(delta.artifacts) or any(
+            digest_artifact(item.content) != item.digest for item in delta.artifacts
+        ):
+            return Err(ArtifactError("append_artifacts", None, "Invalid append bytes"))
+        try:
+            with self._uow.begin_immediate():
+                for item in delta.artifacts:
+                    self._put(item.content)
+                for lineage in delta.lineages:
+                    self._record(lineage)
+            return Ok(None)
+        except (sqlite3.Error, ValueError, TransactionError):
+            return Err(
+                ArtifactError("append_artifacts", None, "Invalid references; append rolled back")
             )
 
 

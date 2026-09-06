@@ -1,8 +1,8 @@
 """Explicit operator boundaries for private Scout analysis artifacts.
 
 Read commands open SQLite with mode=ro and query_only before any query. Write
-commands use StateManager and its normal migration/UoW path. No model execution
-or grade writes occur in these commands.
+commands use StateManager and its normal migration/UoW path. Explicit assistance
+execution/replay uses local classical models; no paid calls or grade writes occur.
 """
 
 from __future__ import annotations
@@ -27,6 +27,12 @@ from scout.grading.artifacts import (
     encode_lineage,
     validate_bundle,
 )
+from scout.grading.assistance_store import (
+    read_assistance_outputs,
+    supports_assistance,
+    verify_assistance_replay,
+)
+from scout.grading.assistance_types import ReplayUnavailable, ReplayVerification
 from scout.grading.snapshots import (
     CorpusSelection,
     build_snapshot_bundle,
@@ -56,6 +62,7 @@ class AnalysisReceipt(BaseModel):
     lineage_count: int
     outputs: tuple[ArtifactDigest, ...]
     unsupported_lineage_count: int
+    unverified_here: tuple[ReplayUnavailable, ...] = ()
 
 
 class AnalysisVerification(BaseModel):
@@ -63,6 +70,7 @@ class AnalysisVerification(BaseModel):
     lineage_count: int
     replayed_lineage_count: int
     unsupported_lineage_count: int
+    unverified_here: tuple[ReplayUnavailable, ...] = ()
 
 
 class UnsupportedProducer(BaseModel):
@@ -104,8 +112,16 @@ def project_study_index(bundle: ArtifactBundle) -> Result[StudyIndex, ArtifactEr
     def entry(lineage: ArtifactLineage) -> StudyIndexEntry:
         evidence = None
         issue: UnsupportedProducer | InvalidStudyEvidence | None = None
-        if not supports_inventory(lineage) and not supports_snapshot(lineage):
+        if (
+            not supports_inventory(lineage)
+            and not supports_snapshot(lineage)
+            and not supports_assistance(lineage)
+        ):
             issue = UnsupportedProducer()
+        elif supports_assistance(lineage):
+            decoded = read_assistance_outputs(lineage, contents)
+            if isinstance(decoded, Err):
+                issue = InvalidStudyEvidence(detail=decoded.error.detail)
         elif supports_inventory(lineage):
             match replay_inventory_lineage(lineage, contents):
                 case Err(error):
@@ -129,23 +145,36 @@ def project_study_index(bundle: ArtifactBundle) -> Result[StudyIndex, ArtifactEr
     return Ok(StudyIndex(entries=tuple(entry(lineage) for lineage in bundle.lineages)))
 
 
-def verify_analysis_bundle(bundle: ArtifactBundle) -> Result[int, ArtifactError]:
+def verify_analysis_bundle(bundle: ArtifactBundle) -> Result[ReplayVerification, ArtifactError]:
     snapshots = verify_snapshot_replay(bundle)
     if isinstance(snapshots, Err):
         return snapshots
     inventories = verify_inventory_replay(bundle)
     if isinstance(inventories, Err):
         return inventories
-    return Ok(snapshots.value + inventories.value)
+    assistance = verify_assistance_replay(bundle)
+    if isinstance(assistance, Err):
+        return assistance
+    return Ok(
+        ReplayVerification(
+            replayed_lineage_count=snapshots.value
+            + inventories.value
+            + assistance.value.replayed_lineage_count,
+            unverified_here=assistance.value.unverified_here,
+        )
+    )
 
 
 def add_analysis_parser(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser], default_db_path: str
 ) -> None:
     parser = subparsers.add_parser(
-        "analysis", help="Private grading-corpus artifacts (no model calls)"
+        "analysis", help="Private grading artifacts and local selectors (no paid model calls)"
     )
     commands = parser.add_subparsers(dest="analysis_command", required=True)
+    from scout.cli.assistance import add_assistance_parsers
+
+    add_assistance_parsers(commands, default_db_path)
     for command in ("preview", "snapshot", "export", "import", "index", "verify", "inventory"):
         child = commands.add_parser(command)
         child.add_argument("--db-path", default=default_db_path)
@@ -216,22 +245,31 @@ def _write_private_export(path: Path, content: bytes) -> Result[None, ArtifactEr
     return Ok(None)
 
 
-def _receipt(operation: str, bundle: ArtifactBundle) -> AnalysisReceipt:
+def _receipt(
+    operation: str, bundle: ArtifactBundle, *, unverified: tuple[ReplayUnavailable, ...] = ()
+) -> AnalysisReceipt:
     return AnalysisReceipt(
         operation=operation,
         artifact_count=len(bundle.artifacts),
         lineage_count=len(bundle.lineages),
         outputs=tuple(output for lineage in bundle.lineages for output in lineage.outputs),
         unsupported_lineage_count=sum(
-            not supports_snapshot(lineage) and not supports_inventory(lineage)
+            not supports_snapshot(lineage)
+            and not supports_inventory(lineage)
+            and not supports_assistance(lineage)
             for lineage in bundle.lineages
         ),
+        unverified_here=unverified,
     )
 
 
 def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
     """IO dispatch; output errors do not contain corpus or environment content."""
     try:
+        from scout.cli.assistance import ASSISTANCE_COMMANDS, run_assistance
+
+        if args.analysis_command in ASSISTANCE_COMMANDS:
+            return run_assistance(args)
         if args.analysis_command == "inventory":
             selection_inventory = InventorySelection(
                 study=args.study,
@@ -291,7 +329,7 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
                 saved = state.artifacts.import_bundle(parsed.value)
             if isinstance(saved, Err):
                 return saved
-            return Ok(_receipt("import", parsed.value))
+            return Ok(_receipt("import", parsed.value, unverified=verified.value.unverified_here))
         with read_only_connection(args.db_path) as conn:
             exported = read_artifact_bundle(conn)
         if isinstance(exported, Err):
@@ -306,8 +344,11 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
                 AnalysisVerification(
                     artifact_count=len(exported.value.artifacts),
                     lineage_count=len(exported.value.lineages),
-                    replayed_lineage_count=verified.value,
-                    unsupported_lineage_count=len(exported.value.lineages) - verified.value,
+                    replayed_lineage_count=verified.value.replayed_lineage_count,
+                    unsupported_lineage_count=len(exported.value.lineages)
+                    - verified.value.replayed_lineage_count
+                    - len(verified.value.unverified_here),
+                    unverified_here=verified.value.unverified_here,
                 )
             )
         if args.analysis_command == "export":

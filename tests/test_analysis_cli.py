@@ -27,6 +27,7 @@ from scout.grading.artifacts import (
     digest_artifact,
     validate_bundle,
 )
+from scout.grading.assistance_types import ReplayVerification
 from scout.grading.studies import (
     EvidenceObservations,
     InventorySelection,
@@ -352,7 +353,7 @@ def test_unknown_producer_does_not_block_valid_entries_or_import(
         }
     )
     mixed = bundle.model_copy(update={"lineages": (lineage, future)})
-    assert verify_analysis_bundle(mixed) == Ok(1)
+    assert verify_analysis_bundle(mixed) == Ok(ReplayVerification(replayed_lineage_count=1))
     bundle_path = tmp_path / "mixed.json"
     bundle_path.write_text(mixed.model_dump_json())
     destination = tmp_path / "restored.db"

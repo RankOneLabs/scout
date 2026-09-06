@@ -120,6 +120,17 @@ class ArtifactBundle(BaseModel):
     lineages: tuple[ArtifactLineage, ...]
 
 
+class ArtifactAppend(BaseModel):
+    """Append delta whose references may already exist in the destination store.
+
+    Unlike an export bundle, this is not a portable/self-contained document.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    artifacts: tuple[RetainedArtifact, ...]
+    lineages: tuple[ArtifactLineage, ...]
+
+
 def lineage_references(lineage: ArtifactLineage) -> tuple[ArtifactDigest, ...]:
     return (
         *lineage.inputs,

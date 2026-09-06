@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pyyaml>=6.0",
     "jsonschema>=4.23",
+    "scikit-learn>=1.9.0",
+    "numpy>=2.4.3",
+    "threadpoolctl>=3.6.0",
 ]
 
 [project.scripts]
@@ -74,6 +77,12 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["yaml", "jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
+# The numerical IO adapter projects untyped third-party outputs into named
+# Scout payloads; application code remains strict.
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "threadpoolctl"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
