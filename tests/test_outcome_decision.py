@@ -139,6 +139,34 @@ def test_low_relevance_below_threshold() -> None:
     assert decision.status == "low_relevance"
 
 
+@pytest.mark.parametrize(
+    ("project_key", "relevant_to", "expected_project"),
+    [
+        (_PROJECT_KEY, [], _PROJECT_KEY),
+        (_PROJECT_KEY, ["another-project"], _PROJECT_KEY),
+        (None, [_PROJECT_KEY], _PROJECT_KEY),
+        (None, [], None),
+    ],
+)
+def test_rejection_preserves_known_project_without_inventing_context(
+    project_key: str | None,
+    relevant_to: list[str],
+    expected_project: str | None,
+) -> None:
+    candidate = ReplyCandidate(
+        relevant=False,
+        score=0.1,
+        reason="off-topic",
+        relevant_to=relevant_to,
+        project_key=project_key,
+    )
+    decision = classify_outcome(candidate, _message(), {_PROJECT_KEY: _dossier()})
+
+    assert decision.project_key == expected_project
+    assert decision.status == "not_relevant"
+    assert decision.structured_draft is None
+
+
 def test_drafting_failed_missing_project_key() -> None:
     """Neither project_key nor relevant_to[0] identifies a project."""
     candidate = _relevant_candidate(project_key=None, relevant_to=[])

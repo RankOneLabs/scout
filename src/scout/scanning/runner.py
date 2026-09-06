@@ -665,7 +665,9 @@ def classify_outcome(
 
     # 3. Not relevant.
     if not evaluation.relevant:
-        return _decision("not_relevant")
+        # Rejection is still a judgment against the routed or labeled project. Retain
+        # its identity so persistence can pin the matching dossier summary.
+        return _decision("not_relevant", project_key=_resolve_project_key(candidate))
 
     # 4. Relevant but below the surfacing threshold.
     if evaluation.score < RELEVANCE_THRESHOLD:
