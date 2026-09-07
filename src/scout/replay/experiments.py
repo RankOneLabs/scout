@@ -2528,6 +2528,7 @@ __all__ = [
     "ReplayError",
     "ReplayPreview",
     "ReplyCorrectionOracle",
+    "ReplayWorkerConfiguration",
     "RetryResolutionError",
     "SelectorResolutionError",
     "SkipPolicy",
