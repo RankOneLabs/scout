@@ -25,6 +25,7 @@ interface CurrentReviewState {
   disposition: ReviewDisposition | null;
   status: QueueReviewItem["status"];
 }
+interface QueueStatusRow { evaluation_id: number; grade_id: number | null; needs_regrade: number | null; schema_version: number | null; revision_id: number | null; revision_payload: string | null; current_payload: string | null }
 const lineageSchema = z.object({
   kind: z.string(), inputs: z.array(digestSchema), outputs: z.array(digestSchema),
   process: z.object({ id: z.string(), version: z.string() }),
@@ -44,8 +45,19 @@ function artifact(digest: string): unknown {
 
 function queueProducers() {
   const rows = getDb().prepare("SELECT a.digest, a.content, a.recorded_at FROM analysis_lineage l JOIN analysis_artifacts a ON a.digest = l.digest ORDER BY a.recorded_at DESC, a.digest").all() as ArtifactRow[];
-  return rows.map((row) => ({ row, lineage: lineageSchema.parse(artifact(row.digest)) }))
-    .filter(({ lineage }) => lineage.kind === "scout.grading.assistance" && lineage.process.id === lineage.kind && ASSISTANCE_PRODUCER_VERSIONS.includes(lineage.process.version) && lineage.outputs.length === 4);
+  return rows.flatMap((row) => {
+    if (createHash("sha256").update(row.content).digest("hex") !== row.digest) {
+      throw new Error(`Missing or corrupt artifact ${row.digest}`);
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(row.content.toString("utf8")) as unknown; } catch { return []; }
+    const result = lineageSchema.safeParse(parsed);
+    if (!result.success) return [];
+    const lineage = result.data;
+    return lineage.kind === "scout.grading.assistance" && lineage.process.id === lineage.kind
+      && ASSISTANCE_PRODUCER_VERSIONS.includes(lineage.process.version) && lineage.outputs.length === 4
+      ? [{ row, lineage }] : [];
+  });
 }
 
 function populationInputs(digest: string): RejectedInput[] {
@@ -102,6 +114,45 @@ function currentReviewState(evaluationId: number, disposition: ReviewDisposition
       : selectReviewStatus({ grade, revisionId: revision?.id ?? null, disposition }) };
 }
 
+function queueStatuses(evaluationIds: number[], dispositions: Map<number, ReviewDisposition>): Map<number, QueueReviewItem["status"]> {
+  if (evaluationIds.length === 0) return new Map();
+  const placeholders = evaluationIds.map(() => "?").join(",");
+  const rows = getDb().prepare(`SELECT g.evaluation_id, g.id AS grade_id, g.needs_regrade, g.schema_version,
+    r.id AS revision_id, r.payload AS revision_payload,
+    json_object(
+      'id', g.id, 'evaluation_id', g.evaluation_id, 'post_id', g.post_id,
+      'scan_id', g.scan_id, 'source', g.source, 'graded_at', g.graded_at,
+      'relevance_judgment', g.relevance_judgment, 'rejection_reason', g.rejection_reason,
+      'comment_quality', g.comment_quality, 'comment_issue', g.comment_issue,
+      'schema_version', g.schema_version, 'needs_regrade', g.needs_regrade,
+      'action_judgment', g.action_judgment, 'dimensions', json(NULLIF(g.dimensions, '')),
+      'failure_note', g.failure_note, 'factual_offending_claim', g.factual_offending_claim,
+      'factual_disposition', g.factual_disposition,
+      'factual_contradicting_evidence', g.factual_contradicting_evidence,
+      'context_missing_input', g.context_missing_input,
+      'posture_should_have_been', g.posture_should_have_been,
+      'implication_implied_claim', g.implication_implied_claim,
+      'implication_missing_support', g.implication_missing_support,
+      'reply_revision_id', g.reply_revision_id, 'edited_text', reply.reply_text
+    ) AS current_payload
+    FROM grades g
+    LEFT JOIN grade_revisions r ON r.id = (SELECT latest.id FROM grade_revisions latest WHERE latest.grade_id = g.id AND latest.evaluation_id = g.evaluation_id ORDER BY latest.revision DESC LIMIT 1)
+    LEFT JOIN reply_draft_revisions reply ON reply.id = g.reply_revision_id
+    WHERE g.evaluation_id IN (${placeholders})`).all(...evaluationIds) as QueueStatusRow[];
+  const byEvaluation = new Map(rows.map((row) => [row.evaluation_id, row]));
+  return new Map(evaluationIds.map((evaluationId) => {
+    const row = byEvaluation.get(evaluationId);
+    const disposition = dispositions.get(evaluationId) ?? null;
+    const revisionMatches = row?.revision_payload !== null && row?.revision_payload !== undefined
+      && row.current_payload !== null && isDeepStrictEqual(safeRevisionPayload(row.revision_payload), safeRevisionPayload(row.current_payload));
+    const status: QueueReviewItem["status"] = row === undefined
+      ? disposition?.action.kind === "skip" ? "skipped" : "pending"
+      : row.needs_regrade || row.schema_version !== 3 || !revisionMatches ? "needs_regrade"
+      : disposition?.grade_revision_id === row.revision_id && row.revision_id !== null ? "reviewed" : "graded_elsewhere";
+    return [evaluationId, status];
+  }));
+}
+
 function safeRevisionPayload(payload: string): unknown {
   // Corrupt stored revision JSON is a remediation state, not a queue-read failure.
   try { return JSON.parse(payload) as unknown; }
@@ -119,7 +170,7 @@ function queueDetail(digest: string): QueueDetail {
   const scores = new Map(queue.ranked?.scores.map((item) => [item.evaluation_id, item]) ?? []);
   const items: QueueReviewItem[] = queue.items.flatMap((item) => item.sources.map((source) => {
     const recorded = population.get(source.evaluation_id);
-    if (!recorded?.post || !recorded.context || recorded.evaluation.project_key !== queue.project_key) throw new Error("Queue source lacks recorded context");
+    if (!recorded || recorded.evaluation.project_key !== queue.project_key) throw new Error("Queue source lacks recorded context");
     const disposition = latest.get(source.evaluation_id) ?? null;
     return {
       source, duplicate_key: item.duplicate_key, recorded, score: scores.get(source.evaluation_id) ?? null,
@@ -149,18 +200,22 @@ export function listEvaluationReviews(evaluationId: number): ReviewResult<Review
 export function listReviewQueues(project: string | null): ReviewResult<QueueSummary[]> {
   try {
     return { ok: true, value: getDb().transaction(() => {
-      const unique = new Map(queueProducers().map(({ lineage, row }) => [lineage.outputs[2], row.recorded_at]));
+      const unique = new Map<string, string>();
+      for (const { lineage, row } of queueProducers()) {
+        if (!unique.has(lineage.outputs[2])) unique.set(lineage.outputs[2], row.recorded_at);
+      }
       return [...unique].flatMap(([digest, recordedAt]) => {
         // The list never reads population blobs or repeated dossier contexts.
         const queue = reviewQueueSchema.parse(artifact(digest));
         if (project !== null && queue.project_key !== project) return [];
         const latest = new Map(dispositionsForQueue(digest).map((item) => [item.evaluation_id, item]));
-        const states = queue.items.flatMap((item) => item.sources.map((source) =>
-          currentReviewState(source.evaluation_id, latest.get(source.evaluation_id) ?? null)));
+        const evaluationIds = queue.items.flatMap((item) => item.sources.map((source) => source.evaluation_id));
+        const statuses = queueStatuses(evaluationIds, latest);
+        const states = evaluationIds.map((evaluationId) => statuses.get(evaluationId) ?? "pending");
         return [{ digest, project_key: queue.project_key, source_count: states.length,
-          reviewed: states.filter((item) => item.status === "reviewed").length,
-          skipped: states.filter((item) => item.status === "skipped").length,
-          graded_elsewhere: states.filter((item) => item.status === "graded_elsewhere").length,
+          reviewed: states.filter((status) => status === "reviewed").length,
+          skipped: states.filter((status) => status === "skipped").length,
+          graded_elsewhere: states.filter((status) => status === "graded_elsewhere").length,
           recorded_at: recordedAt }];
       });
     }).deferred() };

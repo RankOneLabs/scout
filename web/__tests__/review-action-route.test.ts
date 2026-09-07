@@ -26,4 +26,13 @@ describe("review action proxy", () => {
     const response = await POST(new NextRequest("http://localhost/api", { method: "POST", body: "{}" }), { params: Promise.resolve({ digest: "a".repeat(64), evaluationId: "123" }) });
     expect(response.status).toBe(409);
   });
+  it.each([
+    [{ digest: "short", evaluationId: "123" }, {}],
+    [{ digest: "a".repeat(64), evaluationId: "abc" }, {}],
+    [{ digest: "a".repeat(64), evaluationId: "123" }, "not-an-object"],
+  ])("rejects invalid request input before the bridge", async (params, body) => {
+    const response = await POST(new NextRequest("http://localhost/api", { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve(params) });
+    expect(response.status).toBe(400);
+    expect(callSidecar).not.toHaveBeenCalled();
+  });
 });

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,28 @@ from tests.test_evaluation_experiments import (
     _seed_reply_draft_correction,
     _submit_response,
 )
+
+
+def test_replay_worker_configuration_fixture_matches_python_producer() -> None:
+    plan = ee.CandidateReplayPlan(
+        phase="reply_draft",
+        candidate_model="candidate-model",
+        candidate_system_prompt="synthetic",
+        candidate_config_json="{}",
+        baseline_prompt_sha256="baseline-hash",
+        candidate_prompt_sha256="candidate-hash",
+        baseline_prompt_reused=False,
+        recorded_input_sha256="input-hash",
+        grader_attached=True,
+        is_no_op=False,
+    )
+    expected = json.loads(
+        (
+            Path(__file__).parents[1] / "web/__tests__/fixtures/replay-worker-configuration.json"
+        ).read_text()
+    )
+    expected["tools"] = tuple(expected["tools"])
+    assert dataclasses.asdict(ee.replay_worker_configuration(plan)) == expected
 
 
 @pytest.fixture

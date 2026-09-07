@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
+from typing import NoReturn
 
 from pydantic import ValidationError
 
@@ -29,6 +30,14 @@ from scout.storage.state import StateManager
 
 class ReviewConflict(ValueError):
     """Known precondition failure at the review IO boundary, safe to discard/reload."""
+
+
+class ReviewTransactionFailure(ValueError):
+    """A typed review error that must abort the surrounding write transaction."""
+
+    def __init__(self, error: ReviewError) -> None:
+        super().__init__(error.detail)
+        self.error = error
 
 
 def review_source(
@@ -121,6 +130,8 @@ def save_review(
     try:
         with state.db.begin_immediate():
             return _save_review_in_transaction(state, queue_digest, evaluation_id, request)
+    except ReviewTransactionFailure as exc:
+        return Err(exc.error)
     except ReviewConflict as exc:
         return Err(ReviewError(evaluation_id=evaluation_id, detail=str(exc), status=409))
     except GradeValidationError as exc:
@@ -138,8 +149,10 @@ def save_review(
 def _save_review_in_transaction(
     state: StateManager, queue_digest: ArtifactDigest, evaluation_id: int, request: ReviewRequest
 ) -> Result[ReviewDisposition, ReviewError]:
-    def failure(detail: str) -> Err[ReviewError]:
-        return Err(ReviewError(evaluation_id=evaluation_id, detail=detail, status=409))
+    def failure(detail: str) -> NoReturn:
+        raise ReviewTransactionFailure(
+            ReviewError(evaluation_id=evaluation_id, detail=detail, status=409)
+        )
 
     previous = state.conn.execute(
         "SELECT queue_digest, evaluation_id, request_json, disposition_json "
@@ -152,45 +165,45 @@ def _save_review_in_transaction(
             or previous["evaluation_id"] != evaluation_id
             or ReviewRequest.model_validate_json(previous["request_json"]) != request
         ):
-            return failure("Action ID already used for a different request")
+            failure("Action ID already used for a different request")
         return Ok(ReviewDisposition.model_validate_json(previous["disposition_json"]))
 
     source = review_source(state, queue_digest, evaluation_id)
     if isinstance(source, Err):
-        return source
+        raise ReviewTransactionFailure(source.error)
     recorded = source.value.evaluation
     live = state.get_evaluation(evaluation_id)
     if live is None:
-        return failure("Evaluation no longer exists")
+        failure("Evaluation no longer exists")
     post_row = state.conn.execute(
         "SELECT * FROM posts WHERE id = ?", (recorded.post_id,)
     ).fetchone()
     if post_row is None:
-        return failure("Post context changed since selection; create a new queue")
+        failure("Post context changed since selection; create a new queue")
     try:
         live_post = RecordedPost.model_validate(dict(post_row))
     except ValidationError:
-        return failure(
+        failure(
             "Post context no longer matches the recorded schema; "
             "create a new queue after updating Scout"
         )
     if live_post != source.value.post:
-        return failure("Post context changed since selection; create a new queue")
+        failure("Post context changed since selection; create a new queue")
     # Queue grades must describe the same recorded input, not a rescore or a
     # changed project/dossier. Never attach a grade to a sibling evaluation.
     for key in type(recorded).model_fields:
         if live[key] != getattr(recorded, key):
-            return failure(f"Evaluation {key} changed since selection")
+            failure(f"Evaluation {key} changed since selection")
     revision_id = current_revision(state, evaluation_id)
     if revision_id != request.expected_grade_revision_id:
-        return failure("Grade changed; reload and review the latest revision")
+        failure("Grade changed; reload and review the latest revision")
     latest = state.conn.execute(
         "SELECT action_id FROM review_dispositions WHERE queue_digest = ? AND evaluation_id = ? "
         "ORDER BY sequence DESC LIMIT 1",
         (queue_digest, evaluation_id),
     ).fetchone()
     if (latest[0] if latest else None) != request.expected_action_id:
-        return failure("Queue disposition changed; reload before saving")
+        failure("Queue disposition changed; reload before saving")
 
     now = datetime.now(UTC)
     if request.action.kind == "grade":
@@ -214,9 +227,9 @@ def _save_review_in_transaction(
             or grade_row.needs_regrade
             or grade_row.schema_version != HUMAN_GRADE_SCHEMA_VERSION
         ):
-            return failure("No complete current grade to reconcile")
+            failure("No complete current grade to reconcile")
         if validate_grade_envelope(grade_envelope_payload(grade_row), live["posture"]):
-            return failure("Current grade fails the grading contract")
+            failure("Current grade fails the grading contract")
     else:
         revision_id = None
 

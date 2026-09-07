@@ -1735,6 +1735,7 @@ def _build_canonical_plan_document(
     skip_policy: SkipPolicy,
     pricing_catalog: PricingCatalog,
     sweep: SweepDefinition | None,
+    relevance_population: RelevancePopulation | None = None,
 ) -> dict[str, Any]:
     variant_docs = [
         {
@@ -1791,7 +1792,11 @@ def _build_canonical_plan_document(
         for pair in sorted(pairs, key=lambda p: (p.phase_run_id, p.variant_name))
     ]
     return {
-        "version": PLAN_SCHEMA_VERSION,
+        "version": (
+            RELEVANCE_PLAN_SCHEMA_VERSION
+            if relevance_population is not None
+            else PLAN_SCHEMA_VERSION
+        ),
         "selector": selector.canonical(),
         "phase_run_ids": list(population.phase_run_ids),
         "dropped_duplicate_phase_run_ids": list(population.dropped_duplicate_phase_run_ids),
@@ -1817,6 +1822,11 @@ def _build_canonical_plan_document(
         "max_llm_calls_per_case": PHASE_REPLAY_CONFIGS[
             next(iter(cases.values())).baseline.phase
         ].max_llm_calls,
+        **({
+            "source_exclusions": [
+                item.model_dump(mode="json") for item in relevance_population.exclusions
+            ]
+        } if relevance_population is not None else {}),
     }
 
 
@@ -1884,12 +1894,8 @@ async def build_batch_plan(
     plan_document = _build_canonical_plan_document(
         selector=selector, population=population, variants=variants, cases=cases,
         pairs=pairs, skip_policy=skip_policy, pricing_catalog=pricing_catalog, sweep=sweep,
+        relevance_population=relevance_population,
     )
-    if relevance_population is not None:
-        plan_document["version"] = RELEVANCE_PLAN_SCHEMA_VERSION
-        plan_document["source_exclusions"] = [
-            item.model_dump(mode="json") for item in relevance_population.exclusions
-        ]
     plan_json = _canonical_json(plan_document)
     plan_sha256 = _sha256_utf8(plan_json)
     return BatchPlan(

@@ -34,7 +34,6 @@ export function GradeDetail({ gradeId }: { gradeId: number }) {
 
   return (
     <div className="space-y-6">
-      {identity.evaluation_id !== null && <ReviewProvenance key={identity.evaluation_id} evaluationId={identity.evaluation_id} />}
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Grade #{grade.id}</h1>
         <p className="mt-1 text-xs text-gray-600 dark:text-gray-500">
@@ -50,6 +49,7 @@ export function GradeDetail({ gradeId }: { gradeId: number }) {
           )}
         </p>
       </div>
+      {identity.evaluation_id !== null && <ReviewProvenance key={identity.evaluation_id} evaluationId={identity.evaluation_id} />}
 
       <section className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
         <h2 className="mb-2 text-sm font-medium uppercase text-gray-600 dark:text-gray-500">Canonical envelope</h2>

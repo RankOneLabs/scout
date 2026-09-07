@@ -181,16 +181,15 @@ def _installed_source() -> bytes:
     return encode_wire_v1(archive, SOURCE_WIRE)
 
 
+_EXPECTED_RUNTIME_PACKAGE_NAMES = (
+    "numpy", "scipy", "scikit-learn", "threadpoolctl", "pydantic"
+)
+
+
 def _packages() -> tuple[RuntimePackage, ...]:
     return tuple(
         RuntimePackage(name=name, version=version(name))
-        for name in (
-            "numpy",
-            "scipy",
-            "scikit-learn",
-            "threadpoolctl",
-            "pydantic",
-        )
+        for name in _EXPECTED_RUNTIME_PACKAGE_NAMES
     )
 
 
@@ -880,7 +879,7 @@ def check_replay_runtime(
             or digest_artifact(lock) != runtime.lock_digest
             or declared.python_version != runtime.python_version
             or tuple(package.name for package in runtime.packages)
-            != ("numpy", "scipy", "scikit-learn", "threadpoolctl", "pydantic")
+            != _EXPECTED_RUNTIME_PACKAGE_NAMES
             or any(
                 not any(
                     pin.name == package.name and pin.version == package.version

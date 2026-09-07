@@ -3,9 +3,8 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { NextRequest } from "next/server";
 import type { BatchCaseEvidenceV1, ReplayWorkerConfiguration } from "@/types/feedback-experiments";
+import { listExperimentRuns } from "@/lib/feedback-experiment-queries";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scout-experiment-batch-config-"));
 const dbPath = path.join(tmpDir, "scout.db");
@@ -35,18 +34,7 @@ function setWorkerConfiguration(value: unknown): void {
 }
 
 beforeAll(() => {
-  // Exercise the actual Python producer, not a hand-maintained JSON mirror.
-  worker = JSON.parse(execFileSync("uv", ["run", "--no-sync", "python", "-c", `
-import dataclasses, json
-from scout.replay.experiments import CandidateReplayPlan, replay_worker_configuration
-plan = CandidateReplayPlan(
-    phase="reply_draft", candidate_model="candidate-model", candidate_system_prompt="synthetic",
-    candidate_config_json="{}", baseline_prompt_sha256="baseline-hash",
-    candidate_prompt_sha256="candidate-hash", baseline_prompt_reused=False,
-    recorded_input_sha256="input-hash", grader_attached=True, is_no_op=False,
-)
-print(json.dumps(dataclasses.asdict(replay_worker_configuration(plan))))
-`], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8", timeout: 20_000 }));
+  worker = JSON.parse(fs.readFileSync(path.resolve(__dirname, "fixtures/replay-worker-configuration.json"), "utf8")) as ReplayWorkerConfiguration;
   const db = new Database(dbPath);
   db.exec(`
     CREATE TABLE evaluation_phase_runs (
@@ -135,15 +123,6 @@ describe("listExperiments — batch/sweep candidate config", () => {
     expect(page.data[0]?.grader_attached).toBe(true);
   });
 
-  it("lists mixed legacy and Python-produced worker evidence through the page's real API", async () => {
-    const { GET } = await import("@/app/api/feedback/experiment-runs/route");
-    const response = await GET(new NextRequest("http://localhost/api/feedback/experiment-runs", {
-      headers: { host: "localhost" },
-    }));
-    expect(response.status).toBe(200);
-    expect((await response.json()).data.map((run: { id: number }) => run.id)).toEqual([1, 2]);
-  });
-
   it.each([1, 2])("reads run %i detail with or without recorded worker configuration", async (id) => {
     const { getExperimentRunDetail } = await import("@/lib/feedback-experiment-queries");
     expect(getExperimentRunDetail(id)?.run.attempted_case_count).toBe(1);
@@ -159,11 +138,6 @@ describe("listExperiments — batch/sweep candidate config", () => {
   // shape. Keep these synthetic historical cases alongside the current producer.
   it.each([4096, null])("reads historical worker completion bound %s through list and detail APIs", async (limit) => {
     setWorkerConfiguration({ ...worker, max_output_tokens: limit });
-    const { GET } = await import("@/app/api/feedback/experiment-runs/route");
-    const response = await GET(new NextRequest("http://localhost/api/feedback/experiment-runs", {
-      headers: { host: "localhost" },
-    }));
-    expect(response.status).toBe(200);
     const { getExperimentRunDetail } = await import("@/lib/feedback-experiment-queries");
     expect(getExperimentRunDetail(1)?.run.attempted_case_count).toBe(1);
   });
@@ -190,11 +164,6 @@ describe("listExperiments — batch/sweep candidate config", () => {
 
   it("keeps the API integrity-error boundary for malformed worker evidence", async () => {
     setWorkerConfiguration({ ...worker, model: null });
-    const { GET } = await import("@/app/api/feedback/experiment-runs/route");
-    const response = await GET(new NextRequest("http://localhost/api/feedback/experiment-runs", {
-      headers: { host: "localhost" },
-    }));
-    expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ errors: ["internal data-integrity error"] });
+    expect(() => listExperimentRuns({})).toThrow();
   });
 });

@@ -5,7 +5,7 @@ import type { QueueDetail, QueueSummary } from "@/types/review-queues";
 async function loadJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { cache: "no-store" });
   if (!response.ok) {
-    const error = await response.json() as { detail?: string };
+    const error = await response.json().catch(() => ({})) as { detail?: string };
     throw new Error(error.detail ?? `HTTP ${response.status}`);
   }
   return response.json() as Promise<T>;

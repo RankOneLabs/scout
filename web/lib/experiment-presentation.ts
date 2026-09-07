@@ -6,7 +6,14 @@
 import type {
   ExperimentComparison,
   ExperimentDetailResponse,
+  ScoreEvidence,
 } from "@/types/feedback-experiments";
+
+export function isRelevanceScoreEvidence(
+  score: ScoreEvidence,
+): score is Extract<ScoreEvidence, { format: string }> {
+  return "format" in score;
+}
 
 // --- Directional deltas -----------------------------------------------
 //
@@ -65,8 +72,8 @@ export interface DecisionMetric {
 
 export function computeDecisionMetrics(comparison: ExperimentComparison | null): DecisionMetric[] {
   const score = comparison?.score_evidence;
-  const isRelevance = score != null && "format" in score;
-  const correctionDelta = score == null ? null : "format" in score ? -score.accuracy_delta : score.delta;
+  const isRelevance = score != null && isRelevanceScoreEvidence(score);
+  const correctionDelta = score == null ? null : isRelevanceScoreEvidence(score) ? -score.accuracy_delta : score.delta;
   const costDelta =
     comparison !== null && comparison.cost_delta_available ? comparison.trace_diff.cost_delta : null;
   const latencyDelta =
@@ -188,7 +195,7 @@ export function computeAttemptVerdict(
     };
   }
 
-  if ("format" in scoreEvidence) return {
+  if (isRelevanceScoreEvidence(scoreEvidence)) return {
     kind: scoreEvidence.accuracy_delta > 0 ? "candidate_recommended" : scoreEvidence.accuracy_delta < 0 ? "candidate_not_recommended" : "no_measurable_difference",
     label: scoreEvidence.accuracy_delta > 0 ? "Candidate corrects baseline" : scoreEvidence.accuracy_delta < 0 ? "Candidate introduces error" : "Same relevance accuracy",
     description: "Compared against the pinned human relevance label; this is not a population-rate estimate.",

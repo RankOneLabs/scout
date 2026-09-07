@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 from jig import Grader, Score, ScoreSource
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from scout.grading.artifacts import ArtifactError, DigestReference
 from scout.grading.assistance import validate_partition
@@ -269,6 +269,12 @@ def load_relevance_population(
                 cases=tuple(sorted(cases, key=lambda case: case.phase_run.id)),
                 exclusions=tuple(exclusions),
                 dropped_duplicate_phase_run_ids=tuple(sorted(dropped)),
+            )
+        )
+    except ValidationError:
+        return Err(
+            ArtifactError(
+                "relevance_population", task.snapshot_digest, "Retained corpus record is invalid"
             )
         )
     except (ValueError, KeyError) as exc:

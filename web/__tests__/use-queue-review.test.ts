@@ -75,10 +75,10 @@ describe("queue review browser lifecycle", () => {
   });
   it("contains mid-session storage failures on ticks, activity, and cleanup", async () => {
     vi.stubGlobal("fetch", vi.fn());
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const { result, unmount } = renderHook(() => useQueueReview({ digest: "a".repeat(64), item, pricing: null, onSaved: vi.fn() }));
     await waitFor(() => expect(result.current.ready).toBe(true));
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full", "QuotaExceededError"); });
-    vi.useFakeTimers();
     act(() => { vi.advanceTimersByTime(2000); window.dispatchEvent(new Event("pointerdown")); });
     expect(result.current.ready).toBe(false);
     expect(result.current.error).toContain("Cannot persist review timing");

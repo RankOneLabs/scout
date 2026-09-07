@@ -385,6 +385,8 @@ def export_grading_corpus(source_db_path: str, destination_path: str) -> Grading
                 if "review_dispositions" in analysis_tables:
                     _verify_review_dispositions(written)
                 if analysis_tables:
+                    written.commit()
+                    written.execute("BEGIN")
                     if isinstance(read_artifact_bundle(written), Err):
                         raise GradingExportError(
                             "analysis artifacts failed preservation integrity checks"

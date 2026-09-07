@@ -207,7 +207,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
     for model, prompt in segment_keys:
         members = [
             case
-            for case in cases
+            for case in sorted(cases, key=lambda item: (item.phase_run_id, item.variant))
             if (case.baseline_model, case.baseline_prompt_sha256) == (model, prompt)
         ]
         by_variant = {

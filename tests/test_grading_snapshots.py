@@ -275,8 +275,6 @@ def test_grading_preservation_export_carries_analysis_store(
     assert {table.name for table in result.tables} >= {"analysis_artifacts", "analysis_lineage"}
     # The preservation export isn't a live Scout database. Read the independent
     # artifact tables without bootstrapping/migrating the partial source export.
-    import sqlite3
-
     from scout.storage.artifacts import read_artifact_bundle
 
     with sqlite3.connect(destination) as restored:
