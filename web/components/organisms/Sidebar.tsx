@@ -73,6 +73,7 @@ export function Sidebar() {
       <NavLink href="/feedback" label="Feedback" icon={ClipboardList} onClick={closeDrawer} />
       <NavLink href="/feedback/overview" label="Feedback Overview" icon={PieChart} onClick={closeDrawer} />
       <NavLink href="/feedback/grades" label="Grade Explorer" icon={ListChecks} onClick={closeDrawer} />
+      <NavLink href="/feedback/review-queues" label="Review Queues" icon={ListChecks} onClick={closeDrawer} />
       <NavLink href="/feedback/experiments" label="Experiments" icon={FlaskConical} onClick={closeDrawer} />
       <NavLink href="/traces" label="Traces" icon={Activity} onClick={closeDrawer} />
       <NavLink href="/settings" label="Settings" icon={Settings} onClick={closeDrawer} />

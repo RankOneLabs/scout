@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useExperimentList } from "@/hooks/use-experiment-list";
 import { EXPERIMENT_PHASES, EXPERIMENT_RUN_STATUSES } from "@/types/feedback-experiments";
 import type { ExperimentRunSummary } from "@/types/feedback-experiments";
+import { selectRunQuality } from "@/lib/experiment-presentation";
 
 function RunCard({ run }: { run: ExperimentRunSummary }) {
+  const quality = selectRunQuality(run);
   return <article className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div><Link href={`/feedback/experiment-runs/${run.id}`} className="font-semibold text-blue-600 dark:text-blue-400">{run.name}</Link><p className="text-xs text-gray-500">{run.phase} · {run.verdict.replaceAll("_", " ")}</p></div>
@@ -16,7 +18,7 @@ function RunCard({ run }: { run: ExperimentRunSummary }) {
       <div><dt className="text-xs text-gray-500">Cases</dt><dd>{run.current_case_count}/{run.planned_case_count}{run.skipped_case_count ? ` · ${run.skipped_case_count} skipped` : ""}</dd></div>
       <div><dt className="text-xs text-gray-500">Retries</dt><dd>{run.retry_count}</dd></div>
       <div><dt className="text-xs text-gray-500">Spend</dt><dd>{run.total_cost === null ? "Unavailable" : `$${run.total_cost.toFixed(4)}`}</dd></div>
-      <div><dt className="text-xs text-gray-500">Correction Δ</dt><dd>{run.correction_distance.mean_delta === null ? "Unavailable" : run.correction_distance.mean_delta.toFixed(3)}</dd></div>
+      <div><dt className="text-xs text-gray-500">{quality.label}</dt><dd>{quality.delta}</dd></div>
     </dl>
   </article>;
 }

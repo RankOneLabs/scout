@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useGradeDetail } from "@/hooks/use-grade-detail";
 import { GradeOverrideControl } from "@/components/molecules/GradeOverrideControl";
 import { DetailField } from "@/components/atoms/DetailField";
+import { ReviewProvenance } from "@/components/molecules/ReviewProvenance";
 import { parseUtc } from "@/lib/transforms";
 
 function fmt(iso: string | null): string {
@@ -48,6 +49,7 @@ export function GradeDetail({ gradeId }: { gradeId: number }) {
           )}
         </p>
       </div>
+      {identity.evaluation_id !== null && <ReviewProvenance key={identity.evaluation_id} evaluationId={identity.evaluation_id} />}
 
       <section className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
         <h2 className="mb-2 text-sm font-medium uppercase text-gray-600 dark:text-gray-500">Canonical envelope</h2>

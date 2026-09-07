@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,28 @@ from tests.test_evaluation_experiments import (
     _seed_reply_draft_correction,
     _submit_response,
 )
+
+
+def test_replay_worker_configuration_fixture_matches_python_producer() -> None:
+    plan = ee.CandidateReplayPlan(
+        phase="reply_draft",
+        candidate_model="candidate-model",
+        candidate_system_prompt="synthetic",
+        candidate_config_json="{}",
+        baseline_prompt_sha256="baseline-hash",
+        candidate_prompt_sha256="candidate-hash",
+        baseline_prompt_reused=False,
+        recorded_input_sha256="input-hash",
+        grader_attached=True,
+        is_no_op=False,
+    )
+    expected = json.loads(
+        (
+            Path(__file__).parents[1] / "web/__tests__/fixtures/replay-worker-configuration.json"
+        ).read_text()
+    )
+    expected["tools"] = tuple(expected["tools"])
+    assert dataclasses.asdict(ee.replay_worker_configuration(plan)) == expected
 
 
 @pytest.fixture
@@ -179,6 +202,42 @@ def _batch_args(**overrides) -> argparse.Namespace:
 
 
 class TestBatchReplayFeedback:
+    def test_drafting_task_alone_explains_required_population(self, tmp_path, capsys) -> None:
+        config = tmp_path / "task.json"
+        config.write_text('{"kind": "reply_draft"}')
+        with pytest.raises(SystemExit):
+            replay_cli._resolve_batch_selector(_batch_args(task_config=str(config)))
+        assert (
+            "reply_draft task config requires a drafting population selector"
+            in capsys.readouterr().err
+        )
+
+    @pytest.mark.parametrize("kind", ["reply_draft", "relevance"])
+    def test_task_is_selected_by_config(self, kind, tmp_path) -> None:
+        config = tmp_path / "task.json"
+        document = {"kind": kind}
+        if kind == "relevance":
+            document["snapshot_digest"] = "a" * 64
+        config.write_text(json.dumps(document))
+        selector = replay_cli._resolve_batch_selector(
+            _batch_args(
+                task_config=str(config),
+                graded_with_corrections=kind == "reply_draft",
+            )
+        )
+        assert selector.kind == (
+            "relevance_corpus" if kind == "relevance" else "graded_with_corrections"
+        )
+
+    def test_relevance_config_cannot_silently_mix_with_drafting_selector(self, tmp_path) -> None:
+        config = tmp_path / "task.json"
+        config.write_text(json.dumps({"kind": "relevance", "snapshot_digest": "a" * 64}))
+        with pytest.raises(SystemExit) as error:
+            replay_cli._resolve_batch_selector(
+                _batch_args(task_config=str(config), graded_with_corrections=True)
+            )
+        assert error.value.code == 2
+
     def test_blank_name_rejected_before_any_async_work(self) -> None:
         with pytest.raises(SystemExit) as exc_info:
             replay_cli.batch_replay_feedback(_batch_args(name="  ", phase_run_id=[1]))

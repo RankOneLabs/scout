@@ -45,7 +45,8 @@ import anyio.from_thread
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from starlette.requests import ClientDisconnect
 
 from scout.config import DB_PATH, FEEDBACK_DB_PATH, TRACE_DB_PATH, GradeRecord
 from scout.storage.state import (
@@ -335,18 +336,14 @@ def grade_endpoint(evaluation_id: int, request: Request) -> dict[str, Any]:
     try:
         evaluation = state.get_evaluation(evaluation_id)
         if evaluation is None:
-            raise HTTPException(
-                status_code=404, detail=f"evaluation {evaluation_id} not found"
-            )
+            raise HTTPException(status_code=404, detail=f"evaluation {evaluation_id} not found")
 
         try:
             body = anyio.from_thread.run(request.json)
         except Exception as exc:
             raise HTTPException(status_code=400, detail="invalid JSON body") from exc
         if not isinstance(body, dict):
-            raise HTTPException(
-                status_code=400, detail="request body must be a JSON object"
-            )
+            raise HTTPException(status_code=400, detail="request body must be a JSON object")
 
         envelope_errors = validate_grade_envelope(body, evaluation["posture"])
         if envelope_errors:
@@ -365,10 +362,41 @@ def grade_endpoint(evaluation_id: int, request: Request) -> dict[str, Any]:
     return _grade_row_to_response(row)
 
 
+@app.post("/review-queues/{queue_digest}/evaluations/{evaluation_id}/actions")
+def review_action_endpoint(queue_digest: str, evaluation_id: int, request: Request) -> JSONResponse:
+    from scout.grading.artifacts import ArtifactDigest
+    from scout.grading.review_store import save_review
+    from scout.grading.review_types import ReviewRequest
+    from scout.result import Err
+
+    try:
+        payload = anyio.from_thread.run(request.body)
+    except (ClientDisconnect, OSError, anyio.EndOfStream, anyio.BrokenResourceError):
+        return JSONResponse(status_code=400, content={"detail": "Invalid request body"})
+    try:
+        action = ReviewRequest.model_validate_json(payload)
+    except ValidationError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid review request"})
+    if (
+        len(queue_digest) != 64
+        or any(char not in "0123456789abcdef" for char in queue_digest)
+        or evaluation_id < 1
+    ):
+        return JSONResponse(
+            status_code=400, content={"detail": "Invalid queue or evaluation identity"}
+        )
+    state = _state_for_request()
+    try:
+        result = save_review(state, ArtifactDigest(queue_digest), evaluation_id, action)
+    finally:
+        state.close()
+    if isinstance(result, Err):
+        return JSONResponse(status_code=result.error.status, content=result.error.model_dump())
+    return JSONResponse(content=result.value.model_dump(mode="json"))
+
+
 @app.post("/grades/{evaluation_id}/promote")
-def promote_negative_grade_endpoint(
-    evaluation_id: int, request: Request
-) -> dict[str, Any]:
+def promote_negative_grade_endpoint(evaluation_id: int, request: Request) -> dict[str, Any]:
     """Grade a model-negative case as positive, then run draft + critic.
 
     The source false-negative grade and promotion state are durable before
@@ -386,9 +414,7 @@ def promote_negative_grade_endpoint(
     try:
         evaluation = state.get_evaluation(evaluation_id)
         if evaluation is None:
-            raise HTTPException(
-                status_code=404, detail=f"evaluation {evaluation_id} not found"
-            )
+            raise HTTPException(status_code=404, detail=f"evaluation {evaluation_id} not found")
         if bool(evaluation["relevant"]):
             raise HTTPException(
                 status_code=409,
@@ -399,9 +425,7 @@ def promote_negative_grade_endpoint(
         except Exception as exc:
             raise HTTPException(status_code=400, detail="invalid JSON body") from exc
         if not isinstance(body, dict):
-            raise HTTPException(
-                status_code=400, detail="request body must be a JSON object"
-            )
+            raise HTTPException(status_code=400, detail="request body must be a JSON object")
         envelope_errors = validate_grade_envelope(body, evaluation["posture"])
         if envelope_errors:
             raise GradeValidationError(envelope_errors)
@@ -456,9 +480,7 @@ def promote_negative_grade_endpoint(
 
 
 @app.post("/grades/{evaluation_id}/usage-override")
-def grade_usage_override_endpoint(
-    evaluation_id: int, req: UsageOverrideRequest
-) -> dict[str, Any]:
+def grade_usage_override_endpoint(evaluation_id: int, req: UsageOverrideRequest) -> dict[str, Any]:
     """Resolves the current grade for `evaluation_id` server-side — the
     browser never selects a grade_id directly — and 404s when no grade
     exists yet. StateManager.save_grade_usage_override is the sole domain
@@ -496,13 +518,9 @@ def main() -> None:
     host = os.getenv("SCOUT_SIDECAR_HOST", "127.0.0.1").strip() or "127.0.0.1"
     _validate_startup_config(host)
     if _expected_token() is None:
-        logger.warning(
-            "SCOUT_SIDECAR_TOKEN is unset — sidecar accepts unauthenticated requests"
-        )
+        logger.warning("SCOUT_SIDECAR_TOKEN is unset — sidecar accepts unauthenticated requests")
     if not _is_loopback(host):
-        logger.warning(
-            "SCOUT_SIDECAR_HOST=%s — sidecar is reachable beyond loopback", host
-        )
+        logger.warning("SCOUT_SIDECAR_HOST=%s — sidecar is reachable beyond loopback", host)
     uvicorn.run(app, host=host, port=port)
 
 

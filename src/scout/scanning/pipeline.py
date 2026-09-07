@@ -214,6 +214,7 @@ async def score_and_draft_step(
                 score=relevance_output.score,
                 reason=relevance_output.reason,
                 relevant_to=relevance_output.relevant_to,
+                project_key=project_key,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )

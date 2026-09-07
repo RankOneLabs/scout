@@ -111,6 +111,9 @@ def parse_args() -> argparse.Namespace:
     )
 
     subparsers = parser.add_subparsers(dest="subcommand")
+    from scout.cli.analysis import add_analysis_parser
+
+    add_analysis_parser(subparsers, DB_PATH)
     preflight_p = subparsers.add_parser("preflight", help="Read-only Phase 1 deployment gate")
     preflight_p.add_argument("--dossier-root", required=True)
     preflight_p.add_argument("--db-path", default=DB_PATH)
@@ -318,7 +321,7 @@ def parse_args() -> argparse.Namespace:
         "batch-replay",
         help=(
             "Preview (default) or execute a plan-hash-authorized batch or sweep offline "
-            "candidate replay against a selector-resolved reply_draft baseline population"
+            "candidate replay against reply_draft baselines or a frozen relevance corpus"
         ),
     )
     batch_selector_group = batch_replay_p.add_argument_group("selector (exactly one required)")
@@ -341,6 +344,11 @@ def parse_args() -> argparse.Namespace:
     batch_selector_group.add_argument(
         "--graded-with-corrections", action="store_true",
         help="Every complete reply_draft phase run with a recorded human correction",
+    )
+    batch_selector_group.add_argument(
+        "--task-config",
+        default=None,
+        help="JSON task config: reply_draft (existing selector) or relevance (frozen corpus)",
     )
     batch_replay_p.add_argument("--name", required=True, help="Name for the new experiment run(s)")
     batch_replay_p.add_argument(
@@ -567,6 +575,18 @@ def paa_list(args: argparse.Namespace) -> None:
 def main() -> None:
     args = parse_args()
     setup_logging(debug=args.debug)
+    if args.subcommand == "analysis":
+        from scout.cli.analysis import run_analysis
+        from scout.result import Err, Ok
+
+        match run_analysis(args):
+            case Ok(result):
+                print(result.model_dump_json(indent=2))
+            case Err(error):
+                print(f"{error.operation}: {error.detail}", file=sys.stderr)
+                raise SystemExit(1)
+        return
+
     if args.subcommand == "preflight":
         report = run_preflight(args.db_path, args.dossier_root)
         print(json.dumps(report, indent=2, sort_keys=True))

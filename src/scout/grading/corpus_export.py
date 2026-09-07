@@ -52,10 +52,15 @@ from __future__ import annotations
 import contextlib
 import os
 import sqlite3
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
+
+from scout.result import Err
+from scout.storage.artifacts import read_artifact_bundle
+from scout.storage.db import read_only_snapshot
 
 #: In dependency order — parents before children. Foreign keys are not
 #: enforced in the destination, so this ordering buys nothing mechanically;
@@ -69,6 +74,30 @@ EXPORTED_TABLES: tuple[str, ...] = (
     "grade_revisions",
     "grade_usage_overrides",
 )
+
+# Additive preservation extension. Older six-table exports remain readable;
+# a half-present analysis schema is damage, not an older supported version.
+ANALYSIS_TABLES = ("analysis_artifacts", "analysis_lineage")
+
+
+def _analysis_tables(source: sqlite3.Connection) -> tuple[str, ...]:
+    present = tuple(
+        table
+        for table in ANALYSIS_TABLES
+        if source.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+    )
+    if present and present != ANALYSIS_TABLES:
+        raise GradingExportError("incomplete analysis artifact schema")
+    reviews = source.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_dispositions'"
+    ).fetchone()
+    if reviews and not present:
+        raise GradingExportError("review dispositions require retained analysis artifacts")
+    return (*present, "review_dispositions") if reviews else present
+
 
 #: Every reference the exported set carries within itself, as
 #: ``(table, column, parent_table)``. Checked after the copy against the
@@ -146,7 +175,8 @@ def _open_source(path: str) -> sqlite3.Connection:
         raise GradingExportError(f"source database not found: {path}")
     try:
         connection = sqlite3.connect(
-            f"file:{quote(str(Path(path)))}?mode=ro", uri=True,
+            f"file:{quote(str(Path(path)))}?mode=ro",
+            uri=True,
         )
         connection.execute("PRAGMA query_only = ON")
     except sqlite3.Error as exc:
@@ -186,14 +216,14 @@ def _object_ddl(source: sqlite3.Connection, table: str) -> tuple[str, tuple[str,
     hand would eventually lose one.
     """
     row = source.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,),
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
     ).fetchone()
     if row is None or not row[0]:
         raise GradingExportError(f"source database has no table {table!r}")
 
     indexes = source.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? "
-        "AND sql IS NOT NULL",
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL",
         (table,),
     ).fetchall()
     return row[0], tuple(index[0] for index in indexes)
@@ -211,7 +241,8 @@ def _copy_table(source: sqlite3.Connection, destination: sqlite3.Connection, tab
 
     rows = source.execute(f'SELECT {quoted} FROM "{table}"').fetchall()  # noqa: S608
     destination.executemany(
-        f'INSERT INTO "{table}" ({quoted}) VALUES ({placeholders})', rows,  # noqa: S608
+        f'INSERT INTO "{table}" ({quoted}) VALUES ({placeholders})',
+        rows,  # noqa: S608
     )
     for statement in index_sql:
         destination.execute(statement)
@@ -219,15 +250,15 @@ def _copy_table(source: sqlite3.Connection, destination: sqlite3.Connection, tab
 
 
 def _verify_row_counts(
-    source: sqlite3.Connection, destination: sqlite3.Connection, tables: Sequence[str],
+    source: sqlite3.Connection,
+    destination: sqlite3.Connection,
+    tables: Sequence[str],
 ) -> None:
     for table in tables:
         expected = source.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]  # noqa: S608
         actual = destination.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]  # noqa: S608
         if expected != actual:
-            raise GradingExportError(
-                f"{table}: copied {actual} rows but source holds {expected}"
-            )
+            raise GradingExportError(f"{table}: copied {actual} rows but source holds {expected}")
 
 
 def _verify_references(destination: sqlite3.Connection) -> None:
@@ -244,6 +275,65 @@ def _verify_references(destination: sqlite3.Connection) -> None:
                 f"the source, not an export fault — inspect it before the source "
                 f"database is discarded, because afterwards it cannot be diagnosed."
             )
+
+
+def _verify_review_dispositions(destination: sqlite3.Connection) -> None:
+    """Check observation identity and pinned references, including skipped items."""
+    from scout.grading.assistance_types import ReviewQueue
+    from scout.grading.review_types import ReviewDisposition, ReviewRequest
+
+    for (
+        action_id,
+        queue_digest,
+        evaluation_id,
+        grade_revision_id,
+        request_json,
+        disposition_json,
+    ) in destination.execute(
+        "SELECT action_id, queue_digest, evaluation_id, grade_revision_id, "
+        "request_json, disposition_json FROM review_dispositions"
+    ):
+        try:
+            observation = ReviewDisposition.model_validate_json(disposition_json)
+            request = ReviewRequest.model_validate_json(request_json)
+            if (
+                observation.action_id != action_id
+                or observation.queue_digest != queue_digest
+                or observation.evaluation_id != evaluation_id
+                or observation.grade_revision_id != grade_revision_id
+                or observation.action_id != request.action_id
+                or observation.action != request.action
+                or observation.timing != request.timing
+                or observation.pricing != request.pricing
+            ):
+                raise ValueError("Observation differs from its indexed identity or request")
+            queue_row = destination.execute(
+                "SELECT content FROM analysis_artifacts WHERE digest = ?",
+                (observation.queue_digest,),
+            ).fetchone()
+            if queue_row is None:
+                raise ValueError("Missing retained queue")
+            queue = ReviewQueue.model_validate_json(queue_row[0])
+            if not any(
+                source.evaluation_id == observation.evaluation_id
+                for item in queue.items
+                for source in item.sources
+            ):
+                raise ValueError("Observation not in recorded queue")
+            evaluation = destination.execute(
+                "SELECT id FROM evaluations WHERE id = ?", (observation.evaluation_id,)
+            ).fetchone()
+            if evaluation is None:
+                raise ValueError("Missing evaluation")
+            if observation.grade_revision_id is not None:
+                revision = destination.execute(
+                    "SELECT evaluation_id FROM grade_revisions WHERE id = ?",
+                    (observation.grade_revision_id,),
+                ).fetchone()
+                if revision is None or revision[0] != observation.evaluation_id:
+                    raise ValueError("Mismatched grade revision")
+        except ValueError as exc:
+            raise GradingExportError(f"Invalid review disposition: {exc}") from exc
 
 
 def _verify_grades_are_present(destination: sqlite3.Connection) -> None:
@@ -269,49 +359,60 @@ def export_grading_corpus(source_db_path: str, destination_path: str) -> Grading
     that could later be mistaken for a complete export.
     """
     destination = Path(destination_path)
-    tmp_path = destination.with_name(f"{destination.name}.partial")
-
     source = _open_source(source_db_path)
+    tmp_path: Path | None = None
     try:
-        with contextlib.suppress(FileNotFoundError):
-            tmp_path.unlink()
-
-        written = _open_destination(tmp_path)
-        try:
-            tables = tuple(
-                TableExport(name=table, row_count=_copy_table(source, written, table))
-                for table in EXPORTED_TABLES
-            )
-            written.commit()
-
-            _verify_row_counts(source, written, EXPORTED_TABLES)
-            _verify_references(written)
-            _verify_grades_are_present(written)
-        except BaseException:
+        with read_only_snapshot(source):
+            analysis_tables = _analysis_tables(source)
+            exported_tables = (*EXPORTED_TABLES, *analysis_tables)
+            try:
+                descriptor, temporary = tempfile.mkstemp(
+                    prefix=f".{destination.name}.", suffix=".partial", dir=destination.parent
+                )
+            except OSError as exc:
+                raise GradingExportError(f"cannot create export at {destination}: {exc}") from exc
+            os.close(descriptor)
+            tmp_path = Path(temporary)
+            written = _open_destination(tmp_path)
+            try:
+                tables = tuple(
+                    TableExport(name=table, row_count=_copy_table(source, written, table))
+                    for table in exported_tables
+                )
+                _verify_row_counts(source, written, exported_tables)
+                _verify_references(written)
+                _verify_grades_are_present(written)
+                if "review_dispositions" in analysis_tables:
+                    _verify_review_dispositions(written)
+                if analysis_tables:
+                    if isinstance(read_artifact_bundle(written), Err):
+                        raise GradingExportError(
+                            "analysis artifacts failed preservation integrity checks"
+                        )
+                    for table in analysis_tables:
+                        for row in source.execute(
+                            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+                            (table,),
+                        ):
+                            written.execute(row[0])
+                written.commit()
+            except BaseException:
+                written.close()
+                with contextlib.suppress(FileNotFoundError):
+                    tmp_path.unlink()
+                raise
             written.close()
-            with contextlib.suppress(FileNotFoundError):
-                tmp_path.unlink()
-            raise
-        written.close()
+        try:
+            os.replace(tmp_path, destination)
+        except OSError as exc:
+            raise GradingExportError(
+                f"export verified but could not be moved into place at {destination}: {exc}"
+            ) from exc
     finally:
         source.close()
-
-    # The last step that can fail, and the one most easily left unguarded:
-    # a missing parent directory, a read-only mount, or a destination on a
-    # different filesystem all raise here, after every check has already
-    # passed. Unwrapped it would surface as a raw OSError traceback and
-    # leave .partial sitting next to the intended path — a complete,
-    # verified export under a name that gives no hint it is one, which is
-    # exactly the "half an export is never mistakable for a whole one"
-    # property the temporary file exists to provide.
-    try:
-        os.replace(tmp_path, destination)
-    except OSError as exc:
-        with contextlib.suppress(FileNotFoundError):
-            tmp_path.unlink()
-        raise GradingExportError(
-            f"export verified but could not be moved into place at {destination}: {exc}"
-        ) from exc
+        if tmp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                tmp_path.unlink()
 
     return GradingExportResult(destination=str(destination), tables=tables)
 
