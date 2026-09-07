@@ -18,6 +18,97 @@ Tests belong to their feature PRs, not separate smoke-test PRs.
 No PAA site, documentation, schema, or generalization work is in this iteration.
 No intermediate production rollout is implied by merging a feature into the epic.
 
+## Workflow step 4: experiment task selection
+
+Batch/sweep replay supports two tasks. Existing commands and historical drafting
+evidence remain unchanged. An explicit `--task-config` JSON file selects the task:
+
+```json
+{"kind": "reply_draft"}
+```
+
+The `reply_draft` config must accompany an existing `--graded-with-corrections`,
+scan, window, or phase-run selector; it chooses the task, not the population.
+It is optional because drafting remains the default. A relevance config instead
+selects the frozen corpus itself and cannot accompany a drafting selector:
+
+```json
+{
+  "kind": "relevance",
+  "snapshot_digest": "<64-character snapshot digest>",
+  "partition_digest": null,
+  "partition": "all"
+}
+```
+
+`all` is an exploratory comparison on the labeled corpus, not a held-out result
+or population-rate estimate. To evaluate an explicit partition, set `partition`
+to `train` or `heldout` and provide the digest of a retained
+`scout.assistance-partition/v1` for that exact snapshot. Membership/input identity,
+known prompt exposure, and thread/duplicate group separation are checked before
+spend. A new post-review snapshot requires its own partition, not an old queue's
+reference-corpus partition. Relevance task configs cannot be combined with a
+drafting population selector.
+
+### Review → snapshot → comparison
+
+1. Complete the human queue review; each save pins a grade revision. There need
+   not be any false negatives for this flow to work.
+2. Freeze a new corpus using `scout analysis snapshot --db-path DB --project
+   PROJECT --dossier-root ROOT --environment environment.json`. Use the returned
+   snapshot digest in the private task config. Preserve the DB and trace/feedback
+   stores together using the deployment backup procedure.
+3. Preview without inference or database writes:
+
+   ```sh
+   DB_PATH=/private/scout.db TRACE_DB_PATH=/private/scout_traces.db \
+     FEEDBACK_DB_PATH=/private/scout_feedback.db uv run scout feedback batch-replay \
+     --name relevance-model-comparison --task-config /private/relevance-task.json \
+     --sweep-file /private/model-sweep.yaml
+   ```
+
+   The existing model/prompt sweep file format is unchanged. A plain batch can
+   use `--model` and/or `--prompt-file` instead. Inspect eligibility, exclusions,
+   estimated spend, call ceiling, and the canonical plan hash.
+4. Only after operator authorization, repeat with `--execute-paid-replay
+   --authorize-plan-sha256 HASH`. Any changed snapshot, partition, worker,
+   configuration, or skip policy changes the plan hash. Baseline traces are read,
+   not rerun. Relevance runs attach a deterministic exact-match grader to the
+   candidate's structured boolean decision; no reply/correction is required.
+5. Open **Feedback → Experiments**, filter phase to **relevance**, and inspect the
+   run and its cases. Accuracy delta is candidate minus baseline: higher is
+   better. Drafting distance stays separate, with lower remaining better.
+6. Export the retained result using `scout feedback report --experiment-run-id
+   ID [ID ...] --format json` or `--format markdown`. Relevance reports contain
+   per-baseline-model/prompt segments, common successful case comparisons,
+   baseline/candidate confusion counts, exact project/target identities, excluded
+   source cases and skipped pairs, and inference spend including superseded
+   attempts. A failed candidate is not silently scored as irrelevant.
+
+An explicitly requested `batch-retry --experiment-run-id ID` executes paid
+retries immediately; it is not a preview. It uses the parent's retained task and candidate configuration and
+compares failed-attempt evidence before creating a linked retry. Later live
+grades cannot rewrite a frozen target: intentionally adopting revised labels
+requires a new snapshot and a newly authorized run.
+
+Keep corpus-building human review costs separate. The existing
+`analysis assistance-review-costs --db-path DB --queue DIGEST` report resolves
+those actions; do not charge the same review once per candidate variant.
+Ranked discovery yield and random-slice rate estimates remain in
+`assistance-report`, not in experiment accuracy. Do not interpret a mixed or
+ranked corpus as a probability sample of rejected posts.
+
+Relevance uses candidate-config v5, case-evidence v3, and
+`scout.relevance-score/v1`; historical candidate-config v2/v4 and drafting
+case/score evidence remain readable. No database migration, dependency, PAA
+schema change, or extra runtime service is required. Single-phase ungraded
+relevance replay remains available; batch task selection is the graded path.
+
+The automated synthetic cycle covers both target classes without drafts,
+read-only preview, authorized execution, failures/retries, reporting, and the web
+readers. A reviewed deployment and an explicitly authorized real-data model
+comparison remain the operator acceptance gate before the epic-to-main merge.
+
 ## Workflow step 3: review and attribution
 
 Open **Feedback → Review Queues** (`/feedback/review-queues`). Filter by project,

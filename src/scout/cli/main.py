@@ -321,7 +321,7 @@ def parse_args() -> argparse.Namespace:
         "batch-replay",
         help=(
             "Preview (default) or execute a plan-hash-authorized batch or sweep offline "
-            "candidate replay against a selector-resolved reply_draft baseline population"
+            "candidate replay against reply_draft baselines or a frozen relevance corpus"
         ),
     )
     batch_selector_group = batch_replay_p.add_argument_group("selector (exactly one required)")
@@ -344,6 +344,11 @@ def parse_args() -> argparse.Namespace:
     batch_selector_group.add_argument(
         "--graded-with-corrections", action="store_true",
         help="Every complete reply_draft phase run with a recorded human correction",
+    )
+    batch_selector_group.add_argument(
+        "--task-config",
+        default=None,
+        help="JSON task config: reply_draft (existing selector) or relevance (frozen corpus)",
     )
     batch_replay_p.add_argument("--name", required=True, help="Name for the new experiment run(s)")
     batch_replay_p.add_argument(

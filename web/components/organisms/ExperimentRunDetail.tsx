@@ -2,24 +2,29 @@
 
 import Link from "next/link";
 import { useExperimentRunDetail } from "@/hooks/use-experiment-run-detail";
-
-function number(value: number | null, digits = 3) { return value === null ? "Unavailable" : value.toFixed(digits); }
+import { selectRunQuality } from "@/lib/experiment-presentation";
 
 export function ExperimentRunDetail({ experimentRunId }: { experimentRunId: number }) {
   const { detail, loading, error } = useExperimentRunDetail(experimentRunId);
   if (loading) return <p className="text-sm text-gray-500">Loading experiment run…</p>;
   if (error || !detail) return <p className="text-sm text-red-600">Failed to load experiment run{error ? `: ${error}` : "."}</p>;
   const { run } = detail;
+  const quality = selectRunQuality(run);
   return <main className="space-y-5">
     <header>
       <Link href="/feedback/experiments" className="text-sm text-blue-600">← Experiments</Link>
       <h1 className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{run.name}</h1>
       <p className="text-sm text-gray-600 dark:text-gray-400">{run.verdict.replaceAll("_", " ")} · {run.status}</p>
     </header>
+    {detail.configuration.task && <section className="space-y-1 text-sm">
+      <p className="break-all">Corpus snapshot: {detail.configuration.task.snapshot_digest}</p>
+      <p>Partition: {detail.configuration.task.partition}. Accuracy applies to this labeled population, not the overall rejected-post population.</p>
+      {detail.configuration.source_exclusions?.map(item => <p key={item.evaluation_id}>Excluded evaluation #{item.evaluation_id}: {item.reason.replaceAll("_", " ")}</p>)}
+    </section>}
     <section aria-label="Run summary" className="grid gap-3 sm:grid-cols-3">
       <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">Cases</span><p>{run.current_case_count}/{run.planned_case_count} current · {run.retry_count} retries</p></div>
       <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">Total spend</span><p>{run.total_cost === null ? "Unavailable" : `$${run.total_cost.toFixed(4)}`} · {run.total_llm_call_count} calls</p></div>
-      <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">Mean correction delta</span><p>{number(run.correction_distance.mean_delta)}</p></div>
+      <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">{quality.label}</span><p>{quality.delta}</p></div>
     </section>
     <details className="rounded-lg border p-3"><summary className="disclosure-summary font-medium">Configuration identity</summary><dl className="mt-2 text-sm"><dt>Version</dt><dd>{detail.configuration.version}</dd><dt>Identity</dt><dd className="break-all font-mono">{detail.configuration.identity}</dd>{detail.configuration.plan_sha256 && <><dt>Plan SHA-256</dt><dd className="break-all font-mono">{detail.configuration.plan_sha256}</dd></>}</dl></details>
     <section aria-labelledby="run-cases"><h2 id="run-cases" className="text-lg font-semibold">Cases</h2>

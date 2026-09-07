@@ -127,6 +127,12 @@ def replay_feedback(args: argparse.Namespace) -> None:
 
 def _print_batch_preview(preview: ee.BatchPreview) -> None:
     plan = preview.plan
+    if plan.relevance_population is not None:
+        source = plan.relevance_population
+        task = source.cases[0].target.task
+        print(f"task: relevance; snapshot={task.snapshot_digest}; partition={task.partition}")
+        for exclusion in source.exclusions:
+            print(f"excluded evaluation {exclusion.evaluation_id}: {exclusion.reason}")
     catalog = plan.pricing_catalog
     print(f"population: {len(plan.phase_run_ids)} case(s)")
     if plan.dropped_duplicate_phase_run_ids:
@@ -172,7 +178,19 @@ def _print_batch_outcome(outcome: ee.BatchExecutionOutcome) -> None:
 
 
 def _resolve_batch_selector(args: argparse.Namespace) -> ee.BatchSelector:
+    from scout.replay.tasks import EXPERIMENT_TASK_ADAPTER, RelevanceTask
+
     provided = []
+    task_config = getattr(args, "task_config", None)
+    task = None
+    if task_config:
+        try:
+            task = EXPERIMENT_TASK_ADAPTER.validate_json(Path(task_config).read_bytes())
+        except (OSError, ValueError) as exc:
+            print(f"error: invalid task config: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        if isinstance(task, RelevanceTask):
+            provided.append("task_config")
     if args.phase_run_id:
         provided.append("phase_run_id")
     if args.scan_id is not None:
@@ -181,14 +199,24 @@ def _resolve_batch_selector(args: argparse.Namespace) -> ee.BatchSelector:
         provided.append("window")
     if args.graded_with_corrections:
         provided.append("graded_with_corrections")
+    if task is not None and task.kind == "reply_draft" and not provided:
+        print(
+            "error: reply_draft task config requires a drafting population selector: "
+            "--phase-run-id, --scan-id, --from/--to, or --graded-with-corrections",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if len(provided) != 1:
         print(
             "error: exactly one of --phase-run-id, --scan-id, --from/--to, or "
-            "--graded-with-corrections is required",
+            "--graded-with-corrections, or --task-config is required",
             file=sys.stderr,
         )
         raise SystemExit(2)
     kind = provided[0]
+    if kind == "task_config":
+        assert isinstance(task, RelevanceTask)
+        return ee.BatchSelector.by_relevance_corpus(task)
     if kind == "phase_run_id":
         return ee.BatchSelector.by_phase_run_ids(args.phase_run_id)
     if kind == "scan_id":

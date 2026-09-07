@@ -11,7 +11,6 @@ import type {
   BaselineEvidence,
   BatchCaseEvidenceV1,
   CandidateConfig,
-  CandidateConfigV4,
   DomainDiff,
   ExperimentCandidateDetail,
   ExperimentComparison,
@@ -85,7 +84,7 @@ const candidateConfigV2Schema = z
   })
   .strict();
 
-const candidateConfigV4Schema: z.ZodType<CandidateConfigV4> = z
+const candidateConfigV4Schema = z
   .object({
     version: z.literal(4),
     phase: z.enum(["relevance", "reply_draft", "critic"]),
@@ -119,10 +118,28 @@ const candidateConfigV4Schema: z.ZodType<CandidateConfigV4> = z
   })
   .strict();
 
+const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
+const relevanceTaskSchema = z.object({
+  kind: z.literal("relevance"), snapshot_digest: digestSchema,
+  partition_digest: digestSchema.nullable(), partition: z.enum(["all", "train", "heldout"]),
+}).strict().refine(task => (task.partition === "all") === (task.partition_digest === null));
+
 const candidateConfigSchema: z.ZodType<CandidateConfig> = z.union([
   candidateConfigV2Schema,
   candidateConfigV4Schema,
+  candidateConfigV4Schema.extend({
+    version: z.literal(5), phase: z.literal("relevance"), grader_attached: z.literal(true),
+    task: relevanceTaskSchema,
+    source_exclusions: z.array(z.object({ evaluation_id: z.number().int().positive(), reason: z.literal("missing_complete_relevance_phase") }).strict()),
+  }),
 ]);
+
+const relevanceTargetSchema = z.object({
+  task: relevanceTaskSchema, evaluation_id: z.number().int().positive(),
+  grade_revision_id: z.number().int().positive(), input_digest: digestSchema,
+  project_key: z.string().min(1), is_relevant: z.boolean(),
+  provenance: z.array(z.object({ queue_digest: digestSchema, method: z.enum(["random", "ranked"]) }).strict()),
+}).strict();
 
 function parseCandidateConfig(raw: string, experimentRunId: number): CandidateConfig {
   return parseJsonColumn(
@@ -178,7 +195,7 @@ const replayWorkerConfigurationSchema: z.ZodType<ReplayWorkerConfiguration> = z
     max_output_tokens: z.number().int().positive().nullable().optional(),
     jig_revision: z.string().min(1),
     grader_version: z.string().min(1).nullable(),
-    assembler_version: z.string().min(1),
+    assembler_version: z.string().min(1).nullable(),
     tools: z.array(z.string().min(1)),
     include_memory_in_prompt: z.boolean(),
     include_feedback_in_prompt: z.boolean(),
@@ -209,6 +226,14 @@ const batchCaseEvidenceV1Schema: z.ZodType<BatchCaseEvidenceV1> = z
 const baselineEvidenceSchema: z.ZodType<BaselineEvidence> = z.union([
   baselineEvidenceV2Schema,
   batchCaseEvidenceV1Schema,
+  z.object({
+    version: z.literal(3), task: z.literal("relevance"),
+    recorded_input_sha256: digestSchema, baseline_model: z.string().min(1),
+    baseline_prompt_sha256: digestSchema, baseline_prompt_reused: z.boolean(),
+    candidate_model: z.string().min(1), candidate_prompt_sha256: digestSchema,
+    worker_configuration: replayWorkerConfigurationSchema,
+    estimated_usd: z.number().nullable(), target: relevanceTargetSchema,
+  }).strict(),
 ]);
 
 function parseBaselineEvidence(raw: string, experimentId: number): BaselineEvidence {
@@ -217,6 +242,15 @@ function parseBaselineEvidence(raw: string, experimentId: number): BaselineEvide
     raw,
     `evaluation_experiments ${experimentId} baseline_evidence`
   );
+}
+
+function assertTaskEvidence(config: CandidateConfig, evidence: BaselineEvidence, experimentId: number): void {
+  const expectedVersion = config.version === 2 ? 2 : config.version === 4 ? 1 : 3;
+  if (evidence.version !== expectedVersion) throw new DataIntegrityError(`experiment ${experimentId}: incompatible evidence versions`);
+  if (config.version === 5 && evidence.version === 3 && JSON.stringify(config.task) !== JSON.stringify(evidence.target.task)) {
+    throw new DataIntegrityError(`experiment ${experimentId}: target task differs from parent configuration`);
+  }
+  assertBaselineEvidenceOraclePin(evidence, config.grader_attached, experimentId);
 }
 
 // The correction-oracle pin is all-or-nothing: every field below is written
@@ -232,7 +266,7 @@ const ORACLE_PIN_FIELDS = [
   "dossier_revision",
   "grader_version",
   "assembler_version",
-] as const satisfies readonly (keyof BaselineEvidence)[];
+] as const satisfies readonly (keyof Exclude<BaselineEvidence, { version: 3 }>)[];
 
 // Cross-record invariant: baseline_evidence's oracle pin and the parent's
 // candidate_config.grader_attached must agree, regardless of attempt
@@ -243,6 +277,12 @@ function assertBaselineEvidenceOraclePin(
   graderAttached: boolean,
   experimentId: number
 ): void {
+  if (evidence.version === 3) {
+    if (!graderAttached || evidence.worker_configuration.phase !== "relevance" || evidence.worker_configuration.grader_version !== "relevance_exact_match/v1") {
+      throw new DataIntegrityError(`experiment ${experimentId}: invalid relevance grader identity`);
+    }
+    return;
+  }
   const present = ORACLE_PIN_FIELDS.filter((field) => evidence[field] !== undefined);
   if (graderAttached) {
     const missing = ORACLE_PIN_FIELDS.filter((field) => evidence[field] === undefined);
@@ -262,7 +302,7 @@ function assertBaselineEvidenceOraclePin(
 
 // --- score_evidence (trace_comparisons.score_evidence) ---------------------
 
-const scoreEvidenceSchema: z.ZodType<ScoreEvidence> = z
+const replyScoreEvidenceSchema = z
   .object({
     grader_version: z.string().min(1),
     assembler_version: z.string().min(1),
@@ -274,6 +314,17 @@ const scoreEvidenceSchema: z.ZodType<ScoreEvidence> = z
     grader_attached: z.literal(true),
   })
   .strict();
+
+const scoreEvidenceSchema: z.ZodType<ScoreEvidence> = z.union([
+  replyScoreEvidenceSchema,
+  z.object({
+    format: z.literal("scout.relevance-score/v1"), grader_version: z.literal("relevance_exact_match/v1"),
+    target: relevanceTargetSchema, baseline_relevant: z.boolean(), candidate_relevant: z.boolean(),
+    baseline_correct: z.boolean(), candidate_correct: z.boolean(), accuracy_delta: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
+  }).strict().refine(score => score.baseline_correct === (score.baseline_relevant === score.target.is_relevant)
+    && score.candidate_correct === (score.candidate_relevant === score.target.is_relevant)
+    && score.accuracy_delta === Number(score.candidate_correct) - Number(score.baseline_correct)),
+]);
 
 function parseScoreEvidence(raw: string, experimentId: number): ScoreEvidence {
   return parseJsonColumn(
@@ -307,6 +358,14 @@ function assertScoreEvidenceConsistency(
     );
   }
   if (scoreEvidence === null) return;
+
+  if ("format" in scoreEvidence) {
+    if (baselineEvidence.version !== 3 || JSON.stringify(scoreEvidence.target) !== JSON.stringify(baselineEvidence.target)) {
+      throw new DataIntegrityError(`experiment ${experimentId}: relevance target differs from pinned evidence`);
+    }
+    return;
+  }
+  if (baselineEvidence.version === 3) throw new DataIntegrityError(`experiment ${experimentId}: expected relevance score`);
 
   if (scoreEvidence.reply_revision_id !== baselineEvidence.reply_revision_id) {
     throw new DataIntegrityError(
@@ -474,6 +533,7 @@ function buildReplyEvidence(
   comparison: ExperimentComparison | null
 ): ReplyEvidence {
   if (phase !== "reply_draft") return { available: false, reason: "not_reply_draft" };
+  if (baselineEvidence.version === 3) throw new DataIntegrityError("Relevance evidence on reply draft");
   if (!config.grader_attached) return { available: false, reason: "grader_not_attached" };
   if (status !== "complete") return { available: false, reason: "attempt_not_complete" };
   if (comparison === null || comparison.score_evidence === null) return { available: false, reason: "comparison_unavailable" };
@@ -504,6 +564,7 @@ function buildReplyEvidence(
     sha256Utf8(revision.reply_text) !== baselineEvidence.correction_sha256
   ) throw new DataIntegrityError(`experiment ${experimentId}: pinned reply revision identity mismatch`);
   const { trace_diff: trace, domain_diff: domain, score_evidence: score } = comparison;
+  if ("format" in score) throw new DataIntegrityError("Relevance score on reply draft");
   let baselineOutput: unknown;
   let candidateOutput: unknown;
   try {
@@ -733,9 +794,7 @@ function loadRunAttempts(runIds: number[]): Map<number, RunAttemptEvidence[]> {
     const config = parseCandidateConfig(row.candidate_config, row.experiment_run_id);
     assertCandidateConfigPhaseMatches(config, row.phase as FeedbackPhase, row.id);
     const baselineEvidence = parseBaselineEvidence(row.baseline_evidence, row.id);
-    if ((config.version === 2) !== (baselineEvidence.version === 2)) {
-      throw new DataIntegrityError(`experiment ${row.id}: incompatible evidence versions`);
-    }
+    assertTaskEvidence(config, baselineEvidence, row.id);
     const traceDiff = row.trace_diff === null ? null : parseTraceDiff(row.trace_diff, row.id);
     if (traceDiff) {
       if (row.comparison_trace_a_id === null || row.comparison_trace_b_id === null) throw new DataIntegrityError(`experiment ${row.id}: incomplete comparison identity`);
@@ -849,10 +908,11 @@ export function getExperimentRunDetail(runId: number): ExperimentRunDetailRespon
     configuration: {
       version: config.version, phase: config.phase, grader_attached: config.grader_attached,
       identity: config.version === 2 ? config.system_prompt_sha256 : config.variant_name,
-      plan_sha256: config.version === 4 ? config.plan_sha256 : null,
+      plan_sha256: config.version !== 2 ? config.plan_sha256 : null,
+      ...(config.version === 5 ? { task: config.task, source_exclusions: config.source_exclusions } : {}),
     },
     cases,
-    skipped_pairs: config.version === 4 ? config.skipped_pairs : [],
+    skipped_pairs: config.version !== 2 ? config.skipped_pairs : [],
   };
 }
 
@@ -988,15 +1048,7 @@ export function getExperimentDetail(experimentId: number): ExperimentDetailRespo
   const candidateConfig = parseCandidateConfig(expRow.candidate_config, expRow.experiment_run_id);
   assertCandidateConfigPhaseMatches(candidateConfig, expRow.phase as FeedbackPhase, experimentId);
   const baselineEvidence = parseBaselineEvidence(expRow.baseline_evidence, experimentId);
-  if (
-    (candidateConfig.version === 2 && baselineEvidence.version !== 2) ||
-    (candidateConfig.version === 4 && baselineEvidence.version !== 1)
-  ) {
-    throw new DataIntegrityError(
-      `experiment ${experimentId}: candidate_config and baseline_evidence versions are incompatible`
-    );
-  }
-  assertBaselineEvidenceOraclePin(baselineEvidence, candidateConfig.grader_attached, experimentId);
+  assertTaskEvidence(candidateConfig, baselineEvidence, experimentId);
 
   const baselineTraceEvidence = getAgentRunEvidence(expRow.baseline_trace_id);
   if (!baselineTraceEvidence) {

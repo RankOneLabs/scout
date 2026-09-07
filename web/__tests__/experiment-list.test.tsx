@@ -31,6 +31,7 @@ function makePage(): ExperimentRunListResponse {
         total_llm_call_count: 3,
         total_cost: 0.02,
         verdict: "not_graded",
+        relevance_accuracy: { available: false, case_count: 0, baseline_mean: null, candidate_mean: null, mean_delta: null },
         correction_distance: { available: false, case_count: 0, baseline_mean: null, candidate_mean: null, mean_delta: null },
         cost: { available: true, case_count: 1, baseline_mean: 0.01, candidate_mean: 0.02, mean_delta: 0.01 },
         latency: { available: false, case_count: 0, baseline_mean: null, candidate_mean: null, mean_delta: null },

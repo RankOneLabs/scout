@@ -47,7 +47,13 @@ export function formatDirectionalDelta(
 
 // --- Decision metrics ---------------------------------------------------
 
-export type DecisionMetricKey = "correction_distance" | "cost" | "latency";
+export type DecisionMetricKey = "correction_distance" | "relevance_accuracy" | "cost" | "latency";
+
+export interface RunQualityPresentation { label: string; delta: string }
+export function selectRunQuality(run: import("@/types/feedback-experiments").ExperimentRunSummary): RunQualityPresentation {
+  const value = run.phase === "relevance" ? run.relevance_accuracy.mean_delta : run.correction_distance.mean_delta;
+  return { label: run.phase === "relevance" ? "Relevance accuracy Δ" : "Correction Δ", delta: value == null ? "Unavailable" : value.toFixed(3) };
+}
 
 export interface DecisionMetric {
   key: DecisionMetricKey;
@@ -58,7 +64,9 @@ export interface DecisionMetric {
 }
 
 export function computeDecisionMetrics(comparison: ExperimentComparison | null): DecisionMetric[] {
-  const correctionDelta = comparison?.score_evidence?.delta ?? null;
+  const score = comparison?.score_evidence;
+  const isRelevance = score != null && "format" in score;
+  const correctionDelta = score == null ? null : "format" in score ? -score.accuracy_delta : score.delta;
   const costDelta =
     comparison !== null && comparison.cost_delta_available ? comparison.trace_diff.cost_delta : null;
   const latencyDelta =
@@ -72,11 +80,11 @@ export function computeDecisionMetrics(comparison: ExperimentComparison | null):
 
   return [
     {
-      key: "correction_distance",
-      label: "Correction distance",
-      helpText: "Candidate distance minus baseline distance from the pinned correction. Lower is better.",
+      key: isRelevance ? "relevance_accuracy" : "correction_distance",
+      label: isRelevance ? "Relevance accuracy" : "Correction distance",
+      helpText: isRelevance ? "Candidate correctness minus baseline correctness against the pinned human target. Higher is better." : "Candidate distance minus baseline distance from the pinned correction. Lower is better.",
       status: correction.status,
-      text: correction.text,
+      text: isRelevance ? String(score.accuracy_delta) : correction.text,
     },
     {
       key: "cost",
@@ -180,6 +188,11 @@ export function computeAttemptVerdict(
     };
   }
 
+  if ("format" in scoreEvidence) return {
+    kind: scoreEvidence.accuracy_delta > 0 ? "candidate_recommended" : scoreEvidence.accuracy_delta < 0 ? "candidate_not_recommended" : "no_measurable_difference",
+    label: scoreEvidence.accuracy_delta > 0 ? "Candidate corrects baseline" : scoreEvidence.accuracy_delta < 0 ? "Candidate introduces error" : "Same relevance accuracy",
+    description: "Compared against the pinned human relevance label; this is not a population-rate estimate.",
+  };
   const status = directionalDeltaStatus(scoreEvidence.delta);
   if (status === "better") {
     return {

@@ -15,6 +15,7 @@ process.env.TRACE_DB_PATH = tracesDbPath;
 let worker: ReplayWorkerConfiguration;
 
 function evidence(): BatchCaseEvidenceV1 {
+  if (worker.assembler_version === null) throw new Error("Drafting fixture requires an assembler");
   return {
     version: 1, recorded_input_sha256: "input-hash",
     baseline_model: "baseline-model", baseline_prompt_sha256: "baseline-hash",
