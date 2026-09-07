@@ -39,11 +39,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from scout.replay.experiments import BATCH_CANDIDATE_CONFIG_VERSION, DEFAULT_BATCH_VARIANT_NAME
+from scout.replay.experiments import (
+    DEFAULT_BATCH_VARIANT_NAME,
+    RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION,
+    SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS,
+    latest_attempts_by_case,
+)
 from scout.replay.tasks import RelevanceScore, RelevanceTask
+from scout.storage.evaluations import Experiment
 from scout.storage.state import StateManager
 
 REPORT_SCHEMA_VERSION = 2
+RELEVANCE_REPORT_SCHEMA_VERSION = 3
 BOOTSTRAP_METHOD = "paired_bootstrap_percentile"
 BOOTSTRAP_VERSION = 1
 BOOTSTRAP_RESAMPLES = 10_000
@@ -108,11 +115,11 @@ def _collect_parents(
         if run is None:
             raise ReportError(f"no experiment_runs row with id={experiment_run_id}")
         config = json.loads(run["candidate_config"])
-        if config.get("version") not in (BATCH_CANDIDATE_CONFIG_VERSION, 5):
+        if config.get("version") not in SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS:
             raise ReportError(
                 f"experiment_run {experiment_run_id} is not a batch/sweep parent "
-                f"(candidate_config version {config.get('version')!r} != "
-                f"{BATCH_CANDIDATE_CONFIG_VERSION!r})"
+                f"(candidate_config version {config.get('version')!r}; expected one of "
+                f"{SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS})"
             )
         parents.append({"experiment_run_id": experiment_run_id, **config})
 
@@ -156,15 +163,17 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
         raise ReportError("Relevance report parents do not share a task/population")
     cases: list[RelevanceReportCase] = []
     for parent in parents:
-        latest = {
-            attempt["phase_run_id"]: attempt
-            for attempt in state.list_experiment_attempts(parent["experiment_run_id"])
-        }
+        latest = latest_attempts_by_case([
+            Experiment(**row)
+            for row in state.list_experiment_attempts(parent["experiment_run_id"])
+        ])
         for phase_run_id, attempt in sorted(latest.items()):
-            evidence = json.loads(attempt["baseline_evidence"])
+            if attempt.status not in REPORTABLE_ATTEMPT_STATUSES:
+                continue
+            evidence = json.loads(attempt.baseline_evidence)
             score = None
-            if attempt["status"] == "complete":
-                comparison = state.get_trace_comparison(attempt["id"])
+            if attempt.status == "complete":
+                comparison = state.get_trace_comparison(attempt.id)
                 if comparison is None or comparison["score_evidence"] is None:
                     raise ReportError("Completed relevance attempt lacks score evidence")
                 score = RelevanceScore.model_validate_json(comparison["score_evidence"])
@@ -179,11 +188,19 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
                     variant=parent["variant_name"],
                     baseline_model=evidence["baseline_model"],
                     baseline_prompt_sha256=evidence["baseline_prompt_sha256"],
-                    status=attempt["status"],
+                    status=attempt.status,
                     score=score,
-                    actual_usd=attempt["candidate_cost"],
+                    actual_usd=attempt.candidate_cost,
                 )
             )
+    skipped_pairs = [
+        {"variant": parent["variant_name"], **pair}
+        for parent in parents for pair in parent["skipped_pairs"]
+    ]
+    if not cases and not skipped_pairs:
+        raise ReportError(
+            "no reportable evidence (attempts or skipped pairs) under the given experiment_run_ids"
+        )
     variants = sorted(parent["variant_name"] for parent in parents)
     segment_keys = sorted({(case.baseline_model, case.baseline_prompt_sha256) for case in cases})
     segments = []
@@ -233,17 +250,13 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             {"baseline_model": model, "baseline_prompt_sha256": prompt, "variants": summaries}
         )
     return {
-        "version": 3,
+        "version": RELEVANCE_REPORT_SCHEMA_VERSION,
         "task": task.model_dump(mode="json"),
         "experiment_run_ids": sorted(parent["experiment_run_id"] for parent in parents),
         "plan_sha256": parents[0]["plan_sha256"],
         "population_phase_run_ids": parents[0]["phase_run_ids"],
         "source_exclusions": parents[0]["source_exclusions"],
-        "skipped_pairs": [
-            {"variant": parent["variant_name"], **pair}
-            for parent in parents
-            for pair in parent["skipped_pairs"]
-        ],
+        "skipped_pairs": skipped_pairs,
         "segments": segments,
         "cases": [
             {
@@ -309,22 +322,20 @@ def _collect_attempted_cases(
         experiment_run_id = parent["experiment_run_id"]
         variant_name = parent.get("variant_name", DEFAULT_BATCH_VARIANT_NAME)
 
-        latest_by_case: dict[int, dict[str, Any]] = {}
-        for attempt in state.list_experiment_attempts(experiment_run_id):
-            current = latest_by_case.get(attempt["phase_run_id"])
-            if current is None or attempt["attempt_number"] > current["attempt_number"]:
-                latest_by_case[attempt["phase_run_id"]] = attempt
+        latest_by_case = latest_attempts_by_case([
+            Experiment(**row) for row in state.list_experiment_attempts(experiment_run_id)
+        ])
 
         for attempt in latest_by_case.values():
-            if attempt["status"] not in REPORTABLE_ATTEMPT_STATUSES:
+            if attempt.status not in REPORTABLE_ATTEMPT_STATUSES:
                 continue
-            evidence = json.loads(attempt["baseline_evidence"])
+            evidence = json.loads(attempt.baseline_evidence)
             segment_key = _segment_key(
                 evidence["baseline_model"], evidence["baseline_prompt_sha256"],
             )
             baseline_distance = candidate_distance = delta = None
-            if attempt["status"] == "complete":
-                comparison = state.get_trace_comparison(attempt["id"])
+            if attempt.status == "complete":
+                comparison = state.get_trace_comparison(attempt.id)
                 if comparison is not None and comparison["score_evidence"] is not None:
                     score = json.loads(comparison["score_evidence"])
                     baseline_distance = score["baseline_distance"]
@@ -332,18 +343,18 @@ def _collect_attempted_cases(
                     delta = score["delta"]
             cases.append(
                 ReportCase(
-                    phase_run_id=attempt["phase_run_id"],
+                    phase_run_id=attempt.phase_run_id,
                     variant_name=variant_name,
                     segment_key=segment_key,
                     baseline_model=evidence["baseline_model"],
                     baseline_prompt_sha256=evidence["baseline_prompt_sha256"],
-                    status=attempt["status"],
+                    status=attempt.status,
                     baseline_distance=baseline_distance,
                     candidate_distance=candidate_distance,
                     delta=delta,
                     estimated_usd=evidence.get("estimated_usd"),
-                    actual_usd=attempt["candidate_cost"],
-                    error_detail=attempt["error_detail"],
+                    actual_usd=attempt.candidate_cost,
+                    error_detail=attempt.error_detail,
                 )
             )
     return cases
@@ -517,8 +528,8 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
     if duplicate_ids:
         raise ReportError(f"duplicate experiment_run_id(s) are not allowed: {duplicate_ids}")
     parents = _collect_parents(state, experiment_run_ids)
-    if any(parent["version"] == 5 for parent in parents):
-        if any(parent["version"] != 5 for parent in parents):
+    if any(parent["version"] == RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION for parent in parents):
+        if any(parent["version"] != RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION for parent in parents):
             raise ReportError("Cannot combine drafting and relevance tasks in one report")
         try:
             return _build_relevance_report(state, parents)
@@ -634,30 +645,93 @@ def _format_usd(value: float | None) -> str:
     return "unavailable" if value is None else f"${value:.6f}"
 
 
+def _format_metric(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.4f}"
+
+
+def _render_relevance_markdown(report: dict[str, Any]) -> str:
+    task = report["task"]
+    lines = [
+        "# Scout relevance replay report",
+        "",
+        report["interpretation"],
+        "",
+        f"Schema: `{report['version']}`",
+        f"Experiment runs: {', '.join(str(i) for i in report['experiment_run_ids'])}",
+        f"Authorized plan: `{report['plan_sha256']}`",
+        f"Snapshot: `{task['snapshot_digest']}`; partition: `{task['partition']}`",
+        f"Partition digest: {task['partition_digest'] or 'n/a'}",
+        "",
+        "## Coverage",
+        "",
+        f"- Population: {len(report['population_phase_run_ids'])}",
+        f"- Latest reportable attempts: {len(report['cases'])}",
+        f"- Skipped pairs: {len(report['skipped_pairs'])}",
+        f"- Source exclusions: {len(report['source_exclusions'])}",
+        "",
+        "## Cost",
+        "",
+        "- Actual (all immutable attempts, including superseded retries): "
+        f"{_format_usd(report['cost']['actual_usd'])}",
+        "",
+    ]
+    if report["source_exclusions"]:
+        lines.extend(["## Source exclusions", ""])
+        lines.extend(
+            f"- evaluation `{item['evaluation_id']}`: {item['reason']}"
+            for item in report["source_exclusions"]
+        )
+        lines.append("")
+    if report["skipped_pairs"]:
+        lines.extend(["## Skipped pairs", ""])
+        lines.extend(
+            f"- phase_run_id `{item['phase_run_id']}` variant `{item['variant']}` "
+            f"({item['classification']}): {item['reason'] or 'n/a'}"
+            for item in report["skipped_pairs"]
+        )
+        lines.append("")
+    for segment in report["segments"]:
+        lines.extend(
+            [
+                f"## {segment['baseline_model']} / {segment['baseline_prompt_sha256']}",
+                "",
+                "| variant | scored | common | baseline accuracy | candidate accuracy | delta |",
+                "|---|---|---|---|---|---|",
+            ]
+        )
+        for variant in segment["variants"]:
+            lines.append(
+                f"| `{variant['variant']}` | {variant['scored_case_count']} | "
+                f"{variant['common_case_count']} | "
+                f"{_format_metric(variant['baseline_accuracy'])} | "
+                f"{_format_metric(variant['candidate_accuracy'])} | "
+                f"{_format_metric(variant['accuracy_delta'])} |"
+            )
+        lines.extend(
+            [
+                "",
+                "Confusion counts on common successful cases:",
+                "",
+                "| variant | prediction | TP | FP | TN | FN |",
+                "|---|---|---|---|---|---|",
+            ]
+        )
+        for variant in segment["variants"]:
+            for side in ("baseline", "candidate"):
+                counts = variant[f"{side}_confusion"]
+                lines.append(
+                    f"| `{variant['variant']}` | {side} | {counts['true_positive']} | "
+                    f"{counts['false_positive']} | {counts['true_negative']} | "
+                    f"{counts['false_negative']} |"
+                )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     """Render Markdown exclusively from an already-built report document."""
-    if report.get("version") == 3:
-        lines = [
-            "# Scout relevance replay report",
-            "",
-            report["interpretation"],
-            "",
-            f"Snapshot: `{report['task']['snapshot_digest']}`; "
-            f"partition: `{report['task']['partition']}`",
-            "",
-        ]
-        for segment in report["segments"]:
-            lines.extend(
-                [f"## {segment['baseline_model']} / {segment['baseline_prompt_sha256']}", ""]
-            )
-            for variant in segment["variants"]:
-                lines.append(
-                    f"- {variant['variant']}: {variant['common_case_count']} paired cases; "
-                    f"baseline accuracy {variant['baseline_accuracy']}; "
-                    f"candidate accuracy {variant['candidate_accuracy']}; "
-                    f"delta {variant['accuracy_delta']}"
-                )
-        return "\n".join(lines) + "\n"
+    if report.get("version") == RELEVANCE_REPORT_SCHEMA_VERSION:
+        return _render_relevance_markdown(report)
     coverage = report["correction_coverage"]
     skipped_counts = coverage["skipped"]
     lines = [
@@ -764,6 +838,7 @@ __all__ = [
     "BOOTSTRAP_VERSION",
     "REPORTABLE_ATTEMPT_STATUSES",
     "REPORT_SCHEMA_VERSION",
+    "RELEVANCE_REPORT_SCHEMA_VERSION",
     "SKIP_CLASSIFICATIONS",
     "ReportCase",
     "ReportError",

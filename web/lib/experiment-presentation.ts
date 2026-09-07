@@ -51,7 +51,7 @@ export type DecisionMetricKey = "correction_distance" | "relevance_accuracy" | "
 
 export interface RunQualityPresentation { label: string; delta: string }
 export function selectRunQuality(run: import("@/types/feedback-experiments").ExperimentRunSummary): RunQualityPresentation {
-  const value = run.phase === "relevance" ? run.relevance_accuracy?.mean_delta : run.correction_distance.mean_delta;
+  const value = run.phase === "relevance" ? run.relevance_accuracy.mean_delta : run.correction_distance.mean_delta;
   return { label: run.phase === "relevance" ? "Relevance accuracy Δ" : "Correction Δ", delta: value == null ? "Unavailable" : value.toFixed(3) };
 }
 

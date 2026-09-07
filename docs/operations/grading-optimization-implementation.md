@@ -27,8 +27,10 @@ evidence remain unchanged. An explicit `--task-config` JSON file selects the tas
 {"kind": "reply_draft"}
 ```
 
-Use drafting with its existing `--graded-with-corrections`, scan, window, or
-phase-run selector. A relevance config instead selects the frozen corpus itself:
+The `reply_draft` config must accompany an existing `--graded-with-corrections`,
+scan, window, or phase-run selector; it chooses the task, not the population.
+It is optional because drafting remains the default. A relevance config instead
+selects the frozen corpus itself and cannot accompany a drafting selector:
 
 ```json
 {

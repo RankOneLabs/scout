@@ -263,7 +263,7 @@ function ScoreDeltas({ comparison }: { comparison: ExperimentComparison }) {
 }
 
 function BaselineEvidenceSection({ evidence }: { evidence: BaselineEvidence }) {
-  if (evidence.version === 3) return <details className="rounded border p-4 text-sm">
+  if (evidence.version === 3) return <details className="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900 p-4 text-sm">
     <summary>Pinned relevance target</summary>
     <p>Project: {evidence.target.project_key} · evaluation #{evidence.target.evaluation_id} · grade revision #{evidence.target.grade_revision_id}</p>
     <p className="break-all">Snapshot: {evidence.target.task.snapshot_digest}</p>
@@ -322,7 +322,7 @@ function BaselineEvidenceSection({ evidence }: { evidence: BaselineEvidence }) {
 }
 
 function ScoreEvidenceCard({ scoreEvidence }: { scoreEvidence: ScoreEvidence }) {
-  if ("format" in scoreEvidence) return <div className="space-y-2 text-sm">
+  if ("format" in scoreEvidence) return <div className="rounded border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 p-3 space-y-2 text-sm">
     <h3 className="font-medium">Relevance classification</h3>
     <p>Human target: {scoreEvidence.target.is_relevant ? "relevant" : "irrelevant"} · grade revision #{scoreEvidence.target.grade_revision_id}</p>
     <p>Baseline: {scoreEvidence.baseline_correct ? "correct" : "incorrect"} · Candidate: {scoreEvidence.candidate_correct ? "correct" : "incorrect"}</p>

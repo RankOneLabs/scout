@@ -179,6 +179,16 @@ def _batch_args(**overrides) -> argparse.Namespace:
 
 
 class TestBatchReplayFeedback:
+    def test_drafting_task_alone_explains_required_population(self, tmp_path, capsys) -> None:
+        config = tmp_path / "task.json"
+        config.write_text('{"kind": "reply_draft"}')
+        with pytest.raises(SystemExit):
+            replay_cli._resolve_batch_selector(_batch_args(task_config=str(config)))
+        assert (
+            "reply_draft task config requires a drafting population selector"
+            in capsys.readouterr().err
+        )
+
     @pytest.mark.parametrize("kind", ["reply_draft", "relevance"])
     def test_task_is_selected_by_config(self, kind, tmp_path) -> None:
         config = tmp_path / "task.json"

@@ -199,6 +199,13 @@ def _resolve_batch_selector(args: argparse.Namespace) -> ee.BatchSelector:
         provided.append("window")
     if args.graded_with_corrections:
         provided.append("graded_with_corrections")
+    if task is not None and task.kind == "reply_draft" and not provided:
+        print(
+            "error: reply_draft task config requires a drafting population selector: "
+            "--phase-run-id, --scan-id, --from/--to, or --graded-with-corrections",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if len(provided) != 1:
         print(
             "error: exactly one of --phase-run-id, --scan-id, --from/--to, or "

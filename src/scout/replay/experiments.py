@@ -32,6 +32,7 @@ import dataclasses
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -90,6 +91,7 @@ from scout.replay.tasks import (
 from scout.resources import runtime_resource
 from scout.result import Err
 from scout.scanning.schemas import CritiquePhaseOutput, RelevancePhaseOutput, StructuredDraftOutput
+from scout.storage.evaluations import Experiment
 from scout.storage.state import ExperimentCASError, StateManager
 from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
 
@@ -109,6 +111,8 @@ BASELINE_EVIDENCE_VERSION = 2
 
 # v2 additionally pins the complete controlled worker configuration.
 PLAN_SCHEMA_VERSION = 2
+# Relevance plans pin a corpus target, not a reply-correction oracle.
+RELEVANCE_PLAN_SCHEMA_VERSION = 3
 
 # replay-sweep v1 (contracts/replay-sweep.v1.schema.json).
 SWEEP_SCHEMA_VERSION = 1
@@ -129,6 +133,11 @@ SWEEP_SCHEMA_PATH = runtime_resource("contracts", "replay-sweep.v1.schema.json")
 # durable record of it; without it, a report built after the fact could
 # not reconstruct correction coverage or exclusions for excluded cases.
 BATCH_CANDIDATE_CONFIG_VERSION = 4
+# Relevance parent: frozen task identity and source exclusions.
+RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION = 5
+SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS = (
+    BATCH_CANDIDATE_CONFIG_VERSION, RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION,
+)
 
 # v1: one batch/sweep case's fully-resolved candidate identity, pinned
 # correction oracle, and repriced spend estimate (evaluation_experiments.
@@ -247,6 +256,7 @@ _STAGE_MESSAGES: dict[str, str] = {
     "candidate_grading": (
         "The candidate's reply-correction score could not be verified or was not produced."
     ),
+    "relevance_grading": "Relevance score evidence could not be verified",
     "diff_construction": "The trace or domain comparison could not be constructed or serialized.",
 }
 
@@ -1056,10 +1066,10 @@ async def _run_candidate_and_complete(
             score_evidence_json = _canonical_json(score.model_dump(mode="json"))
         except (ValueError, ComparisonConstructionError) as exc:
             state.fail_experiment(
-                experiment_id, error_detail="Relevance score evidence could not be verified"
+                experiment_id, error_detail=_STAGE_MESSAGES["relevance_grading"]
             )
             raise ComparisonConstructionError(
-                "Relevance score evidence could not be verified"
+                _STAGE_MESSAGES["relevance_grading"]
             ) from exc
     if oracle is not None:
         assert baseline_distance is not None
@@ -1747,7 +1757,7 @@ def _build_canonical_plan_document(
                 "baseline_model": case.baseline.baseline_model,
                 "baseline_prompt_sha256": _sha256_utf8(case.baseline.baseline_system_prompt),
                 "recorded_input_sha256": _sha256_utf8(case.baseline.recorded_input),
-                "oracle": (
+                ("target" if case.relevance is not None else "oracle"): (
                     {
                         "reply_revision_id": case.oracle.reply_revision_id,
                         "correction_sha256": case.oracle.correction_sha256,
@@ -1876,7 +1886,7 @@ async def build_batch_plan(
         pairs=pairs, skip_policy=skip_policy, pricing_catalog=pricing_catalog, sweep=sweep,
     )
     if relevance_population is not None:
-        plan_document["version"] = 3
+        plan_document["version"] = RELEVANCE_PLAN_SCHEMA_VERSION
         plan_document["source_exclusions"] = [
             item.model_dump(mode="json") for item in relevance_population.exclusions
         ]
@@ -2013,7 +2023,10 @@ def build_batch_candidate_config(
     """
     return _canonical_json(
         {
-            "version": BATCH_CANDIDATE_CONFIG_VERSION if relevance_population is None else 5,
+            "version": (
+                BATCH_CANDIDATE_CONFIG_VERSION if relevance_population is None
+                else RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION
+            ),
             **(
                 {
                     "task": relevance_population.cases[0].target.task.model_dump(mode="json"),
@@ -2093,7 +2106,6 @@ def build_batch_case_evidence(
     if case.relevance is not None:
         evidence = RelevanceCaseEvidence.model_validate(
             {
-                "version": 3,
                 "task": "relevance",
                 "recorded_input_sha256": plan.recorded_input_sha256,
                 "baseline_model": case.baseline.baseline_model,
@@ -2307,6 +2319,16 @@ async def execute_batch_replay(
     return BatchExecutionOutcome(experiment_run_ids=experiment_run_ids, attempts=tuple(attempts))
 
 
+def latest_attempts_by_case(attempts: Sequence[Experiment]) -> dict[int, Experiment]:
+    """Select by immutable attempt number, independent of storage iteration order."""
+    latest: dict[int, Experiment] = {}
+    for attempt in attempts:
+        current = latest.get(attempt.phase_run_id)
+        if current is None or attempt.attempt_number > current.attempt_number:
+            latest[attempt.phase_run_id] = attempt
+    return latest
+
+
 def _parse_batch_candidate_config(candidate_config_json: str) -> dict[str, Any]:
     try:
         document = json.loads(candidate_config_json)
@@ -2314,13 +2336,12 @@ def _parse_batch_candidate_config(candidate_config_json: str) -> dict[str, Any]:
         raise RetryResolutionError(
             f"experiment_runs.candidate_config is not valid JSON: {exc}"
         ) from exc
-    if not isinstance(document, dict) or document.get("version") not in (
-        BATCH_CANDIDATE_CONFIG_VERSION,
-        5,
-    ):
+    version = document.get("version") if isinstance(document, dict) else None
+    if not isinstance(document, dict) or version not in SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS:
         raise RetryResolutionError(
-            f"experiment_runs.candidate_config version {document.get('version')!r} is not a "
-            f"batch/sweep candidate_config (expected {BATCH_CANDIDATE_CONFIG_VERSION!r}); only a "
+            f"experiment_runs.candidate_config version {version!r} is not a "
+            "batch/sweep candidate_config "
+            f"(expected one of {SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS}); only a "
             "batch or sweep experiment_runs parent can be retried this way"
         )
     return document
@@ -2352,17 +2373,14 @@ async def retry_batch_replay(
     system_prompt_override = config.get("system_prompt_override")
     variant_name = config.get("variant_name", DEFAULT_BATCH_VARIANT_NAME)
 
-    attempts = state.list_experiment_attempts(experiment_run_id)
-    latest_by_case: dict[int, dict[str, Any]] = {}
-    for attempt in attempts:
-        current = latest_by_case.get(attempt["phase_run_id"])
-        if current is None or attempt["attempt_number"] > current["attempt_number"]:
-            latest_by_case[attempt["phase_run_id"]] = attempt
+    latest_by_case = latest_attempts_by_case(
+        [Experiment(**row) for row in state.list_experiment_attempts(experiment_run_id)]
+    )
 
     failed_cases = {
         phase_run_id: attempt
         for phase_run_id, attempt in latest_by_case.items()
-        if attempt["status"] == "failed"
+        if attempt.status == "failed"
     }
     if phase_run_ids is not None:
         unknown = sorted(set(phase_run_ids) - set(latest_by_case))
@@ -2387,7 +2405,7 @@ async def retry_batch_replay(
     root = _resolve_dossier_root(dossier_root)
 
     relevance_by_phase: dict[int, RelevanceCaseSource] = {}
-    if config["version"] == 5:
+    if config["version"] == RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION:
         try:
             task = RelevanceTask.model_validate(config["task"])
         except (ValueError, KeyError) as exc:
@@ -2400,7 +2418,7 @@ async def retry_batch_replay(
     attempts_out: list[BatchAttemptOutcome] = []
     for phase_run_id, failed_attempt in sorted(failed_cases.items()):
         try:
-            pinned_evidence = json.loads(failed_attempt["baseline_evidence"])
+            pinned_evidence = json.loads(failed_attempt.baseline_evidence)
         except (TypeError, json.JSONDecodeError) as exc:
             raise RetryResolutionError(
                 f"phase_run_id={phase_run_id} has malformed pinned baseline evidence"
@@ -2409,7 +2427,10 @@ async def retry_batch_replay(
             raise RetryResolutionError(
                 f"phase_run_id={phase_run_id} has malformed pinned baseline evidence"
             )
-        if config["version"] == 5 and phase_run_id not in relevance_by_phase:
+        if (
+            config["version"] == RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION
+            and phase_run_id not in relevance_by_phase
+        ):
             raise RetryResolutionError("Failed attempt is outside the pinned relevance population")
         case = await _resolve_batch_case(
             state,
@@ -2457,7 +2478,7 @@ async def retry_batch_replay(
             )
         outcome = await _execute_one_batch_attempt(
             state=state, tracer=tracer, feedback=feedback, experiment_run_id=experiment_run_id,
-            case=case, pair=pair, supersedes_experiment_id=failed_attempt["id"],
+            case=case, pair=pair, supersedes_experiment_id=failed_attempt.id,
         )
         attempts_out.append(outcome)
 
@@ -2469,6 +2490,10 @@ async def retry_batch_replay(
 __all__ = [
     "BASELINE_EVIDENCE_VERSION",
     "BATCH_CANDIDATE_CONFIG_VERSION",
+    "RELEVANCE_BATCH_CANDIDATE_CONFIG_VERSION",
+    "RELEVANCE_PLAN_SCHEMA_VERSION",
+    "SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS",
+    "latest_attempts_by_case",
     "BATCH_CASE_EVIDENCE_VERSION",
     "CANDIDATE_CONFIG_VERSION",
     "DEFAULT_BATCH_VARIANT_NAME",

@@ -118,21 +118,22 @@ const candidateConfigV4Schema = z
   })
   .strict();
 
-const candidateConfigSchema: z.ZodType<CandidateConfig> = z.union([
-  candidateConfigV2Schema,
-  candidateConfigV4Schema,
-  candidateConfigV4Schema.extend({
-    version: z.literal(5), phase: z.literal("relevance"), grader_attached: z.literal(true),
-    task: z.lazy(() => relevanceTaskSchema),
-    source_exclusions: z.array(z.object({ evaluation_id: z.number().int().positive(), reason: z.literal("missing_complete_relevance_phase") }).strict()),
-  }),
-]);
-
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const relevanceTaskSchema = z.object({
   kind: z.literal("relevance"), snapshot_digest: digestSchema,
   partition_digest: digestSchema.nullable(), partition: z.enum(["all", "train", "heldout"]),
 }).strict().refine(task => (task.partition === "all") === (task.partition_digest === null));
+
+const candidateConfigSchema: z.ZodType<CandidateConfig> = z.union([
+  candidateConfigV2Schema,
+  candidateConfigV4Schema,
+  candidateConfigV4Schema.extend({
+    version: z.literal(5), phase: z.literal("relevance"), grader_attached: z.literal(true),
+    task: relevanceTaskSchema,
+    source_exclusions: z.array(z.object({ evaluation_id: z.number().int().positive(), reason: z.literal("missing_complete_relevance_phase") }).strict()),
+  }),
+]);
+
 const relevanceTargetSchema = z.object({
   task: relevanceTaskSchema, evaluation_id: z.number().int().positive(),
   grade_revision_id: z.number().int().positive(), input_digest: digestSchema,

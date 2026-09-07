@@ -149,6 +149,7 @@ class RelevanceCaseSource:
 
 
 class RelevanceSourceExclusion(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
     evaluation_id: int
     reason: Literal["missing_complete_relevance_phase"]
 

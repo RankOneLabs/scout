@@ -39,7 +39,7 @@ from scout.dossiers.resolver import (
 )
 from scout.grading.correction import ReplyCorrectionGrader, normalized_edit_distance
 from scout.grading.snapshots import CorpusSelection, build_snapshot_bundle, read_grade_population
-from scout.replay.reporting import build_batch_report
+from scout.replay.reporting import ReportError, build_batch_report, render_markdown
 from scout.replay.tasks import RelevanceTask, load_relevance_population
 from scout.result import Ok
 from scout.scanning.schemas import RelevancePhaseOutput, StructuredDraftOutput
@@ -333,13 +333,27 @@ def _seed_phase_run(
     )
 
 
-async def _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path) -> RelevanceTask:
+async def _seed_relevance_task(
+    state,
+    tracer,
+    feedback,
+    monkeypatch,
+    tmp_path,
+    *,
+    missing_negative_phase=False,
+    disagree_negative=False,
+) -> RelevanceTask:
     _patch_resolve_dossier(monkeypatch)
     monkeypatch.setattr("scout.grading.snapshots.resolve_dossier", ee.resolve_dossier)
     for relevant in (False, True):
         payload = {**RELEVANCE_PAYLOAD, "relevant": relevant}
         trace_id = await _make_baseline_trace(tracer, feedback, payload=payload)
-        phase_id = _seed_phase_run(state, trace_id=trace_id, model="claude-haiku-4-5-20251001")
+        phase_id = _seed_phase_run(
+            state,
+            trace_id=trace_id,
+            model="claude-haiku-4-5-20251001",
+            status="error" if missing_negative_phase and not relevant else "complete",
+        )
         phase = state.get_phase_run(phase_id)
         with state.db.transaction():
             cursor = state.conn.execute(
@@ -350,7 +364,7 @@ async def _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path) -
                 (
                     phase["post_id"],
                     phase["scan_id"],
-                    int(relevant),
+                    int(relevant or disagree_negative),
                     "surfaced" if relevant else "not_relevant",
                     "a" * 40,
                 ),
@@ -371,6 +385,10 @@ async def _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path) -
                 schema_version=3,
             )
         )
+    return _freeze_relevance_task(state, tmp_path)
+
+
+def _freeze_relevance_task(state, tmp_path) -> RelevanceTask:
     with state.db.read_transaction():
         population = read_grade_population(state.conn, tmp_path)
     assert isinstance(population, Ok)
@@ -383,6 +401,355 @@ async def _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path) -
 
 
 class TestRelevanceBatch:
+    @pytest.mark.parametrize("partial_success_count", [0, 1])
+    async def test_sweep_report_compares_only_common_successful_cases(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+        partial_success_count,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        models = ("claude-sonnet-4-20250514", "claude-opus-4-20250514")
+        _stub_from_model(
+            monkeypatch,
+            {
+                models[0]: _FakeLLMClient(
+                    [_submit_response(RELEVANCE_PAYLOAD)] * 2,
+                    model=models[0],
+                ),
+                models[1]: _FakeLLMClient(
+                    [_submit_response(RELEVANCE_PAYLOAD)] * partial_success_count,
+                    model=models[1],
+                ),
+            },
+        )
+        sweep = ee.SweepDefinition(
+            name="relevance-sweep",
+            axis="model",
+            shared_model=None,
+            shared_prompt_file=None,
+            variants=tuple(
+                ee.SweepVariant(name, model, None)
+                for name, model in zip(("complete", "partial"), models, strict=True)
+            ),
+        )
+        variants = ee.batch_variants_for_sweep(sweep, base_dir=tmp_path)
+        selector = ee.BatchSelector.by_relevance_corpus(task)
+        preview = await ee.preview_batch_replay(
+            state=state,
+            tracer=tracer,
+            selector=selector,
+            variants=variants,
+            skip_policy=ee.SkipPolicy(),
+            sweep=sweep,
+        )
+        outcome = await ee.execute_batch_replay(
+            state=state,
+            tracer=tracer,
+            feedback=feedback,
+            selector=selector,
+            variants=variants,
+            name="relevance-sweep",
+            skip_policy=ee.SkipPolicy(),
+            sweep=sweep,
+            authorize_plan_sha256=preview.plan.plan_sha256,
+        )
+        report = build_batch_report(
+            state, experiment_run_ids=list(outcome.experiment_run_ids.values())
+        )
+        summaries = report["segments"][0]["variants"]
+        assert [item["scored_case_count"] for item in summaries] == [2, partial_success_count]
+        assert [item["common_case_count"] for item in summaries] == [partial_success_count] * 2
+        expected_accuracy = 0.0 if partial_success_count else None
+        assert [item["candidate_accuracy"] for item in summaries] == [expected_accuracy] * 2
+        assert all(
+            sum(item["candidate_confusion"].values()) == partial_success_count for item in summaries
+        )
+        markdown = render_markdown(report)
+        assert "| variant | prediction | TP | FP | TN | FN |" in markdown
+        assert (
+            "| 1.0000 | 0.0000 | -1.0000 |" if partial_success_count else "| n/a | n/a | n/a |"
+        ) in markdown
+        assert "None" not in markdown
+        assert "Actual (all immutable attempts, including superseded retries)" in markdown
+        assert "$0.00" in markdown
+
+    @pytest.mark.parametrize("has_skips", [False, True])
+    async def test_report_requires_attempts_or_skips_and_renders_exclusions(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+        has_skips,
+    ) -> None:
+        task = await _seed_relevance_task(
+            state,
+            tracer,
+            feedback,
+            monkeypatch,
+            tmp_path,
+            missing_negative_phase=True,
+        )
+        loaded = load_relevance_population(state, task)
+        assert isinstance(loaded, Ok)
+        phase_id = loaded.value.cases[0].phase_run.id
+        skipped = (
+            (
+                {
+                    "phase_run_id": phase_id,
+                    "classification": "no_op",
+                    "reason": "Same model",
+                    "baseline_model": "claude-haiku-4-5-20251001",
+                    "baseline_prompt_sha256": "b" * 64,
+                },
+            )
+            if has_skips
+            else ()
+        )
+        config = ee.build_batch_candidate_config(
+            phase="relevance",
+            variant_name="default",
+            model_override=None,
+            system_prompt_override=None,
+            grader_attached=True,
+            sweep=None,
+            plan_sha256="a" * 64,
+            phase_run_ids=(phase_id,),
+            dropped_duplicate_phase_run_ids=(),
+            skipped_pairs=skipped,
+            relevance_population=loaded.value,
+        )
+        run_id = state.create_experiment_run(name="no-attempts", candidate_config=config)
+        if not has_skips:
+            with pytest.raises(ReportError, match="no reportable evidence"):
+                build_batch_report(state, experiment_run_ids=[run_id])
+        else:
+            report = build_batch_report(state, experiment_run_ids=[run_id])
+            markdown = render_markdown(report)
+            assert "## Skipped pairs" in markdown
+            assert "(no_op): Same model" in markdown
+            assert "missing_complete_relevance_phase" in markdown
+            assert "unavailable" in markdown
+        # Even a forged shared hash cannot make two task kinds comparable.
+        drafting_config = ee.build_batch_candidate_config(
+            phase="reply_draft",
+            variant_name="draft",
+            model_override=None,
+            system_prompt_override=None,
+            grader_attached=True,
+            sweep=None,
+            plan_sha256="a" * 64,
+            phase_run_ids=(phase_id,),
+            dropped_duplicate_phase_run_ids=(),
+            skipped_pairs=(),
+        )
+        draft_id = state.create_experiment_run(name="draft", candidate_config=drafting_config)
+        with pytest.raises(ReportError, match="Cannot combine drafting and relevance"):
+            build_batch_report(state, experiment_run_ids=[run_id, draft_id])
+
+    async def test_missing_complete_phase_is_excluded_and_printed(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+        capsys,
+    ) -> None:
+        from scout.cli.replay import _print_batch_preview
+
+        task = await _seed_relevance_task(
+            state,
+            tracer,
+            feedback,
+            monkeypatch,
+            tmp_path,
+            missing_negative_phase=True,
+        )
+        preview = await ee.preview_batch_replay(
+            state=state,
+            tracer=tracer,
+            selector=ee.BatchSelector.by_relevance_corpus(task),
+            variants=(ee.BatchVariant("default", "claude-sonnet-4-20250514", None),),
+            skip_policy=ee.SkipPolicy(),
+        )
+        population = preview.plan.relevance_population
+        assert len(population.cases) == 1
+        assert len(population.exclusions) == 1
+        _print_batch_preview(preview)
+        excluded = population.exclusions[0]
+        assert (
+            f"excluded evaluation {excluded.evaluation_id}: missing_complete_relevance_phase"
+            in capsys.readouterr().out
+        )
+
+    @pytest.mark.parametrize("drift", ["phase", "decision"])
+    async def test_preview_refuses_drift_before_writing(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+        drift,
+    ) -> None:
+        task = await _seed_relevance_task(
+            state,
+            tracer,
+            feedback,
+            monkeypatch,
+            tmp_path,
+            disagree_negative=drift == "decision",
+        )
+        if drift == "phase":
+            with state.db.transaction():
+                # Simulate a corrupt restored DB, beyond the normal append-only API.
+                state.conn.execute("DROP TRIGGER evaluation_phase_runs_link_once")
+                state.conn.execute("UPDATE evaluation_phase_runs SET created_at = 'drift'")
+        message = "Live phase identity" if drift == "phase" else "frozen evaluation decision"
+        with pytest.raises(ee.SelectorResolutionError, match=message):
+            await ee.preview_batch_replay(
+                state=state,
+                tracer=tracer,
+                selector=ee.BatchSelector.by_relevance_corpus(task),
+                variants=(ee.BatchVariant("default", "claude-sonnet-4-20250514", None),),
+                skip_policy=ee.SkipPolicy(),
+            )
+        assert state.conn.execute("SELECT COUNT(*) FROM experiment_runs").fetchone()[0] == 0
+
+    @pytest.mark.parametrize("changed_identity", ["snapshot", "partition"])
+    async def test_changing_frozen_identity_changes_authorized_plan_hash(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+        changed_identity,
+    ) -> None:
+        from scout.grading.assistance_types import FrozenPartition, GroupId, PartitionMember
+
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        loaded = load_relevance_population(state, task)
+        assert isinstance(loaded, Ok)
+        if changed_identity == "snapshot":
+            case = loaded.value.cases[0]
+            state.save_grade(
+                GradeRecord(
+                    post_id=case.phase_run.post_id,
+                    evaluation_id=case.target.evaluation_id,
+                    source="web",
+                    graded_at=datetime.now(UTC),
+                    relevance_judgment="correct",
+                    action_judgment="accept",
+                    schema_version=3,
+                )
+            )
+            tasks = (task, _freeze_relevance_task(state, tmp_path))
+            assert tasks[0].snapshot_digest != tasks[1].snapshot_digest
+        else:
+            members = tuple(
+                PartitionMember(
+                    evaluation_id=case.target.evaluation_id,
+                    input_digest=case.target.input_digest,
+                    group_id=GroupId("a" * 64),
+                    partition="train",
+                    exposed=False,
+                    provenance=(),
+                )
+                for case in loaded.value.cases
+            )
+            tasks = []
+            for ordered_members in (members, tuple(reversed(members))):
+                partition = FrozenPartition(
+                    snapshot_digest=task.snapshot_digest,
+                    members=ordered_members,
+                )
+                stored = state.artifacts.put(partition.model_dump_json().encode())
+                assert isinstance(stored, Ok)
+                tasks.append(
+                    RelevanceTask(
+                        snapshot_digest=task.snapshot_digest,
+                        partition_digest=stored.value,
+                        partition="train",
+                    )
+                )
+            assert tasks[0].partition_digest != tasks[1].partition_digest
+        previews = [
+            await ee.preview_batch_replay(
+                state=state,
+                tracer=tracer,
+                selector=ee.BatchSelector.by_relevance_corpus(item),
+                variants=(ee.BatchVariant("default", "claude-sonnet-4-20250514", None),),
+                skip_policy=ee.SkipPolicy(),
+            )
+            for item in tasks
+        ]
+        assert previews[0].plan.phase_run_ids == previews[1].plan.phase_run_ids
+        assert previews[0].plan.plan_sha256 != previews[1].plan.plan_sha256
+        repeated = await ee.preview_batch_replay(
+            state=state,
+            tracer=tracer,
+            selector=ee.BatchSelector.by_relevance_corpus(tasks[0]),
+            variants=(ee.BatchVariant("default", "claude-sonnet-4-20250514", None),),
+            skip_policy=ee.SkipPolicy(),
+        )
+        assert repeated.plan.plan_sha256 == previews[0].plan.plan_sha256
+        document = json.loads(repeated.plan.plan_json)
+        assert document["version"] == ee.RELEVANCE_PLAN_SCHEMA_VERSION
+        assert all("target" in case and "oracle" not in case for case in document["cases"])
+
+    async def test_retry_refuses_failed_attempt_outside_frozen_population(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        loaded = load_relevance_population(state, task)
+        assert isinstance(loaded, Ok)
+        config = ee.build_batch_candidate_config(
+            phase="relevance",
+            variant_name="default",
+            model_override="claude-sonnet-4-20250514",
+            system_prompt_override=None,
+            grader_attached=True,
+            sweep=None,
+            plan_sha256="a" * 64,
+            phase_run_ids=tuple(c.phase_run.id for c in loaded.value.cases),
+            dropped_duplicate_phase_run_ids=(),
+            skipped_pairs=(),
+            relevance_population=loaded.value,
+        )
+        run_id = state.create_experiment_run(name="out-of-scope", candidate_config=config)
+        trace_id = await _make_baseline_trace(tracer, feedback)
+        outside_id = _seed_phase_run(state, trace_id=trace_id, model="claude-haiku-4-5-20251001")
+        attempt_id = state.insert_experiment_attempt(
+            experiment_run_id=run_id,
+            phase_run_id=outside_id,
+            baseline_evidence="{}",
+        )
+        state.cas_experiment_to_running(attempt_id)
+        state.fail_experiment(attempt_id, error_detail="synthetic failure")
+        with pytest.raises(
+            ee.RetryResolutionError,
+            match="outside the pinned relevance population",
+        ):
+            await ee.retry_batch_replay(
+                state=state,
+                tracer=tracer,
+                feedback=feedback,
+                experiment_run_id=run_id,
+            )
+        assert len(state.list_experiment_attempts(run_id)) == 1
+
     async def test_frozen_positive_and_negative_labels_need_no_draft(
         self,
         state,
@@ -461,7 +828,16 @@ class TestRelevanceBatch:
         assert all(
             score["target"]["task"]["snapshot_digest"] == task.snapshot_digest for score in scores
         )
+        # Reports must pick the successful retry even if storage yields newest first.
+        list_attempts = state.list_experiment_attempts
+        monkeypatch.setattr(
+            state, "list_experiment_attempts", lambda run: list(reversed(list_attempts(run))),
+        )
         report = build_batch_report(state, experiment_run_ids=[run_id])
+        with pytest.raises(ee.RetryResolutionError, match="no failed cases"):
+            await ee.retry_batch_replay(
+                state=state, tracer=tracer, feedback=feedback, experiment_run_id=run_id,
+            )
         assert report["segments"][0]["variants"][0]["candidate_confusion"] == {
             "true_positive": 1,
             "true_negative": 0,

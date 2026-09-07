@@ -132,7 +132,7 @@ export interface ExperimentRunSummary {
   total_cost: number | null;
   verdict: ExperimentRunVerdict;
   correction_distance: AggregateMetric;
-  relevance_accuracy?: AggregateMetric;
+  relevance_accuracy: AggregateMetric;
   cost: AggregateMetric;
   latency: AggregateMetric;
 }
