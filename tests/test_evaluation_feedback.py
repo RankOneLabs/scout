@@ -212,6 +212,26 @@ class TestExclusionPrecedence:
         )
         assert results[0].status == "eligible"
 
+    def test_fail_grade_explained_only_by_reply_edit_is_eligible(self) -> None:
+        """The shared contract accepts a fail grade whose only explanation is a
+        reply correction. Re-validation must carry edited_text the way the
+        save-time adapter does, or every edit-only grade is rejected here after
+        being accepted at save time."""
+        results = ef.classify_feedback_eligibility(
+            [_row(action_judgment="fail", dimensions=["wording"], failure_note=None,
+                  edited_text="a corrected reply")],
+            config=_config(),
+        )
+        assert results[0].status == "eligible"
+
+    def test_fail_grade_with_no_note_and_no_edit_is_shared_contract_invalid(self) -> None:
+        results = ef.classify_feedback_eligibility(
+            [_row(action_judgment="fail", dimensions=["wording"], failure_note=None,
+                  edited_text=None)],
+            config=_config(),
+        )
+        assert results[0].reason == "shared_contract_invalid"
+
     def test_shared_contract_invalid_on_project_key_mismatch(self) -> None:
         results = ef.classify_feedback_eligibility(
             [_row(draft_project_key="other-proj")], config=_config()

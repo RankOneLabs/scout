@@ -8,6 +8,7 @@ not affect an existing snapshot. This module does not fit or run any model.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import sqlite3
 from collections import Counter
@@ -480,7 +481,13 @@ def read_grade_population(
 def _input_exclusion(
     item: FrozenGradeInput, selection: CorpusSelection
 ) -> CorpusExclusionReason | None:
-    row = item.grade
+    # Classify against the retained revision payload's edited_text, not the
+    # live join: retained v1 grade rows do not carry the edit, so replaying a
+    # snapshot from its own bytes must reach the same verdict as capture did.
+    # revision_matches (checked below) already ties that payload to the
+    # current grade.
+    recorded = GradeRevisionPayload.model_validate_json(item.revision.payload)
+    row = dataclasses.replace(item.grade, edited_text=recorded.edited_text)
     if item.post is None:
         return "missing_post"
     if reason := grade_exclusion_reason(row):

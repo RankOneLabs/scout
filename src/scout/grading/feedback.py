@@ -211,6 +211,12 @@ class GradePopulationRow:
     override_reason: str | None
     pinned_revision_id: int
     pinned_revision_number: int
+    # The reply correction recorded with the grade (reply_draft_revisions.reply_text
+    # addressed by grades.reply_revision_id). The shared grading contract accepts a
+    # fail grade with an edit in place of a failure note, so re-validation must see
+    # it. Defaults to None so retained v1 population rows, which do not carry it,
+    # still parse; snapshot selection restores it from the pinned revision payload.
+    edited_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,13 +423,15 @@ SELECT
     (SELECT gr.id FROM grade_revisions gr
        WHERE gr.grade_id = g.id ORDER BY gr.revision DESC LIMIT 1) AS pinned_revision_id,
     (SELECT gr.revision FROM grade_revisions gr
-       WHERE gr.grade_id = g.id ORDER BY gr.revision DESC LIMIT 1) AS pinned_revision_number
+       WHERE gr.grade_id = g.id ORDER BY gr.revision DESC LIMIT 1) AS pinned_revision_number,
+    rr.reply_text AS edited_text
 """
 
 _POPULATION_JOINS_SQL = """
 LEFT JOIN evaluations e ON e.id = g.evaluation_id
 LEFT JOIN draft_comments dc ON dc.evaluation_id = e.id
 LEFT JOIN grade_usage_overrides o ON o.grade_id = g.id
+LEFT JOIN reply_draft_revisions rr ON rr.id = g.reply_revision_id
 """
 
 _POPULATION_SQL = f"""
@@ -527,6 +535,7 @@ def _materialize_grade_population(rows: Sequence[sqlite3.Row]) -> tuple[GradePop
                 override_reason=row["override_reason"],
                 pinned_revision_id=pinned_revision_id,
                 pinned_revision_number=row["pinned_revision_number"],
+                edited_text=row["edited_text"],
             )
         )
     return tuple(population)
@@ -592,6 +601,12 @@ def _shared_contract_invalid(row: GradePopulationRow) -> bool:
     the existing draft/evaluation provenance check as an additional contract
     guard because those independently stored identities describe the drafted
     artifact the grade purports to judge.
+
+    The payload must carry every field the save-time adapter
+    (``grade_envelope_payload``) sends, including ``edited_text``: the
+    contract accepts a fail grade whose only explanation is a reply
+    correction, so dropping the edit here would reject grades that were
+    valid when saved.
     """
     # Imported lazily because grading.py imports StateManager, which imports
     # this module for the snapshot pipeline.
@@ -612,6 +627,7 @@ def _shared_contract_invalid(row: GradePopulationRow) -> bool:
         "posture_should_have_been": row.posture_should_have_been,
         "implication_implied_claim": row.implication_implied_claim,
         "implication_missing_support": row.implication_missing_support,
+        "edited_text": row.edited_text,
     }
     if validate_grade_envelope(payload, row.evaluation_posture):
         return True
