@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import fields, make_dataclass
+from dataclasses import MISSING, field, fields, make_dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import get_type_hints
@@ -314,7 +314,12 @@ def test_operational_dataclass_reordering_does_not_break_retained_v1(
     reordered[0], reordered[1] = reordered[1], reordered[0]
     changed_row = make_dataclass(
         "ReorderedGradePopulationRow",
-        [(field.name, hints[field.name]) for field in reordered],
+        [
+            (spec.name, hints[spec.name])
+            if spec.default is MISSING
+            else (spec.name, hints[spec.name], field(default=spec.default))
+            for spec in reordered
+        ],
         frozen=True,
         slots=True,
     )
@@ -386,6 +391,56 @@ def test_missing_recorded_column_returns_error_value(state: StateManager) -> Non
         result = read_grade_population(state.conn, Path("/unused"))
     assert isinstance(result, Err)
     assert result.error.operation == "freeze_grade_input"
+
+
+def test_fail_grade_explained_only_by_reply_edit_is_a_member_and_replays(
+    state: StateManager,
+) -> None:
+    """An edit-only fail grade is valid under the shared contract at save time.
+    The corpus must keep it, and the snapshot must still re-derive from its own
+    retained bytes, which do not carry the live reply_draft_revisions join."""
+    with state.db.transaction():
+        state.conn.execute(
+            "INSERT INTO posts(id, platform, platform_msg_id, content) "
+            "VALUES (2, 'bluesky', 'synthetic-post-2', 'A second graded source post')"
+        )
+        state.conn.execute(
+            "INSERT INTO evaluations(id, post_id, relevant, score, surface_status, "
+            "project_key, posture, dossier_revision, dossier_summary_id) "
+            "VALUES (2, 2, 1, 0.9, 'surfaced', 'synthetic', 'answer', ?, 'summary')",
+            ("b" * 40,),
+        )
+        state.conn.execute(
+            "INSERT INTO draft_comments(post_id, evaluation_id, project_key, comment_text, "
+            "posture, dossier_summary_id, dossier_revision) "
+            "VALUES (2, 2, 'synthetic', 'original reply', 'answer', 'summary', ?)",
+            ("b" * 40,),
+        )
+    state.save_grade(
+        GradeRecord(
+            post_id=2,
+            evaluation_id=2,
+            source="web",
+            graded_at=datetime(2020, 1, 2, tzinfo=UTC),
+            relevance_judgment="correct",
+            action_judgment="fail",
+            schema_version=3,
+            dimensions=["wording"],
+            failure_note=None,
+            edited_text="a corrected reply",
+        )
+    )
+    population = capture(state)
+    snapshot = select_corpus(population, CorpusSelection(project_key="synthetic"))
+    assert [member.grade_id for member in snapshot.members] == [1, 2]
+    assert snapshot.exclusions == ()
+    bundle = build_snapshot_bundle(population, CorpusSelection(project_key="synthetic"), b"env")
+    assert verify_snapshot_replay(bundle) == Ok(1)
+    with StateManager(":memory:") as restored:
+        assert restored.artifacts.import_bundle(bundle) == Ok(None)
+        exported = restored.artifacts.export_bundle()
+        assert isinstance(exported, Ok)
+        assert verify_snapshot_replay(exported.value) == Ok(1)
 
 
 def test_invalid_mutable_grade_remains_an_exclusion(state: StateManager) -> None:
