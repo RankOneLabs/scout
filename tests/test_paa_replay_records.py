@@ -16,6 +16,7 @@ from jsonschema import Draft7Validator
 from paa_runtime import PaaTransitionError, SqliteOperatingRecordStore, propose
 
 import scout.replay.experiments as ee
+from scout.completion_limits import BoundedCompletionClient
 from scout.paa.config import build_paa_config
 from scout.paa.event_store import ScoutEventStore
 from scout.paa.replay_records import (
@@ -327,7 +328,9 @@ async def test_failed_attempt_and_successful_retry_are_both_accounted(
     )
 
 
+@pytest.mark.parametrize("changed_setting", ["jig_revision", "max_output_tokens"])
 async def test_retry_refuses_changed_worker_before_spending(
+    changed_setting,
     state,
     tracer,
     feedback,
@@ -345,7 +348,14 @@ async def test_retry_refuses_changed_worker_before_spending(
         case_count=1,
     )
     before = state.conn.total_changes
-    monkeypatch.setattr(ee, "JIG_REVISION", "changed-runtime-revision")
+    if changed_setting == "jig_revision":
+        monkeypatch.setattr(ee, "JIG_REVISION", "changed-runtime-revision")
+    else:
+        monkeypatch.setitem(
+            ee.PHASE_REPLAY_CONFIGS,
+            "reply_draft",
+            dataclasses.replace(ee.PHASE_REPLAY_CONFIGS["reply_draft"], max_output_tokens=2048),
+        )
     with pytest.raises(ee.RetryResolutionError, match="changed fields: .*worker_configuration"):
         await ee.retry_batch_replay(
             state=state,
@@ -439,3 +449,30 @@ def test_shadow_reply_draft_has_no_reachable_promotion(state, tmp_path: Path) ->
             evidence_path=report,
             actor="test:operator",
         )
+
+
+async def test_replay_entry_point_preserves_bounded_provider_client(
+    state,
+    tracer,
+    feedback,
+    monkeypatch,
+) -> None:
+    original_replay = ee.jig_replay
+    observed_limits = []
+
+    async def checked_replay(trace_id, config, **kwargs):
+        client = kwargs["llm"]
+        assert isinstance(client, BoundedCompletionClient)
+        assert client is config.llm
+        original_complete = client._inner.complete
+
+        async def checked_complete(params):
+            observed_limits.append(params.max_tokens)
+            return await original_complete(params)
+
+        monkeypatch.setattr(client._inner, "complete", checked_complete)
+        return await original_replay(trace_id, config, **kwargs)
+
+    monkeypatch.setattr(ee, "jig_replay", checked_replay)
+    await _run_single_variant_batch(state, tracer, feedback, monkeypatch, case_count=1)
+    assert observed_limits == [4096]

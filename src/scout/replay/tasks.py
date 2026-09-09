@@ -44,6 +44,8 @@ class ReplayWorkerConfiguration:
     tools: tuple[str, ...]
     include_memory_in_prompt: bool
     include_feedback_in_prompt: bool
+    # Old manifests had no explicit limit. Never backfill today's bound.
+    max_output_tokens: int | None = None
 
 
 class RelevanceGrader(Grader[RelevancePhaseOutput]):  # type: ignore[misc]

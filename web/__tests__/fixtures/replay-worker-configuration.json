@@ -5,6 +5,7 @@
   "include_memory_in_prompt": false,
   "jig_revision": "4fae89bb04768d57be6db4cd2bdef859d1e17322",
   "max_llm_calls": 4,
+  "max_output_tokens": 4096,
   "max_parse_retries": 2,
   "max_tool_calls": 1,
   "model": "candidate-model",

@@ -63,6 +63,7 @@ from jig.core.runner import (
 from pydantic import ValidationError
 
 import scout.config as _config
+from scout.completion_limits import EXPERIMENT_MAX_OUTPUT_TOKENS, BoundedCompletionClient
 from scout.dossiers.resolver import DossierResolutionError, DossierSummary, resolve_dossier
 from scout.grading.correction import (
     NORMALIZED_EDIT_DISTANCE_GRADER_VERSION,
@@ -233,6 +234,7 @@ class PhaseReplayConfig:
     max_tool_calls: int
     max_llm_calls: int
     max_parse_retries: int
+    max_output_tokens: int = EXPERIMENT_MAX_OUTPUT_TOKENS
 
 
 PHASE_REPLAY_CONFIGS: dict[str, PhaseReplayConfig] = {
@@ -815,7 +817,7 @@ def _build_candidate_agent_config(
         name=f"scout_replay_{baseline.phase}",
         description=f"Scout offline replay candidate for phase_run_id={baseline.phase_run_id}.",
         system_prompt=plan.candidate_system_prompt,
-        llm=llm,
+        llm=BoundedCompletionClient(llm, phase_config.max_output_tokens),
         feedback=feedback,
         tracer=tracer,
         tools=ToolRegistry([]),
@@ -998,7 +1000,7 @@ async def _run_candidate_and_complete(
             baseline.baseline_trace_id,
             candidate_agent_config,
             tracer=tracer,
-            llm=candidate_llm,
+            llm=candidate_agent_config.llm,
             feedback=feedback,
             grader=grader,
         )
@@ -2095,6 +2097,7 @@ def replay_worker_configuration(plan: CandidateReplayPlan) -> ReplayWorkerConfig
         tools=(),
         include_memory_in_prompt=False,
         include_feedback_in_prompt=False,
+        max_output_tokens=phase.max_output_tokens,
     )
 
 
