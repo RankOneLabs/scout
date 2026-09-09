@@ -1,0 +1,33 @@
+version: 1
+name: relevance-local-agent-ops-c9fdbfa-topical
+axis: model
+prompt_file: ../prompts/prompt-agent-ops-topical.md
+variants:
+  - name: qwen3-30b-a3b-2507
+    model: openrouter/qwen/qwen3-30b-a3b-instruct-2507
+  - name: gpt-oss-20b
+    model: openrouter/openai/gpt-oss-20b
+  - name: gemma-4-26b-a4b
+    model: openrouter/google/gemma-4-26b-a4b-it
+  - name: gemma-4-31b
+    model: openrouter/google/gemma-4-31b-it
+  - name: mistral-small-2603
+    model: openrouter/mistralai/mistral-small-2603
+  - name: nemotron-3-nano-30b
+    model: openrouter/nvidia/nemotron-3-nano-30b-a3b
+  - name: llama-3-3-70b
+    model: openrouter/meta-llama/llama-3.3-70b-instruct
+  - name: glm-4-5-air
+    model: openrouter/z-ai/glm-4.5-air
+  - name: glm-4-7-flash
+    model: openrouter/z-ai/glm-4.7-flash
+  - name: qwen3-next-80b-a3b
+    model: openrouter/qwen/qwen3-next-80b-a3b-instruct
+  - name: nemotron-3-super-120b
+    model: openrouter/nvidia/nemotron-3-super-120b-a12b
+  - name: llama-4-scout
+    model: openrouter/meta-llama/llama-4-scout
+  - name: qwen3-32b
+    model: openrouter/qwen/qwen3-32b
+  - name: gpt-oss-120b
+    model: openrouter/openai/gpt-oss-120b

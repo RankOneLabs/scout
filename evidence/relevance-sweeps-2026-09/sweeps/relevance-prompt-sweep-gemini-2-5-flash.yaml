@@ -1,0 +1,9 @@
+version: 1
+name: relevance-prompt-agent-ops-c9fdbfa-gemini-2-5-flash
+axis: prompt
+model: openrouter/google/gemini-2.5-flash
+variants:
+  - name: no-reject
+    prompt_file: ../prompts/prompt-agent-ops-no-reject.md
+  - name: topical
+    prompt_file: ../prompts/prompt-agent-ops-topical.md

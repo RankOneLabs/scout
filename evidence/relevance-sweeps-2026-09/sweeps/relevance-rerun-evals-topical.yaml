@@ -1,0 +1,9 @@
+version: 1
+name: relevance-rerun-agent-evals-topical
+axis: model
+prompt_file: ../prompts/prompt-agent-evals-topical.md
+variants:
+  - name: nemotron-3-super-120b
+    model: openrouter/nvidia/nemotron-3-super-120b-a12b
+  - name: llama-4-scout
+    model: openrouter/meta-llama/llama-4-scout
