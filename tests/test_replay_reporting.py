@@ -795,6 +795,21 @@ class TestRenderJsonAndMarkdown:
         assert "| unknown |" not in markdown
 
 
+class TestFormatAbstained:
+    def test_both_missing_is_unknown(self) -> None:
+        assert rr._format_abstained(None, None) == "unknown"
+
+    def test_neither_abstained_is_no(self) -> None:
+        assert rr._format_abstained(False, False) == "no"
+
+    def test_names_each_abstaining_side(self) -> None:
+        assert rr._format_abstained(True, True) == "baseline, candidate"
+
+    def test_one_missing_flag_is_named_not_read_as_no(self) -> None:
+        assert rr._format_abstained(None, False) == "baseline unknown"
+        assert rr._format_abstained(True, None) == "baseline, candidate unknown"
+
+
 class TestRelevanceRates:
     def test_precision_is_none_without_predicted_positives(self) -> None:
         confusion = {

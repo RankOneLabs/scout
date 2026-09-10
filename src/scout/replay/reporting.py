@@ -804,10 +804,15 @@ def _format_metric(value: float | None) -> str:
 
 
 def _format_abstained(baseline: bool | None, candidate: bool | None) -> str:
+    """Name each side that abstained, and each side whose flag is missing
+    from the retained evidence, so an unknown state is never read as
+    "no"."""
     if baseline is None and candidate is None:
         return "unknown"
-    sides = [name for name, flag in (("baseline", baseline), ("candidate", candidate)) if flag]
-    return ", ".join(sides) or "no"
+    sides = (("baseline", baseline), ("candidate", candidate))
+    abstained = [name for name, flag in sides if flag]
+    unknown = [f"{name} unknown" for name, flag in sides if flag is None]
+    return ", ".join((*abstained, *unknown)) or "no"
 
 
 def _render_relevance_markdown(report: dict[str, Any]) -> str:
