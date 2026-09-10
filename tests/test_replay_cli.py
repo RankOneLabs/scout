@@ -14,6 +14,7 @@ from jig import SQLiteFeedbackLoop, SQLiteTracer
 
 import scout.cli.replay as replay_cli
 import scout.replay.experiments as ee
+import scout.replay.reporting as rr
 from scout.replay.runtime import ReplayRuntime
 from scout.storage.state import StateManager
 from tests.test_evaluation_experiments import (
@@ -494,7 +495,7 @@ class TestReportFeedback:
             argparse.Namespace(experiment_run_id=[run_id], format="json", out=str(out_path))
         )
         doc = json.loads(out_path.read_text())
-        assert doc["version"] == 2
+        assert doc["version"] == rr.REPORT_SCHEMA_VERSION
         assert doc["experiment_run_ids"] == [run_id]
         printed = capsys.readouterr().out
         assert "wrote json report" in printed
