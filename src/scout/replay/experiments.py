@@ -616,14 +616,42 @@ def _verify_correction_hash(state: StateManager, oracle: ReplyCorrectionOracle) 
         )
 
 
-def _extract_candidate_distance(scores: list[Score] | None) -> float:
-    """Return the candidate's normalized_edit_distance/v1 score value, or
-    raise if grading did not run or did not produce one — it must not be
-    silently treated as zero or omitted."""
+@dataclass(frozen=True, slots=True)
+class CorrectionGrade:
+    """One side's normalized_edit_distance/v1 result against the pinned
+    correction. `abstained` is recorded separately because an abstain
+    assembles to empty text and always scores the maximum distance —
+    reports keep abstains out of the distance population and count them
+    as their own outcome class instead."""
+
+    distance: float
+    abstained: bool
+
+
+def grade_baseline_draft(
+    baseline_draft: StructuredDraftOutput, oracle: ReplyCorrectionOracle,
+) -> CorrectionGrade:
+    """Score the historical baseline's own stored structured output
+    against the pinned correction — computed here, never by re-running
+    the baseline."""
+    baseline_text = assemble_draft_text(baseline_draft, oracle.dossier)
+    return CorrectionGrade(
+        distance=normalized_edit_distance(baseline_text, oracle.correction_text),
+        abstained=baseline_draft.posture == "abstain",
+    )
+
+
+def _extract_candidate_grade(scores: list[Score] | None) -> CorrectionGrade:
+    """Return the candidate's normalized_edit_distance/v1 score and the
+    posture its grader recorded, or raise if grading did not run or did
+    not produce one — it must not be silently treated as zero or omitted."""
     if scores is not None:
         for score in scores:
             if score.dimension == NORMALIZED_EDIT_DISTANCE_GRADER_VERSION:
-                return float(score.value)
+                posture = (score.metadata or {}).get("posture")
+                return CorrectionGrade(
+                    distance=float(score.value), abstained=posture == "abstain",
+                )
     raise ComparisonConstructionError(_STAGE_MESSAGES["candidate_grading"])
 
 
@@ -738,21 +766,26 @@ def build_baseline_evidence(
 
 
 def build_score_evidence(
-    oracle: ReplyCorrectionOracle, *, baseline_distance: float, candidate_distance: float,
+    oracle: ReplyCorrectionOracle, *, baseline: CorrectionGrade, candidate: CorrectionGrade,
 ) -> str:
     """Serialize the immutable trace_comparisons.score_evidence document
     for one graded reply_draft comparison. delta = candidate_distance -
     baseline_distance: negative unambiguously means the candidate is
-    closer to the correction than the baseline was."""
+    closer to the correction than the baseline was. The two abstained
+    flags let a report exclude abstains from the distance population;
+    evidence written before they existed lacks them, and readers treat
+    that as unknown."""
     return _canonical_json(
         {
             "grader_version": NORMALIZED_EDIT_DISTANCE_GRADER_VERSION,
             "assembler_version": DRAFT_TEXT_ASSEMBLER_VERSION,
             "correction_sha256": oracle.correction_sha256,
             "reply_revision_id": oracle.reply_revision_id,
-            "baseline_distance": baseline_distance,
-            "candidate_distance": candidate_distance,
-            "delta": candidate_distance - baseline_distance,
+            "baseline_distance": baseline.distance,
+            "candidate_distance": candidate.distance,
+            "delta": candidate.distance - baseline.distance,
+            "baseline_abstained": baseline.abstained,
+            "candidate_abstained": candidate.abstained,
             "grader_attached": True,
         }
     )
@@ -965,7 +998,7 @@ async def _run_candidate_and_complete(
     baseline: BaselineRecord,
     plan: CandidateReplayPlan,
     oracle: ReplyCorrectionOracle | None,
-    baseline_distance: float | None,
+    baseline_grade: CorrectionGrade | None,
     relevance: RelevanceCaseSource | None = None,
 ) -> tuple[str, int, float | None]:
     """Shared candidate-execution core for one already-'running' attempt:
@@ -1074,15 +1107,15 @@ async def _run_candidate_and_complete(
                 _STAGE_MESSAGES["relevance_grading"]
             ) from exc
     if oracle is not None:
-        assert baseline_distance is not None
+        assert baseline_grade is not None
         try:
             _verify_correction_hash(state, oracle)
-            candidate_distance = _extract_candidate_distance(agent_result.scores)
+            candidate_grade = _extract_candidate_grade(agent_result.scores)
         except (CorrectionEvidenceIntegrityError, ComparisonConstructionError):
             state.fail_experiment(experiment_id, error_detail=_STAGE_MESSAGES["candidate_grading"])
             raise
         score_evidence_json = build_score_evidence(
-            oracle, baseline_distance=baseline_distance, candidate_distance=candidate_distance,
+            oracle, baseline=baseline_grade, candidate=candidate_grade,
         )
 
     try:
@@ -1133,7 +1166,7 @@ async def execute_replay(
     baseline = await resolve_baseline(state, tracer, phase_run_id)
 
     oracle: ReplyCorrectionOracle | None = None
-    baseline_distance: float | None = None
+    baseline_grade: CorrectionGrade | None = None
     if baseline.phase == "reply_draft":
         phase_run = state.get_phase_run(phase_run_id)
         assert phase_run is not None
@@ -1141,8 +1174,7 @@ async def execute_replay(
             state, phase_run, dossier_root=_resolve_dossier_root(dossier_root),
         )
         baseline_draft = _resolve_baseline_structured_draft(baseline.root_span)
-        baseline_text = assemble_draft_text(baseline_draft, oracle.dossier)
-        baseline_distance = normalized_edit_distance(baseline_text, oracle.correction_text)
+        baseline_grade = grade_baseline_draft(baseline_draft, oracle)
 
     plan = build_candidate_plan(
         baseline, model_override=model_override, system_prompt_override=system_prompt_override,
@@ -1172,7 +1204,7 @@ async def execute_replay(
         baseline=baseline,
         plan=plan,
         oracle=oracle,
-        baseline_distance=baseline_distance,
+        baseline_grade=baseline_grade,
     )
     return ExperimentOutcome(
         experiment_id=experiment_id,
@@ -2193,11 +2225,10 @@ async def _execute_one_batch_attempt(
     plan = pair.plan
     oracle = case.oracle
     assert oracle is not None or case.relevance is not None
-    baseline_distance = None
+    baseline_grade = None
     if oracle is not None:
         baseline_draft = _resolve_baseline_structured_draft(case.baseline.root_span)
-        baseline_text = assemble_draft_text(baseline_draft, oracle.dossier)
-        baseline_distance = normalized_edit_distance(baseline_text, oracle.correction_text)
+        baseline_grade = grade_baseline_draft(baseline_draft, oracle)
 
     baseline_evidence_json = build_batch_case_evidence(case, plan, oracle, pair.price_estimate)
     experiment_id = state.insert_experiment_attempt(
@@ -2217,7 +2248,7 @@ async def _execute_one_batch_attempt(
             baseline=case.baseline,
             plan=plan,
             oracle=oracle,
-            baseline_distance=baseline_distance,
+            baseline_grade=baseline_grade,
             relevance=case.relevance,
         )
     except ReplayError as exc:
@@ -2550,7 +2581,9 @@ __all__ = [
     "build_batch_case_evidence",
     "build_candidate_plan",
     "build_domain_diff",
+    "CorrectionGrade",
     "build_score_evidence",
+    "grade_baseline_draft",
     "execute_batch_replay",
     "execute_replay",
     "load_and_validate_sweep",

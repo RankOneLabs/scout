@@ -467,6 +467,17 @@ roughly one spurious exclusion of zero per segment is expected, and no
 multiple-comparison correction is applied — the family size is recorded
 so a reader can apply one.
 
+An abstain is its own outcome, not a distance. An abstaining draft
+assembles to empty text and always scores the maximum distance, so by
+distance alone it is indistinguishable from a maximally wrong draft. The
+retained score evidence records `baseline_abstained` and
+`candidate_abstained`; a case where either side abstained is left out of
+the common distance set — for every variant in the segment, so the
+comparison set stays shared — and counted per variant as
+`baseline_abstain_count` / `candidate_abstain_count` instead. Evidence
+written before the flags existed reads as unknown and stays in the
+population; the per-case `abstained` column says `unknown` for it.
+
 The report carries: **correction coverage** (`population_size`, dropped
 duplicate baselines, attempted/scored/failed, and skipped broken out by
 `unscored`/`no_op`/`unpriceable`); **exclusions** — every skipped pair

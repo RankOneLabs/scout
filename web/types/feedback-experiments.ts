@@ -308,6 +308,9 @@ export interface ReplyScoreEvidence {
   baseline_distance: number;
   candidate_distance: number;
   delta: number;
+  // Absent on evidence written before abstains were recorded separately.
+  baseline_abstained?: boolean;
+  candidate_abstained?: boolean;
   grader_attached: true;
 }
 

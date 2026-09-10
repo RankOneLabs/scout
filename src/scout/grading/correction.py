@@ -70,7 +70,10 @@ class ReplyCorrectionGrader(Grader[StructuredDraftOutput]):  # type: ignore[misc
     StructuredDraftOutput against one pinned human correction.
 
     Bound at construction to the exact dossier and correction text the
-    replay was authorized against. jig_replay runs this grader for real
+    replay was authorized against. The score's metadata carries the
+    draft's posture so a reader can tell an abstain (which assembles to
+    empty text and always scores the maximum distance) apart from a
+    maximally wrong draft — the distance alone cannot. jig_replay runs this grader for real
     against the candidate's live output — never replayed from a recording
     — immediately after a successful, schema-valid agent run; a malformed
     or errored candidate result never reaches grade() at all.
@@ -93,7 +96,10 @@ class ReplyCorrectionGrader(Grader[StructuredDraftOutput]):  # type: ignore[misc
                 dimension=NORMALIZED_EDIT_DISTANCE_GRADER_VERSION,
                 value=distance,
                 source=ScoreSource.GROUND_TRUTH,
-                metadata={"assembler_version": DRAFT_TEXT_ASSEMBLER_VERSION},
+                metadata={
+                    "assembler_version": DRAFT_TEXT_ASSEMBLER_VERSION,
+                    "posture": output.posture,
+                },
             )
         ]
 
