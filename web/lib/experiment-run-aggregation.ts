@@ -39,7 +39,13 @@ function fail(message: string): never {
   throw new Error(`experiment run integrity: ${message}`);
 }
 
-function metric(pairs: Array<[number, number]>) {
+// Pairs arrive per chain (case, repeat); a case's repeats are averaged first
+// so every metric is over cases, matching the Python report's pairing.
+function metric(byCase: Map<number, Array<[number, number]>>) {
+  const pairs: Array<[number, number]> = [...byCase.values()].map((chains) => [
+    chains.reduce((sum, pair) => sum + pair[0], 0) / chains.length,
+    chains.reduce((sum, pair) => sum + pair[1], 0) / chains.length,
+  ]);
   if (pairs.length === 0) {
     return { available: false, case_count: 0, baseline_mean: null, candidate_mean: null, mean_delta: null };
   }
@@ -118,22 +124,28 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
   const statusCounts: Record<ExperimentStatus, number> = { queued: 0, running: 0, complete: 0, failed: 0 };
   for (const attempt of latest) statusCounts[attempt.row.status] += 1;
 
-  const correctionPairs: Array<[number, number]> = [];
-  const relevancePairs: Array<[number, number]> = [];
-  const costPairs: Array<[number, number]> = [];
-  const latencyPairs: Array<[number, number]> = [];
+  const correctionPairs = new Map<number, Array<[number, number]>>();
+  const relevancePairs = new Map<number, Array<[number, number]>>();
+  const costPairs = new Map<number, Array<[number, number]>>();
+  const latencyPairs = new Map<number, Array<[number, number]>>();
+  const add = (into: Map<number, Array<[number, number]>>, caseId: number, pair: [number, number]) => {
+    const group = into.get(caseId) ?? [];
+    group.push(pair);
+    into.set(caseId, group);
+  };
   for (const attempt of latest) {
     if (attempt.row.status !== "complete") continue;
+    const caseId = attempt.phase_run_id;
     if (attempt.score_evidence) {
       const score = attempt.score_evidence;
-      if ("format" in score) relevancePairs.push([Number(score.baseline_correct), Number(score.candidate_correct)]);
-      else correctionPairs.push([score.baseline_distance, score.candidate_distance]);
+      if ("format" in score) add(relevancePairs, caseId, [Number(score.baseline_correct), Number(score.candidate_correct)]);
+      else add(correctionPairs, caseId, [score.baseline_distance, score.candidate_distance]);
     }
     if (attempt.cost_delta_available && attempt.baseline_cost !== undefined && attempt.candidate_verified_cost !== undefined) {
-      costPairs.push([attempt.baseline_cost, attempt.candidate_verified_cost]);
+      add(costPairs, caseId, [attempt.baseline_cost, attempt.candidate_verified_cost]);
     }
     if (attempt.latency_delta_available && attempt.baseline_latency_ms !== undefined && attempt.candidate_latency_ms !== undefined) {
-      latencyPairs.push([attempt.baseline_latency_ms, attempt.candidate_latency_ms]);
+      add(latencyPairs, caseId, [attempt.baseline_latency_ms, attempt.candidate_latency_ms]);
     }
   }
   const correction = metric(correctionPairs);
@@ -161,7 +173,9 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     planned_case_count: planned,
     attempted_case_count: caseIds.size,
     skipped_case_count: skipped,
-    current_case_count: latest.length,
+    current_case_count: caseIds.size,
+    current_chain_count: latest.length,
+    repeat_count: config.version === 2 ? 1 : config.repeats ?? 1,
     retry_count: input.attempts.length - latest.length,
     status_counts: statusCounts,
     total_llm_call_count: input.attempts.reduce((sum, attempt) => sum + (attempt.row.candidate_llm_call_count ?? 0), 0),

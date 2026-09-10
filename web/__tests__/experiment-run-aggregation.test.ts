@@ -29,10 +29,15 @@ describe("aggregateExperimentRun", () => {
     const config = { version: 2 as const, phase: "reply_draft" as const, model: "candidate", system_prompt: "p", system_prompt_sha256: "h", grader_attached: true };
     // Repeat 2's root is attempt #2 with no predecessor; its retry is #3.
     const result = aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, null, 4, 0.1, 2), attempt(3, 3, 2, -1, 0.1, 2)] });
+    // Every count is in cases; chains and repeats are reported beside them.
     expect(result.attempted_case_count).toBe(1);
-    expect(result.current_case_count).toBe(2);
+    expect(result.current_case_count).toBe(1);
+    expect(result.current_chain_count).toBe(2);
+    expect(result.repeat_count).toBe(1); // a v2 single-replay config has no repeats field
     expect(result.retry_count).toBe(1);
-    expect(result.correction_distance.case_count).toBe(2);
+    expect(result.correction_distance.case_count).toBe(1);
+    // Repeats are averaged per case before the metric: candidate 6 and 3 -> 4.5 vs baseline 4.
+    expect(result.correction_distance.mean_delta).toBeCloseTo(0.5);
     // A repeat-2 root that claims a predecessor is still broken.
     expect(() => aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, 1, 4, 0.1, 2)] })).toThrow(/lineage root/);
   });

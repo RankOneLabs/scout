@@ -129,6 +129,10 @@ export interface ExperimentRunSummary {
   attempted_case_count: number;
   skipped_case_count: number;
   current_case_count: number;
+  // Every count above is in cases. A case with N planned repeats has N
+  // retry chains; these two say how many chains and repeats that is.
+  current_chain_count: number;
+  repeat_count: number;
   retry_count: number;
   status_counts: Record<ExperimentStatus, number>;
   total_llm_call_count: number;

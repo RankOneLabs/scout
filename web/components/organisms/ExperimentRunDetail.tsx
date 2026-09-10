@@ -22,7 +22,7 @@ export function ExperimentRunDetail({ experimentRunId }: { experimentRunId: numb
       {detail.configuration.source_exclusions?.map(item => <p key={item.evaluation_id}>Excluded evaluation #{item.evaluation_id}: {item.reason.replaceAll("_", " ")}</p>)}
     </section>}
     <section aria-label="Run summary" className="grid gap-3 sm:grid-cols-3">
-      <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">Cases</span><p>{run.current_case_count}/{run.planned_case_count} current · {run.retry_count} retries</p></div>
+      <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">Cases</span><p>{run.current_case_count}/{run.planned_case_count} current{run.repeat_count > 1 ? ` · ${run.current_chain_count} chains over ${run.repeat_count} repeats` : ""} · {run.retry_count} retries</p></div>
       <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">Total spend</span><p>{run.total_cost === null ? "Unavailable" : `$${run.total_cost.toFixed(4)}`} · {run.total_llm_call_count} calls</p></div>
       <div className="rounded-lg border p-3"><span className="text-xs text-gray-500">{quality.label}</span><p>{quality.delta}</p></div>
     </section>
