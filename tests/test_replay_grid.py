@@ -209,12 +209,86 @@ def test_run_script_carries_backend_env_identity_and_replay_args(tmp_path: Path)
     exp = _expand(tmp_path)
     script = exp.run_script
     assert "env OLLAMA_HOST=http://frink:11434 " in script
-    assert 'SCOUT_MODEL_IDENTITY_CONFIG="$(cat "$GRID_DIR/identity.json")"' in script
+    assert 'SCOUT_MODEL_IDENTITY_CONFIG="$(cat "$GRID_DIR/"identity.json)"' in script
     assert "--name study-agent-ops-topical-frink" in script
-    assert '--task-config "$GRID_DIR/task-ops.json"' in script
+    assert '--task-config "$GRID_DIR/"task-ops.json' in script
     assert "--dossier-root /srv/content-agn" in script
     assert "--authorize-plan-sha256" in script and "--execute-paid-replay" in script
     assert script.count("PLAN ") == len(exp.sweeps)
+
+
+def test_run_script_exits_nonzero_when_any_sweep_fails(tmp_path: Path) -> None:
+    script = _expand(tmp_path).run_script
+    assert "failed=0" in script
+    assert 'if [ -z "$sha" ]; then echo "NO SHA' in script and "failed=1" in script
+    assert '[ "$status" -eq 0 ] || failed=1' in script
+    assert 'if [ "$failed" -ne 0 ]; then echo "INCOMPLETE"; exit 1; fi' in script
+    assert script.rstrip().endswith('echo "ALLDONE"')
+
+
+def test_run_script_quotes_grid_values(tmp_path: Path) -> None:
+    backends = {
+        "openrouter": {"pricing_catalog": "price $(id).json", "identity_config": "id $(x).json"},
+        "frink": {
+            "pricing_catalog": "pricing.json",
+            "env": {"OLLAMA_HOST": "http://frink:11434 ; rm -rf /"},
+        },
+    }
+    (tmp_path / "price $(id).json").write_text("{}", encoding="utf-8")
+    (tmp_path / "id $(x).json").write_text("{}", encoding="utf-8")
+    script = _expand(tmp_path, backends=backends).run_script
+    assert "'id $(x).json'" in script and "'price $(id).json'" in script
+    assert "OLLAMA_HOST='http://frink:11434 ; rm -rf /'" in script
+    assert "$(id)" not in script.replace("'price $(id).json'", "")
+
+
+def test_relative_dossier_root_resolves_from_grid_dir(tmp_path: Path) -> None:
+    projects = {
+        "agent-ops": {"task_config": "task-ops.json", "dossier_root": "dossiers"},
+        "agent-evals": {"task_config": "task-evals.json"},
+    }
+    script = _expand(tmp_path, projects=projects).run_script
+    assert '--dossier-root "$GRID_DIR/"dossiers' in script
+
+
+def test_env_keys_must_be_posix_variable_names(tmp_path: Path) -> None:
+    backends = {
+        "openrouter": {"pricing_catalog": "pricing.json"},
+        "frink": {"pricing_catalog": "pricing.json", "env": {"OLLAMA-HOST": "x"}},
+    }
+    with pytest.raises(rg.GridValidationError, match="replay-sweep-grid v1 validation"):
+        _expand(tmp_path, backends=backends)
+
+
+def test_conflicting_reasoning_within_a_backend_is_rejected(tmp_path: Path) -> None:
+    models = [
+        {
+            "id": "gemma-4-26b-a4b",
+            "backend": "openrouter",
+            "model": "openrouter/google/gemma-4-26b-a4b-it",
+        },
+        {
+            "id": "qwen3-30b-a3b",
+            "backend": "openrouter",
+            "model": "openrouter/qwen/qwen3-30b-a3b-instruct-2507",
+        },
+        {
+            "id": "gemma-4-26b-a4b",
+            "backend": "frink",
+            "model": "ollama/gemma4:26b",
+            "reasoning": False,
+        },
+        {"id": "qwen3-30b-a3b", "backend": "frink", "model": "ollama/qwen3:30b", "reasoning": True},
+    ]
+    with pytest.raises(rg.GridValidationError, match="reasoning: true and reasoning: false"):
+        _expand(tmp_path, models=models)
+
+
+def test_colliding_sweep_names_are_rejected(tmp_path: Path) -> None:
+    projects = {"a-b": {"task_config": "t1.json"}, "a": {"task_config": "t2.json"}}
+    prompts = {"c": None, "b-c": None}
+    with pytest.raises(rg.GridValidationError, match="collide"):
+        _expand(tmp_path, projects=projects, prompts=prompts)
 
 
 def test_write_expansion_writes_sweeps_manifest_and_script(tmp_path: Path) -> None:

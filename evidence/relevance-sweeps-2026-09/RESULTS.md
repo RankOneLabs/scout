@@ -27,10 +27,11 @@ snapshots via `scout feedback batch-replay`. Response writing is not measured.
   which is a real result.
 - Pooled per-run rows: `pooled-all.txt`, `pooled-exclude-gaia.txt`
   (from `scripts/pool_relevance.py`, run inside the scout container).
-  Table below from `scripts/format_report.py`.
+  Tables below from `scripts/format_report.py`; `--charts charts.html` renders
+  the chart page from the same rows through `scripts/charts.template.html`.
 - **Reading the numbers.** Every cell is one draw. Where the same configuration was
   drawn more than once the spread is two cases on 51: qwen3-30b-a3b Q4 on frink,
-  ops topical, scored 40, 41, 42 and 42 across four draws; llama-4-scout scored
+  ops topical, scored 40, 41, 41 and 42 across four draws; llama-4-scout scored
   34 then 33 on ops topical and 20 then 20 on evals topical. Differences under
   about four cases on 51 (three on 28) are within that noise and the local-model
   cluster between 38 and 42 on ops topical is not an ordering. No intervals are
@@ -83,7 +84,7 @@ snapshots via `scout feedback batch-replay`. Response writing is not measured.
   declares); their legacy variant names are mapped in `scripts/format_report.py`.
   Task configs `relevance-task-af08aa7b-*.json` pin the snapshots.
 
-### Prompt grid (frontier / large API models)
+### Prompt grid (frontier / large hosted models)
 
 | model | ops current | ops no-reject | ops topical | evals current | evals no-reject | evals topical |
 |---|---|---|---|---|---|---|
@@ -91,26 +92,26 @@ snapshots via `scout feedback batch-replay`. Response writing is not measured.
 | qwen3-235b-2507 | 39/51 (FP4 FN8) | 40/51 (FP8 FN3) | 41/51 (FP8 FN2) | 19/28 (FP5 FN4) | 21/28 (FP6 FN1) | 22/28 (FP6 FN0) |
 | kimi-k2-0905 | 30/51 (FP1 FN20) | — | — | 15/28 (FP1 FN12) | — | — |
 
-### Local-class models (OpenRouter full precision = ceiling)
+### Local-class models (OpenRouter hosted run; provider precision)
 
 | fit | model | ops current | ops topical | evals current | evals topical | usd/4 runs | s/case med / p95 (ops topical) |
 |---|---|---|---|---|---|---|---|
-| 48GB | qwen3-30b-a3b-2507 | 30/51 (FP2 FN19) | 40/51 (FP7 FN4) | 18/28 (FP1 FN9) | 20/28 (FP5 FN3) | 0.013 | 2.0 / 3.7 |
-| 48GB | gpt-oss-20b | 30/51 (FP1 FN20) | 36/51 (FP12 FN3) | 15/28 (FP4 FN9) | 20/28 (FP7 FN1) | 0.008 | 5.1 / 12.2 |
-| 48GB | gemma-4-26b-a4b | 30/51 (FP1 FN20) | 42/51 (FP6 FN3) | 19/28 (FP1 FN8) | 24/28 (FP4 FN0) | 0.020 | 2.1 / 3.4 |
-| 48GB | gemma-4-31b | 31/51 (FP1 FN19) | 41/51 (FP7 FN3) | 17/28 (FP0 FN11) | 24/28 (FP4 FN0) | 0.042 | 1.5 / 4.1 |
-| 48GB | mistral-small-2603 | 34/51 (FP2 FN15) | 39/51 (FP10 FN2) | 17/28 (FP2 FN9) | 22/28 (FP6 FN0) | 0.016 | 1.2 / 4.9 |
-| 48GB | nemotron-3-nano-30b | 38/51 (FP7 FN6) | 34/51 (FP16 FN1) | 19/28 (FP6 FN3) | 20/28 (FP7 FN1) | 0.059 | 7.0 / 28.0 |
-| 48GB | qwen3-32b | — | 33/51 (FP16 FN2) | — | 23/28 (FP5 FN0) | 0.019 | 14.0 / 23.3 |
-| 48GB* | llama-3-3-70b | 30/51 (FP4 FN17) | 38/51 (FP10 FN3) | 19/28 (FP4 FN5) | 22/28 (FP6 FN0) | 0.024 | 4.7 / 11.1 |
-| 48GB* | qwen3-next-80b-a3b | 29/51 (FP2 FN20) | 42/51 (FP6 FN3) | 14/28 (FP3 FN11) | 21/28 (FP7 FN0) | 0.041 | 1.0 / 2.2 |
-| 96GB | gpt-oss-120b | — | 40/51 (FP8 FN3) | — | 21/28 (FP6 FN1) | 0.011 | 8.0 / 23.2 |
-| 96GB | glm-4-5-air | 40/51 (FP4 FN7) | 35/51 (FP16 FN0) | 23/28 (FP4 FN1) | 22/28 (FP6 FN0) | 0.073 | 7.5 / 10.1 |
-| 96GB | glm-4-7-flash | 29/51 (FP5 FN17) | 40/51 (FP7 FN4) | 18/28 (FP5 FN5) | 21/28 (FP6 FN1) | 0.048 | 19.2 / 58.4 |
-| 96GB | nemotron-3-super-120b | 23/51 (FP1 FN13 fail14) | 30/51 (FP6 FN2 fail13) | 9/28 (FP3 FN6 fail10) | 15/28 (FP4 FN0 fail9) | 0.031 | 14.3 / 30.3 |
-| 96GB | llama-4-scout | 33/51 (FP2 FN11 fail5) | 34/51 (FP15 FN2) | 16/28 (FP3 FN2 fail7) | 20/28 (FP5 FN0 fail3) | 0.057 | 1.9 / 5.1 |
+| 48GB | qwen3-30b-a3b-2507 | 30/51 (FP2 FN19) | 40/51 (FP7 FN4) | 18/28 (FP1 FN9) | 20/28 (FP5 FN3) | 0.020 | 2.0 / 3.7 |
+| 48GB | gpt-oss-20b | 30/51 (FP1 FN20) | 36/51 (FP12 FN3) | 15/28 (FP4 FN9) | 20/28 (FP7 FN1) | 0.011 | 5.1 / 12.2 |
+| 48GB | gemma-4-26b-a4b | 30/51 (FP1 FN20) | 42/51 (FP6 FN3) | 19/28 (FP1 FN8) | 24/28 (FP4 FN0) | 0.030 | 2.1 / 3.4 |
+| 48GB | gemma-4-31b | 31/51 (FP1 FN19) | 41/51 (FP7 FN3) | 17/28 (FP0 FN11) | 24/28 (FP4 FN0) | 0.063 | 1.5 / 4.1 |
+| 48GB | mistral-small-2603 | 34/51 (FP2 FN15) | 39/51 (FP10 FN2) | 17/28 (FP2 FN9) | 22/28 (FP6 FN0) | 0.024 | 1.2 / 4.9 |
+| 48GB | nemotron-3-nano-30b | 38/51 (FP7 FN6) | 34/51 (FP16 FN1) | 19/28 (FP6 FN3) | 20/28 (FP7 FN1) | 0.082 | 7.0 / 28.0 |
+| 48GB | qwen3-32b | — | 33/51 (FP16 FN2) | — | 23/28 (FP5 FN0) | 0.029 | 14.0 / 23.3 |
+| 48GB* | llama-3-3-70b | 30/51 (FP4 FN17) | 38/51 (FP10 FN3) | 19/28 (FP4 FN5) | 22/28 (FP6 FN0) | 0.036 | 4.7 / 11.1 |
+| 48GB* | qwen3-next-80b-a3b | 29/51 (FP2 FN20) | 42/51 (FP6 FN3) | 14/28 (FP3 FN11) | 21/28 (FP7 FN0) | 0.061 | 1.0 / 2.2 |
+| 96GB | gpt-oss-120b | — | 40/51 (FP8 FN3) | — | 21/28 (FP6 FN1) | 0.018 | 8.0 / 23.2 |
+| 96GB | glm-4-5-air | 40/51 (FP4 FN7) | 35/51 (FP16 FN0) | 23/28 (FP4 FN1) | 22/28 (FP6 FN0) | 0.114 | 7.5 / 10.1 |
+| 96GB | glm-4-7-flash | 29/51 (FP5 FN17) | 40/51 (FP7 FN4) | 18/28 (FP5 FN5) | 21/28 (FP6 FN1) | 0.070 | 19.2 / 58.4 |
+| 96GB | nemotron-3-super-120b | 23/51 (FP1 FN13 fail14) | 30/51 (FP6 FN2 fail13) | 9/28 (FP3 FN6 fail10) | 15/28 (FP4 FN0 fail9) | 0.041 | 14.3 / 30.3 |
+| 96GB | llama-4-scout | 33/51 (FP2 FN11 fail5) | 34/51 (FP15 FN2) | 16/28 (FP3 FN2 fail7) | 20/28 (FP5 FN0 fail3) | 0.087 | 1.9 / 5.1 |
 
-### True-local on frink (Ollama, quantised) vs OpenRouter ceiling
+### True-local on frink (Ollama, quantised) vs the OpenRouter hosted run
 
 | frink model | ops current | ops topical | evals current | evals topical | s/case med / p95 (ops topical) | OpenRouter: ops current | ops topical | evals current | evals topical | s/case (ops topical) |
 |---|---|---|---|---|---|---|---|---|---|---|

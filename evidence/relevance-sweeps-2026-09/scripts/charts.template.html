@@ -1,122 +1,4 @@
-"""Build charts.html (a self-contained page with inline SVG charts) from the
-pooled relevance rows. Usage: python make_charts.py [out.html]
-
-Reads pool_all.txt / pool_exgaia.txt via format_report.load(); everything on
-the page is derived from those two files, so re-pooling and re-running this
-script is the whole refresh.
-"""
-from __future__ import annotations
-
-import json
-import sys
-from collections import defaultdict
-from datetime import date
-
-import format_report as fr
-
-LABELS = {
-    "gemini-2-5-flash": "gemini-2.5-flash",
-    "qwen3-235b-2507": "qwen3-235b-2507",
-    "kimi-k2-0905": "kimi-k2-0905",
-    "qwen3-30b-a3b-2507": "qwen3-30b-a3b",
-    "gpt-oss-20b": "gpt-oss-20b",
-    "gemma-4-26b-a4b": "gemma-4-26b-a4b",
-    "gemma-4-31b": "gemma-4-31b",
-    "mistral-small-2603": "mistral-small-2603",
-    "nemotron-3-nano-30b": "nemotron-3-nano-30b",
-    "qwen3-32b": "qwen3-32b",
-    "llama-3-3-70b": "llama-3.3-70b",
-    "qwen3-next-80b-a3b": "qwen3-next-80b-a3b",
-    "gpt-oss-120b": "gpt-oss-120b",
-    "glm-4-5-air": "glm-4.5-air",
-    "glm-4-7-flash": "glm-4.7-flash",
-    "nemotron-3-super-120b": "nemotron-3-super-120b",
-    "llama-4-scout": "llama-4-scout",
-    "qwen3-30b-a3b-q4-frink": "qwen3-30b-a3b Q4 · frink",
-    "gemma-4-26b-a4b-q4-nothink-frink": "gemma-4-26b-a4b Q4 · frink",
-    "gemma-4-31b-q4-nothink-frink": "gemma-4-31b Q4 · frink",
-    "gemma-4-26b-a4b-q4-frink": "gemma-4-26b-a4b Q4 +thinking · frink",
-    "gemma-4-31b-q4-frink": "gemma-4-31b Q4 +thinking · frink",
-}
-HOSTED_ORDER = [
-    "gemini-2-5-flash", "qwen3-235b-2507", "kimi-k2-0905",
-    "qwen3-30b-a3b-2507", "gpt-oss-20b", "gemma-4-26b-a4b", "gemma-4-31b",
-    "mistral-small-2603", "nemotron-3-nano-30b", "qwen3-32b", "llama-3-3-70b",
-    "qwen3-next-80b-a3b", "gpt-oss-120b", "glm-4-5-air", "glm-4-7-flash",
-    "nemotron-3-super-120b", "llama-4-scout",
-]
-FRINK_ORDER = [
-    "qwen3-30b-a3b-q4-frink", "gemma-4-26b-a4b-q4-nothink-frink", "gemma-4-31b-q4-nothink-frink",
-    "gemma-4-26b-a4b-q4-frink", "gemma-4-31b-q4-frink",
-]
-HOSTED_OF = {
-    "qwen3-30b-a3b-q4-frink": "qwen3-30b-a3b-2507",
-    "gemma-4-26b-a4b-q4-nothink-frink": "gemma-4-26b-a4b",
-    "gemma-4-31b-q4-nothink-frink": "gemma-4-31b",
-    "gemma-4-26b-a4b-q4-frink": "gemma-4-26b-a4b",
-    "gemma-4-31b-q4-frink": "gemma-4-31b",
-}
-UNUSABLE = {"nemotron-3-super-120b": "rate-limited upstream on every attempt"}
-
-
-def cell(r):
-    if r is None:
-        return None
-    return {k: r[k] for k in ("run", "ok", "n", "fp", "fn", "fail", "med", "p95", "tok", "usd")}
-
-
-def build():
-    ops, ev, ops_rows, ev_rows = fr.load()
-    b_ops = next(iter(ops.values()))
-    b_ev = next(iter(ev.values()))
-    baseline = {
-        "ops": {"ok": b_ops["bok"], "n": 51, "fp": b_ops["bfp"], "fn": b_ops["bfn"]},
-        "evals": {"ok": b_ev["bok"], "n": 28, "fp": b_ev["bfp"], "fn": b_ev["bfn"]},
-    }
-    models = []
-    for m in HOSTED_ORDER + FRINK_ORDER:
-        where = "frink" if m.endswith("-frink") else "hosted"
-        cells = {
-            "ops_current": cell(ops.get(("agent-ops", m, "current"))),
-            "ops_noreject": cell(ops.get(("agent-ops", m, "no-reject"))),
-            "ops_topical": cell(ops.get(("agent-ops", m, "topical"))),
-            "evals_current": cell(ev.get(("agent-evals", m, "current"))),
-            "evals_noreject": cell(ev.get(("agent-evals", m, "no-reject"))),
-            "evals_topical": cell(ev.get(("agent-evals", m, "topical"))),
-        }
-        if m == "gemini-2-5-flash":
-            # its "current" cells are the recorded production baseline
-            cells["ops_current"] = dict(baseline["ops"], fail=0, med=None, p95=None, tok=None, usd=0, run=None)
-            cells["evals_current"] = dict(baseline["evals"], fail=0, med=None, p95=None, tok=None, usd=0, run=None)
-        if not any(cells.values()):
-            continue
-        models.append({
-            "id": m, "label": LABELS.get(m, m), "where": where,
-            "fit": "frink" if where == "frink" else fr.FIT.get(m, "API"),
-            "hosted_of": HOSTED_OF.get(m), "unusable": UNUSABLE.get(m),
-            "thinking": m in ("gemma-4-26b-a4b-q4-frink", "gemma-4-31b-q4-frink"),
-            "cells": cells,
-        })
-    # repeat draws: every row per (proj, model, prompt)
-    groups = defaultdict(list)
-    for r in ops_rows + ev_rows:
-        k = (r["proj"],) + fr.variant_key(r)
-        groups[k].append(r)
-    repeats = []
-    for (proj, m, prm), rs in groups.items():
-        rs = [r for r in rs if r["fail"] == 0]
-        if len(rs) < 2:
-            continue
-        repeats.append({
-            "label": LABELS.get(m, m), "proj": proj.replace("agent-", ""), "prompt": prm,
-            "n": rs[0]["n"], "draws": sorted(r["ok"] for r in sorted(rs, key=lambda r: r["run"])),
-        })
-    return {"generated": date.today().isoformat(), "baseline": baseline, "models": models, "repeats": repeats}
-
-
-PAGE = r"""<title>Relevance Sweeps 2026-09</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<title>Relevance Sweeps 2026-09</title>
 <style>
 :root{
   color-scheme:light;
@@ -124,9 +6,9 @@ PAGE = r"""<title>Relevance Sweeps 2026-09</title>
   --ink:#141412; --ink-2:#52514e; --ink-3:#8a8880;
   --hosted:#2a78d6; --frink:#eb6834; --fp:#e87ba4; --fn:#eda100; --ref:#52514e;
   --hosted-soft:#d6e5f8; --frink-soft:#fbdccd;
-  --font-display:"Sora","Segoe UI",system-ui,sans-serif;
-  --font-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
-  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --font-display:"Avenir Next","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --font-body:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -426,17 +308,3 @@ errors('fig3b','evals_topical',28,'agent-evals topical prompt error split');
   document.getElementById('prov').innerHTML=`<div>† nemotron-3-super-120b was rate-limited upstream on every attempt; its cells are not usable.</div><div>Labels are content-only; author fit is a separate dimension. agent-evals excludes 45 GAIA-route posts with known-bad labels. Always-relevant scores ${B.ops.n-22}/${B.ops.n} on agent-ops and ${B.evals.n-8}/${B.evals.n} on agent-evals.</div><div>Source: <code>RankOneLabs/scout</code> branch <code>evidence/relevance-sweeps-2026-09</code>, <code>RESULTS.md</code>, generated ${D.generated} by <code>scripts/make_charts.py</code>.</div>`;
 }
 </script>
-"""
-
-
-def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else "charts.html"
-    data = build()
-    html = PAGE.replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
-    with open(out, "w") as f:
-        f.write(html)
-    print(out, len(html), "bytes;", len(data["models"]), "models;", len(data["repeats"]), "repeat groups")
-
-
-if __name__ == "__main__":
-    main()

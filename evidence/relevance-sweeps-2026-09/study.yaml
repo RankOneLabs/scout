@@ -50,7 +50,7 @@ models:
   - {id: nemotron-3-super-120b, backend: openrouter, model: openrouter/nvidia/nemotron-3-super-120b-a12b}
   - {id: llama-4-scout,        backend: openrouter, model: openrouter/meta-llama/llama-4-scout}
   # true-local on frink, Q4_K_M GGUF, reasoning off
-  - {id: qwen3-30b-a3b-2507,   backend: frink, model: ollama/qwen3:30b-a3b-instruct-2507-q4_K_M, quant: Q4_K_M}
+  - {id: qwen3-30b-a3b-2507,   backend: frink, model: ollama/qwen3:30b-a3b-instruct-2507-q4_K_M, quant: Q4_K_M, reasoning: false}
   - {id: gemma-4-26b-a4b,      backend: frink, model: ollama/gemma4:26b, quant: Q4_K_M, reasoning: false}
   - {id: gemma-4-31b,          backend: frink, model: ollama/gemma4:31b, quant: Q4_K_M, reasoning: false}
 skip:
