@@ -200,16 +200,6 @@ def validate_grid(grid: GridDocument) -> GridDocument:
                     f"prompt {prompt_name!r}: files must cover exactly the declared projects "
                     f"(unknown: {extra}, missing: {missing})"
                 )
-    by_backend: dict[str, set[bool]] = {}
-    for m in grid.models:
-        if m.reasoning is not None:
-            by_backend.setdefault(m.backend, set()).add(m.reasoning)
-    conflicting = sorted(b for b, values in by_backend.items() if len(values) > 1)
-    if conflicting:
-        raise GridValidationError(
-            "backends mix reasoning: true and reasoning: false across their models, which "
-            f"one backend environment cannot honour: {conflicting}"
-        )
     for backend_name, backend in grid.backends.items():
         bad = sorted(k for k in backend.env if not _ENV_KEY.fullmatch(k))
         if bad:
@@ -284,7 +274,11 @@ def _sweep_document(
     document: dict[str, Any] = {"version": 1, "name": name, "axis": "model"}
     if prompt_file is not None:
         document["prompt_file"] = prompt_file
-    document["variants"] = [{"name": variant_name(m), "model": m.model} for m in models]
+    document["variants"] = [
+        {"name": variant_name(m), "model": m.model}
+        | ({} if m.reasoning is None else {"reasoning": m.reasoning})
+        for m in models
+    ]
     return document
 
 

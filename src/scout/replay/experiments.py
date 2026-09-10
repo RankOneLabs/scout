@@ -70,6 +70,7 @@ from scout.grading.correction import (
     ReplyCorrectionGrader,
     normalized_edit_distance,
 )
+from scout.reasoning_control import ReasoningControlClient
 from scout.replay.pricing import (
     PriceEstimate,
     PricingCatalog,
@@ -319,6 +320,9 @@ class CandidateReplayPlan:
     recorded_input_sha256: str
     grader_attached: bool
     is_no_op: bool
+    # The candidate's reasoning ("thinking") switch: None leaves the
+    # provider default untouched, True/False is pinned on every request.
+    reasoning: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +344,7 @@ class ReplayPreview:
     max_llm_calls: int
     is_no_op: bool
     grader_attached: bool
+    reasoning: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -681,10 +686,13 @@ def build_candidate_plan(
     model_override: str | None,
     system_prompt_override: str | None,
     relevance_grader: bool = False,
+    reasoning_override: bool | None = None,
 ) -> CandidateReplayPlan:
-    """Decide the candidate's model and system prompt, hash both prompts
-    and the recorded input, and serialize the frozen v2 candidate-only
-    candidate_config — all before any database write or model call.
+    """Decide the candidate's model, system prompt, and reasoning switch,
+    hash both prompts and the recorded input, and serialize the frozen v2
+    candidate-only candidate_config — all before any database write or
+    model call. An explicit `reasoning_override` is never a no-op: the
+    baseline ran on the provider default, which the plan cannot observe.
 
     Raises ModelResolutionError if `model_override` (or the baseline's own
     recorded model, when absent) does not route through Scout's trusted
@@ -706,7 +714,11 @@ def build_candidate_plan(
     candidate_prompt_sha256 = _sha256_utf8(candidate_system_prompt)
     baseline_prompt_reused = candidate_prompt_sha256 == baseline_prompt_sha256
     recorded_input_sha256 = _sha256_utf8(baseline.recorded_input)
-    is_no_op = candidate_model == baseline.baseline_model and baseline_prompt_reused
+    is_no_op = (
+        candidate_model == baseline.baseline_model
+        and baseline_prompt_reused
+        and reasoning_override is None
+    )
     grader_attached = baseline.phase == "reply_draft" or relevance_grader
 
     candidate_config_json = _canonical_json(
@@ -717,6 +729,7 @@ def build_candidate_plan(
             "system_prompt": candidate_system_prompt,
             "system_prompt_sha256": candidate_prompt_sha256,
             "grader_attached": grader_attached,
+            "reasoning": reasoning_override,
         }
     )
 
@@ -731,6 +744,7 @@ def build_candidate_plan(
         recorded_input_sha256=recorded_input_sha256,
         grader_attached=grader_attached,
         is_no_op=is_no_op,
+        reasoning=reasoning_override,
     )
 
 
@@ -799,6 +813,7 @@ async def preview_replay(
     model_override: str | None,
     system_prompt_override: str | None,
     dossier_root: Path | str | None = None,
+    reasoning_override: bool | None = None,
 ) -> ReplayPreview:
     """Read-only preview: resolves the baseline (and, for a reply_draft
     phase, the correction oracle), builds the candidate plan, and reports
@@ -815,6 +830,7 @@ async def preview_replay(
         )
     plan = build_candidate_plan(
         baseline, model_override=model_override, system_prompt_override=system_prompt_override,
+        reasoning_override=reasoning_override,
     )
     phase_config = PHASE_REPLAY_CONFIGS[baseline.phase]
     return ReplayPreview(
@@ -832,6 +848,7 @@ async def preview_replay(
         max_llm_calls=phase_config.max_llm_calls,
         is_no_op=plan.is_no_op,
         grader_attached=plan.grader_attached,
+        reasoning=plan.reasoning,
     )
 
 
@@ -846,6 +863,8 @@ def _build_candidate_agent_config(
     """Build the candidate's AgentConfig entirely from the fixed phase map
     and the candidate plan — never from a dynamically imported schema."""
     phase_config = PHASE_REPLAY_CONFIGS[baseline.phase]
+    if plan.reasoning is not None:
+        llm = ReasoningControlClient(llm, plan.reasoning)
     return AgentConfig(
         name=f"scout_replay_{baseline.phase}",
         description=f"Scout offline replay candidate for phase_run_id={baseline.phase_run_id}.",
@@ -1150,6 +1169,7 @@ async def execute_replay(
     model_override: str | None,
     system_prompt_override: str | None,
     dossier_root: Path | str | None = None,
+    reasoning_override: bool | None = None,
 ) -> ExperimentOutcome:
     """Execute one explicitly authorized paid replay end to end.
 
@@ -1178,6 +1198,7 @@ async def execute_replay(
 
     plan = build_candidate_plan(
         baseline, model_override=model_override, system_prompt_override=system_prompt_override,
+        reasoning_override=reasoning_override,
     )
     if plan.is_no_op:
         raise NoOpReplayError(
@@ -1229,6 +1250,8 @@ class SweepVariant:
     name: str
     model: str | None
     prompt_file: str | None
+    # Per-variant reasoning switch; None defers to the sweep's shared value.
+    reasoning: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1237,13 +1260,15 @@ class SweepDefinition:
     one axis (`axis`) relative to a shared, axis-invariant setting
     (`shared_model` for a prompt sweep, `shared_prompt_file` for a model
     sweep — either may be None, meaning "reuse each baseline case's own
-    recorded value")."""
+    recorded value"). `shared_reasoning` is the reasoning switch for every
+    variant that does not set its own; None leaves the provider default."""
 
     name: str
     axis: str
     shared_model: str | None
     shared_prompt_file: str | None
     variants: tuple[SweepVariant, ...]
+    shared_reasoning: bool | None = None
 
 
 def _load_sweep_schema() -> dict[str, Any]:
@@ -1296,8 +1321,9 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
     two variants naming the same model, and a prompt-axis sweep rejects
     two variants whose resolved prompt file content is byte-identical
     (compared by SHA-256, not just by filename) — since a sweep exists to
-    compare *distinct* configurations. Raises SweepValidationError for any
-    violation — always before any write.
+    compare *distinct* configurations. Two variants that differ only in
+    their effective reasoning switch are distinct. Raises
+    SweepValidationError for any violation — always before any write.
     """
     schema = _load_sweep_schema()
     validator = jsonschema.Draft202012Validator(schema)
@@ -1317,6 +1343,7 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
 
     shared_model = document.get("model")
     shared_prompt_file = document.get("prompt_file")
+    shared_reasoning = document.get("reasoning")
     if shared_model is not None:
         try:
             from_model(shared_model)
@@ -1328,11 +1355,15 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
         _read_utf8_text_file(base_dir / shared_prompt_file, error_cls=SweepValidationError)
 
     variants: list[SweepVariant] = []
-    seen_models: dict[str, str] = {}
-    seen_prompt_hashes: dict[str, str] = {}
+    seen_models: dict[tuple[str, bool | None], str] = {}
+    seen_prompt_hashes: dict[tuple[str, bool | None], str] = {}
     for raw in raw_variants:
         variant_model = raw.get("model")
         variant_prompt_file = raw.get("prompt_file")
+        variant_reasoning = raw.get("reasoning")
+        effective_reasoning = (
+            variant_reasoning if variant_reasoning is not None else shared_reasoning
+        )
         if variant_model is not None:
             try:
                 from_model(variant_model)
@@ -1340,26 +1371,31 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
                 raise SweepValidationError(
                     f"sweep variant {raw['name']!r} model {variant_model!r} is not routable: {exc}"
                 ) from exc
-            if variant_model in seen_models:
+            model_key = (variant_model, effective_reasoning)
+            if model_key in seen_models:
                 raise SweepValidationError(
-                    f"sweep variants {seen_models[variant_model]!r} and {raw['name']!r} both use "
-                    f"model {variant_model!r} — every variant must be semantically distinct"
+                    f"sweep variants {seen_models[model_key]!r} and {raw['name']!r} both use "
+                    f"model {variant_model!r} with the same reasoning switch — every variant "
+                    "must be semantically distinct"
                 )
-            seen_models[variant_model] = raw["name"]
+            seen_models[model_key] = raw["name"]
         if variant_prompt_file is not None:
             text = _read_utf8_text_file(
                 base_dir / variant_prompt_file, error_cls=SweepValidationError,
             )
-            text_sha256 = _sha256_utf8(text)
-            if text_sha256 in seen_prompt_hashes:
+            prompt_key = (_sha256_utf8(text), effective_reasoning)
+            if prompt_key in seen_prompt_hashes:
                 raise SweepValidationError(
-                    f"sweep variants {seen_prompt_hashes[text_sha256]!r} and {raw['name']!r} "
-                    "resolve to identical prompt content — every variant must be semantically "
-                    "distinct"
+                    f"sweep variants {seen_prompt_hashes[prompt_key]!r} and {raw['name']!r} "
+                    "resolve to identical prompt content with the same reasoning switch — "
+                    "every variant must be semantically distinct"
                 )
-            seen_prompt_hashes[text_sha256] = raw["name"]
+            seen_prompt_hashes[prompt_key] = raw["name"]
         variants.append(
-            SweepVariant(name=raw["name"], model=variant_model, prompt_file=variant_prompt_file)
+            SweepVariant(
+                name=raw["name"], model=variant_model, prompt_file=variant_prompt_file,
+                reasoning=variant_reasoning,
+            )
         )
 
     return SweepDefinition(
@@ -1368,6 +1404,7 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
         shared_model=shared_model,
         shared_prompt_file=shared_prompt_file,
         variants=tuple(variants),
+        shared_reasoning=shared_reasoning,
     )
 
 
@@ -1401,6 +1438,11 @@ def _sweep_variant_overrides(
     return sweep.shared_model, prompt_text
 
 
+def _sweep_variant_reasoning(sweep: SweepDefinition, variant: SweepVariant) -> bool | None:
+    """The variant's own reasoning switch, else the sweep's shared one."""
+    return variant.reasoning if variant.reasoning is not None else sweep.shared_reasoning
+
+
 @dataclass(frozen=True, slots=True)
 class BatchVariant:
     """One candidate override policy applied uniformly to every baseline
@@ -1410,6 +1452,7 @@ class BatchVariant:
     name: str
     model_override: str | None
     system_prompt_override: str | None
+    reasoning_override: bool | None = None
 
 
 def batch_variants_for_sweep(sweep: SweepDefinition, *, base_dir: Path) -> tuple[BatchVariant, ...]:
@@ -1421,6 +1464,7 @@ def batch_variants_for_sweep(sweep: SweepDefinition, *, base_dir: Path) -> tuple
             BatchVariant(
                 name=variant.name, model_override=model_override,
                 system_prompt_override=prompt_override,
+                reasoning_override=_sweep_variant_reasoning(sweep, variant),
             )
         )
     return tuple(resolved)
@@ -1780,6 +1824,7 @@ def _build_canonical_plan_document(
                 if variant.system_prompt_override is not None
                 else None
             ),
+            "reasoning_override": variant.reasoning_override,
         }
         for variant in variants
     ]
@@ -1922,6 +1967,7 @@ async def build_batch_plan(
                 model_override=variant.model_override,
                 system_prompt_override=variant.system_prompt_override,
                 relevance_grader=case.relevance is not None,
+                reasoning_override=variant.reasoning_override,
             )
             pairs.append(_classify_pair(case, plan, pricing_catalog, variant.name))
 
@@ -2040,6 +2086,7 @@ def build_batch_candidate_config(
     grader_attached: bool,
     sweep: SweepDefinition | None,
     plan_sha256: str,
+    reasoning_override: bool | None = None,
     phase_run_ids: tuple[int, ...],
     dropped_duplicate_phase_run_ids: tuple[int, ...],
     skipped_pairs: tuple[dict[str, Any], ...],
@@ -2084,6 +2131,7 @@ def build_batch_candidate_config(
             "system_prompt_override_sha256": (
                 _sha256_utf8(system_prompt_override) if system_prompt_override is not None else None
             ),
+            "reasoning_override": reasoning_override,
             "grader_attached": grader_attached,
             "sweep": (
                 {"name": sweep.name, "axis": sweep.axis, "version": SWEEP_SCHEMA_VERSION}
@@ -2130,6 +2178,7 @@ def replay_worker_configuration(plan: CandidateReplayPlan) -> ReplayWorkerConfig
         include_memory_in_prompt=False,
         include_feedback_in_prompt=False,
         max_output_tokens=phase.max_output_tokens,
+        reasoning=plan.reasoning,
     )
 
 
@@ -2330,6 +2379,7 @@ async def execute_batch_replay(
             variant_name=variant.name,
             model_override=variant.model_override,
             system_prompt_override=variant.system_prompt_override,
+            reasoning_override=variant.reasoning_override,
             grader_attached=True, sweep=sweep, plan_sha256=plan.plan_sha256,
             phase_run_ids=plan.phase_run_ids,
             dropped_duplicate_phase_run_ids=plan.dropped_duplicate_phase_run_ids,
@@ -2411,6 +2461,7 @@ async def retry_batch_replay(
     config = _parse_batch_candidate_config(run["candidate_config"])
     model_override = config.get("model_override")
     system_prompt_override = config.get("system_prompt_override")
+    reasoning_override = config.get("reasoning_override")
     variant_name = config.get("variant_name", DEFAULT_BATCH_VARIANT_NAME)
 
     latest_by_case = latest_attempts_by_case(
@@ -2488,6 +2539,7 @@ async def retry_batch_replay(
             case.baseline, model_override=model_override,
             system_prompt_override=system_prompt_override,
             relevance_grader=case.relevance is not None,
+            reasoning_override=reasoning_override,
         )
         if plan.is_no_op:
             raise RetryResolutionError(
