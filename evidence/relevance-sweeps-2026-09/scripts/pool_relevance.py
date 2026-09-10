@@ -164,7 +164,7 @@ def format_rows(rows: Sequence[RunRow]) -> str:
     lines = [header]
     for r in rows:
         lines.append(
-            f"{r.run:>3} {r.project:11} {r.sweep[:48]:48} {r.variant:30} {r.prompt:8} {r.n:>3} "
+            f"{r.run:>3} {r.project:11} {r.sweep:48} {r.variant:30} {r.prompt:8} {r.n:>3} "
             f"{r.ok:>3} {r.fp:>3} {r.fn:>3} {r.fail:>4} {r.usd:>8.4f} | "
             f"{r.baseline_ok}/{r.baseline_fp}/{r.baseline_fn} | "
             f"{r.median_s:.1f} {r.p95_s:.1f} {r.out_tokens:.0f}"

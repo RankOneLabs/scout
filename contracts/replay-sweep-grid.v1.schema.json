@@ -42,12 +42,16 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9.-]*$"
+      },
+      "description": "Keys are slugs (lowercase letters, digits, '.', '-'): they become sweep file name components."
     },
     "prompts": {
       "type": "object",
       "minProperties": 1,
-      "description": "Named candidate system prompts. null reuses each baseline case's recorded prompt. `file` is one file for every project; `files` maps project name to file. Paths are relative to the grid document.",
+      "description": "Named candidate system prompts. null reuses each baseline case's recorded prompt. `file` is one file for every project; `files` maps project name to file. Paths are relative to the grid document. Keys are slugs (lowercase letters, digits, '.', '-'): they become sweep file name components.",
       "additionalProperties": {
         "oneOf": [
           {
@@ -84,6 +88,9 @@
             }
           }
         ]
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9.-]*$"
       }
     },
     "backends": {
@@ -116,7 +123,11 @@
             }
           }
         }
-      }
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9.-]*$"
+      },
+      "description": "Keys are slugs (lowercase letters, digits, '.', '-'): they become sweep file name components."
     },
     "models": {
       "type": "array",
