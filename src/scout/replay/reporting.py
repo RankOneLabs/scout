@@ -22,11 +22,20 @@ Every given experiment_run_id must share one authorized plan
 Segmentation is exact and mandatory: cases (attempted *and* skipped) are
 grouped by (baseline_model, baseline_prompt_sha256). A report never pools
 two segments together and never names an overall winner — only, within
-each segment, a ranking of that segment's own candidate variants by mean
-paired distance delta on their common successfully-scored case
-intersection, plus each variant's own full coverage (scored, failed, and
-skipped by classification) and a deterministic 95% paired-bootstrap
-interval (unavailable below two paired cases).
+each segment, each variant's mean paired distance delta on the common
+successfully-scored case intersection, each variant's own full coverage
+(scored, failed, and skipped by classification), and a deterministic 95%
+paired-bootstrap interval (unavailable below BOOTSTRAP_MIN_PAIRED_CASES
+paired cases, where a percentile bootstrap is little more than the range
+of the points).
+
+The interval decides what gets ordered. A segment's `ranking` holds only
+the variants whose interval excludes zero, ascending by mean delta; every
+other variant with a mean — interval unavailable, or straddling zero — is
+listed unordered under `indistinguishable_from_baseline`. The number of
+intervals in the segment (`interval_family_size`) is recorded so the
+unadjusted per-interval level is auditable; no multiple-comparison
+correction is applied.
 """
 
 from __future__ import annotations
@@ -49,12 +58,12 @@ from scout.replay.tasks import RelevanceScore, RelevanceTask
 from scout.storage.evaluations import Experiment
 from scout.storage.state import StateManager
 
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 4  # kept distinct from RELEVANCE_REPORT_SCHEMA_VERSION
 RELEVANCE_REPORT_SCHEMA_VERSION = 3
 BOOTSTRAP_METHOD = "paired_bootstrap_percentile"
 BOOTSTRAP_VERSION = 1
 BOOTSTRAP_RESAMPLES = 10_000
-BOOTSTRAP_MIN_PAIRED_CASES = 2
+BOOTSTRAP_MIN_PAIRED_CASES = 10
 BOOTSTRAP_CI_LOWER_QUANTILE = 0.025
 BOOTSTRAP_CI_UPPER_QUANTILE = 0.975
 
@@ -407,11 +416,37 @@ class VariantSegmentSummary:
     interval_seed: int | None
     ci_lower: float | None
     ci_upper: float | None
+    interval_excludes_zero: bool | None
 
 
 def _ranking_key(summary: VariantSegmentSummary) -> float:
     assert summary.mean_delta is not None
     return summary.mean_delta
+
+
+def _interval_excludes_zero(ci_lower: float | None, ci_upper: float | None) -> bool | None:
+    if ci_lower is None or ci_upper is None:
+        return None
+    return ci_lower > 0.0 or ci_upper < 0.0
+
+
+def _partition_by_interval(
+    summaries: Sequence[VariantSegmentSummary],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split the variants that have a mean into (ranking, indistinguishable):
+    the ranking is ascending by mean delta over variants whose interval
+    excludes zero; everything else — interval unavailable or containing
+    zero — is an unordered set, returned sorted by name only for
+    determinism."""
+    with_mean = [s for s in summaries if s.mean_delta is not None]
+    ranked = sorted((s for s in with_mean if s.interval_excludes_zero), key=_ranking_key)
+    indistinguishable = sorted(
+        (s for s in with_mean if not s.interval_excludes_zero), key=lambda s: s.variant_name,
+    )
+    return (
+        tuple(s.variant_name for s in ranked),
+        tuple(s.variant_name for s in indistinguishable),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +456,8 @@ class SegmentReport:
     baseline_prompt_sha256: str
     variants: tuple[VariantSegmentSummary, ...]
     ranking: tuple[str, ...]
+    indistinguishable_from_baseline: tuple[str, ...]
+    interval_family_size: int
 
 
 def _build_segments(
@@ -490,21 +527,19 @@ def _build_segments(
                     interval_seed=interval_seed,
                     ci_lower=ci_lower,
                     ci_upper=ci_upper,
+                    interval_excludes_zero=_interval_excludes_zero(ci_lower, ci_upper),
                 )
             )
 
-        ranking = tuple(
-            summary.variant_name
-            for summary in sorted(
-                (s for s in summaries if s.mean_delta is not None), key=_ranking_key,
-            )
-        )
+        ranking, indistinguishable = _partition_by_interval(summaries)
         baseline_model, baseline_prompt_sha256 = segment_key.split("|", 1)
         segments.append(
             SegmentReport(
                 segment_key=segment_key, baseline_model=baseline_model,
                 baseline_prompt_sha256=baseline_prompt_sha256,
                 variants=tuple(summaries), ranking=ranking,
+                indistinguishable_from_baseline=indistinguishable,
+                interval_family_size=sum(1 for s in summaries if s.interval_available),
             )
         )
     return segments
@@ -596,6 +631,8 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                 "baseline_model": segment.baseline_model,
                 "baseline_prompt_sha256": segment.baseline_prompt_sha256,
                 "ranking": list(segment.ranking),
+                "indistinguishable_from_baseline": list(segment.indistinguishable_from_baseline),
+                "interval_family_size": segment.interval_family_size,
                 "variants": [
                     {
                         "variant_name": variant.variant_name,
@@ -610,6 +647,7 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                         "interval_seed": variant.interval_seed,
                         "ci_lower": variant.ci_lower,
                         "ci_upper": variant.ci_upper,
+                        "interval_excludes_zero": variant.interval_excludes_zero,
                     }
                     for variant in segment.variants
                 ],
@@ -730,7 +768,7 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
 
 def render_markdown(report: dict[str, Any]) -> str:
     """Render Markdown exclusively from an already-built report document."""
-    if report.get("version") == RELEVANCE_REPORT_SCHEMA_VERSION:
+    if "task" in report:  # relevance reports carry their task document; batch reports never do
         return _render_relevance_markdown(report)
     coverage = report["correction_coverage"]
     skipped_counts = coverage["skipped"]
@@ -777,30 +815,48 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"- Baseline model: `{segment['baseline_model']}`")
         lines.append(f"- Baseline prompt sha256: `{segment['baseline_prompt_sha256']}`")
-        ranking_text = ", ".join(f"`{name}`" for name in segment["ranking"]) or "n/a"
+        ranking_text = ", ".join(f"`{name}`" for name in segment["ranking"]) or "none"
+        indistinguishable_text = (
+            ", ".join(f"`{name}`" for name in segment["indistinguishable_from_baseline"])
+            or "none"
+        )
         lines.append(
             "- Ranking by mean paired distance delta, ascending (more negative is closer to "
-            f"the correction): {ranking_text}"
+            f"the correction), variants whose 95% interval excludes zero only: {ranking_text}"
+        )
+        lines.append(
+            "- Indistinguishable from baseline (interval unavailable or containing zero; "
+            f"unordered): {indistinguishable_text}"
+        )
+        lines.append(
+            f"- Intervals in this segment: {segment['interval_family_size']} "
+            "(each at the unadjusted 95% level; no multiple-comparison correction)"
         )
         lines.append("")
         lines.append(
             "| variant | scored | failed | unscored | no-op | unpriceable | common "
-            "| mean delta | 95% CI | seed |"
+            "| mean delta | 95% CI | excludes zero | seed |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
         for variant in segment["variants"]:
             mean_delta = "n/a" if variant["mean_delta"] is None else f"{variant['mean_delta']:.4f}"
             ci = (
                 f"[{variant['ci_lower']:.4f}, {variant['ci_upper']:.4f}]"
                 if variant["interval_available"]
-                else "unavailable (< 2 paired cases)"
+                else f"unavailable (< {BOOTSTRAP_MIN_PAIRED_CASES} paired cases)"
+            )
+            excludes_zero = (
+                "n/a"
+                if variant["interval_excludes_zero"] is None
+                else ("yes" if variant["interval_excludes_zero"] else "no")
             )
             seed = variant["interval_seed"] if variant["interval_seed"] is not None else "n/a"
             lines.append(
                 f"| `{variant['variant_name']}` | {variant['scored_case_count']} | "
                 f"{variant['failed_case_count']} | {variant['unscored_count']} | "
                 f"{variant['no_op_count']} | {variant['unpriceable_count']} | "
-                f"{variant['common_case_count']} | {mean_delta} | {ci} | {seed} |"
+                f"{variant['common_case_count']} | {mean_delta} | {ci} | {excludes_zero} | "
+                f"{seed} |"
             )
         lines.append("")
         if segment["cases"]:

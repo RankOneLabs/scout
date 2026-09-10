@@ -198,35 +198,65 @@ class TestBuildBatchReport:
         assert len(report["segments"]) == 1
         segment = report["segments"][0]
         assert segment["baseline_model"] == "claude-opus-4-20250514"
-        assert segment["ranking"] == [ee.DEFAULT_BATCH_VARIANT_NAME]
+        # Two paired cases is below the interval floor: the variant has a
+        # mean but no interval, so it is indistinguishable, never ranked.
+        assert segment["ranking"] == []
+        assert segment["indistinguishable_from_baseline"] == [ee.DEFAULT_BATCH_VARIANT_NAME]
+        assert segment["interval_family_size"] == 0
         variant = segment["variants"][0]
         assert variant["scored_case_count"] == 2
         assert variant["unscored_count"] == 0
         assert variant["no_op_count"] == 0
         assert variant["unpriceable_count"] == 0
         assert variant["common_case_count"] == 2
-        assert variant["interval_available"] is True
-        assert variant["interval_seed"] is not None
-        assert variant["ci_lower"] <= variant["mean_delta"] <= variant["ci_upper"]
+        assert variant["mean_delta"] is not None
+        assert variant["interval_available"] is False
+        assert variant["interval_seed"] is None
+        assert variant["ci_lower"] is None and variant["ci_upper"] is None
+        assert variant["interval_excludes_zero"] is None
         reported_ids = {case["phase_run_id"] for case in segment["cases"]}
         assert reported_ids == set(phase_run_ids)
 
     async def test_sweep_ranks_closer_variant_first(
         self, state, tracer, feedback, monkeypatch
     ) -> None:
+        case_count = rr.BOOTSTRAP_MIN_PAIRED_CASES
         experiment_run_ids, _phase_run_ids = await _run_two_variant_sweep(
-            state, tracer, feedback, monkeypatch,
+            state, tracer, feedback, monkeypatch, case_count=case_count,
         )
         report = rr.build_batch_report(state, experiment_run_ids=list(experiment_run_ids.values()))
         assert len(report["segments"]) == 1
         segment = report["segments"][0]
         # "a" assembles exactly the correction text (distance 0.0); "b" does
-        # not -- "a" must rank first (a smaller/more negative mean delta).
+        # not. At the floor both intervals exist and exclude zero, so both
+        # are ranked and "a" must come first (a more negative mean delta).
         assert segment["ranking"] == ["a", "b"]
+        assert segment["indistinguishable_from_baseline"] == []
+        assert segment["interval_family_size"] == 2
         by_name = {v["variant_name"]: v for v in segment["variants"]}
         assert by_name["a"]["mean_delta"] < by_name["b"]["mean_delta"]
-        assert by_name["a"]["common_case_count"] == 3
-        assert by_name["b"]["common_case_count"] == 3
+        assert by_name["a"]["common_case_count"] == case_count
+        assert by_name["b"]["common_case_count"] == case_count
+        for variant in by_name.values():
+            assert variant["interval_available"] is True
+            assert variant["interval_seed"] is not None
+            assert variant["ci_lower"] <= variant["mean_delta"] <= variant["ci_upper"]
+            assert variant["interval_excludes_zero"] is True
+
+    async def test_sweep_below_interval_floor_ranks_nothing(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        experiment_run_ids, _phase_run_ids = await _run_two_variant_sweep(
+            state, tracer, feedback, monkeypatch, case_count=3,
+        )
+        report = rr.build_batch_report(state, experiment_run_ids=list(experiment_run_ids.values()))
+        segment = report["segments"][0]
+        # Three paired cases: "a" still has the smaller mean, but without an
+        # interval neither variant may be ordered against the other.
+        assert segment["ranking"] == []
+        assert segment["indistinguishable_from_baseline"] == ["a", "b"]
+        assert segment["interval_family_size"] == 0
+        assert all(v["interval_available"] is False for v in segment["variants"])
 
     async def test_exclusions_report_failed_case_reason(
         self, state, tracer, feedback, monkeypatch
@@ -389,10 +419,12 @@ class TestGoldenReports:
         segment_b = by_model["claude-haiku-4-5-20251001"]
         assert {case["phase_run_id"] for case in segment_a["cases"]} == set(groups["A"])
         assert {case["phase_run_id"] for case in segment_b["cases"]} == set(groups["B"])
-        # Segment A has 2 paired cases (interval available); segment B has
-        # only 1 (below the 2-case minimum) -- each segment's own coverage,
-        # never pooled with the other.
-        assert segment_a["variants"][0]["interval_available"] is True
+        # Segment A has 2 paired cases and segment B only 1 -- each
+        # segment's own coverage, never pooled with the other, and both
+        # below the interval floor.
+        assert segment_a["variants"][0]["common_case_count"] == 2
+        assert segment_b["variants"][0]["common_case_count"] == 1
+        assert segment_a["variants"][0]["interval_available"] is False
         assert segment_b["variants"][0]["interval_available"] is False
         assert segment_b["variants"][0]["mean_delta"] is not None  # a mean is still reportable
 
@@ -551,6 +583,46 @@ class TestBootstrapDeterminism:
         assert rr._bootstrap_seed([2, 1], "segA", "v1") == seed_a  # order-independent
 
 
+def _summary(
+    name: str, mean: float | None, ci: tuple[float, float] | None,
+) -> rr.VariantSegmentSummary:
+    return rr.VariantSegmentSummary(
+        variant_name=name, scored_case_count=0, failed_case_count=0, unscored_count=0,
+        no_op_count=0, unpriceable_count=0, common_case_count=0, mean_delta=mean,
+        interval_available=ci is not None, interval_seed=None,
+        ci_lower=None if ci is None else ci[0], ci_upper=None if ci is None else ci[1],
+        interval_excludes_zero=rr._interval_excludes_zero(
+            None if ci is None else ci[0], None if ci is None else ci[1],
+        ),
+    )
+
+
+class TestIntervalPartition:
+    def test_interval_excludes_zero_on_either_side(self) -> None:
+        assert rr._interval_excludes_zero(-0.4, -0.1) is True
+        assert rr._interval_excludes_zero(0.1, 0.4) is True
+
+    def test_interval_containing_or_touching_zero_does_not_exclude_it(self) -> None:
+        assert rr._interval_excludes_zero(-0.2, 0.2) is False
+        assert rr._interval_excludes_zero(0.0, 0.3) is False
+        assert rr._interval_excludes_zero(-0.3, 0.0) is False
+
+    def test_unavailable_interval_is_none(self) -> None:
+        assert rr._interval_excludes_zero(None, None) is None
+
+    def test_only_variants_whose_interval_excludes_zero_are_ordered(self) -> None:
+        summaries = [
+            _summary("worse", 0.3, (0.1, 0.5)),
+            _summary("noise", -0.05, (-0.2, 0.1)),
+            _summary("better", -0.4, (-0.5, -0.3)),
+            _summary("tiny", -0.6, None),
+            _summary("empty", None, None),
+        ]
+        ranking, indistinguishable = rr._partition_by_interval(summaries)
+        assert ranking == ("better", "worse")
+        assert indistinguishable == ("noise", "tiny")
+
+
 class TestRenderJsonAndMarkdown:
     async def test_render_json_is_canonical_and_deterministic(
         self, state, tracer, feedback, monkeypatch
@@ -584,3 +656,15 @@ class TestRenderJsonAndMarkdown:
         assert "## Cost" in markdown
         assert f"## Segment `{report['segments'][0]['segment_key']}`" in markdown
         assert "95% CI" in markdown
+        assert "excludes zero" in markdown
+        assert "Indistinguishable from baseline" in markdown
+        assert f"unavailable (< {rr.BOOTSTRAP_MIN_PAIRED_CASES} paired cases)" in markdown
+
+    async def test_render_markdown_orders_only_interval_backed_variants(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        experiment_run_ids, _ = await _run_two_variant_sweep(state, tracer, feedback, monkeypatch)
+        report = rr.build_batch_report(state, experiment_run_ids=list(experiment_run_ids.values()))
+        markdown = rr.render_markdown(report)
+        assert "excludes zero only: none" in markdown
+        assert "unordered): `a`, `b`" in markdown

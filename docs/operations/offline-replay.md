@@ -435,7 +435,7 @@ accidentally mixing runs from two unrelated batches/sweeps.
 Cases — attempted **and** skipped — are segmented by **exact baseline
 model identity and baseline system-prompt SHA-256** — segments are never
 pooled, and the report never names an overall winner. Within each
-segment, every candidate variant is ranked by its **mean paired distance
+segment, every candidate variant reports its **mean paired distance
 delta** (`candidate_distance - baseline_distance`, more negative is
 closer to the correction) computed only on that segment's **common
 successfully-scored case intersection** across all its variants — plus
@@ -448,8 +448,24 @@ with the exact per-variant `interval_seed` — itself derived from the
 report's own identity: the exact experiment_run_ids, segment, and
 variant — printed alongside it so the interval is independently
 reproducible) is reported per variant, and marked
-`interval_available: false` below two paired cases rather than
-fabricating a bound.
+`interval_available: false` below ten paired cases
+(`BOOTSTRAP_MIN_PAIRED_CASES`) rather than publishing an interval that is
+little more than the range of a handful of points; the mean is still
+reported, with `common_case_count` beside it, so segment size is always
+visible.
+
+The interval decides what gets ordered. A segment's `ranking` lists only
+the variants whose interval excludes zero (`interval_excludes_zero:
+true`), ascending by mean delta. Every other variant with a mean — its
+interval unavailable, or containing zero — appears in
+`indistinguishable_from_baseline`, an unordered set (sorted by name only
+for determinism) that the Markdown renders as a set, never as an order.
+A segment with no interval excluding zero has an empty ranking, and that
+is the finding. `interval_family_size` records how many intervals the
+segment carries, each at the unadjusted 95% level: with five variants,
+roughly one spurious exclusion of zero per segment is expected, and no
+multiple-comparison correction is applied — the family size is recorded
+so a reader can apply one.
 
 The report carries: **correction coverage** (`population_size`, dropped
 duplicate baselines, attempted/scored/failed, and skipped broken out by
