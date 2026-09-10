@@ -169,6 +169,12 @@ class ModelResolutionError(ReplayError):
     model resolver and routing validation."""
 
 
+class ReasoningOverrideError(ReplayError):
+    """The candidate's reasoning switch is not True, False, or None —
+    from a caller or from malformed stored batch configuration on retry.
+    Raised while building the plan, before any write."""
+
+
 class NoOpReplayError(ReplayError):
     """The candidate configuration is identical to the baseline: same
     routed model and same system-prompt hash."""
@@ -696,8 +702,13 @@ def build_candidate_plan(
 
     Raises ModelResolutionError if `model_override` (or the baseline's own
     recorded model, when absent) does not route through Scout's trusted
-    model resolver.
+    model resolver, and ReasoningOverrideError for a reasoning switch that
+    is not True, False, or None.
     """
+    if reasoning_override is not None and not isinstance(reasoning_override, bool):
+        raise ReasoningOverrideError(
+            f"reasoning_override must be True, False, or None, not {reasoning_override!r}"
+        )
     candidate_model = model_override if model_override else baseline.baseline_model
     try:
         from_model(candidate_model)
@@ -2612,6 +2623,7 @@ __all__ = [
     "CorrectionOracleResolutionError",
     "ExperimentOutcome",
     "ModelResolutionError",
+    "ReasoningOverrideError",
     "NoOpReplayError",
     "NonExecutablePopulationError",
     "PairClassification",

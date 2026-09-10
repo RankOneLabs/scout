@@ -1067,6 +1067,17 @@ class TestBuildCandidatePlan:
         assert json.loads(plan.candidate_config_json)["reasoning"] is False
         assert ee.replay_worker_configuration(plan).reasoning is False
 
+    @pytest.mark.parametrize("bad", ["off", 1, 0])
+    async def test_non_boolean_reasoning_override_fails_before_any_write(
+        self, state, tracer, feedback, bad
+    ) -> None:
+        baseline = await self._baseline(state, tracer, feedback)
+        with pytest.raises(ee.ReasoningOverrideError, match="True, False, or None"):
+            ee.build_candidate_plan(
+                baseline, model_override=None, system_prompt_override=None,
+                reasoning_override=bad,
+            )
+
     async def test_reasoning_override_is_pinned_on_every_candidate_request(
         self, state, tracer, feedback, monkeypatch
     ) -> None:
