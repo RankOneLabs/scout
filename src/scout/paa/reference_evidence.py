@@ -1171,7 +1171,7 @@ def check_reference_tree(*, target_dir: Path = REFERENCE_DIR) -> list[str]:
     if not manifest_path.is_file():
         return [
             f"{target_dir} does not exist or has no {REFERENCE_MANIFEST_NAME}; "
-            "run `uv run python scripts/generate_paa/reference_evidence.py --write`"
+            "run `uv run python scripts/generate_paa_reference_evidence.py --write`"
         ]
     try:
         manifest = json.loads(manifest_path.read_text())
