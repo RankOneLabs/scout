@@ -163,7 +163,7 @@
           },
           "reasoning": {
             "type": "boolean",
-            "description": "Recorded in the manifest and the variant name. Not yet enforced by batch-replay: one backend environment serves every variant of a sweep, so all explicit values within a backend must agree (checked at load)."
+            "description": "Reasoning (thinking) switch, written into the generated sweep variant so batch-replay pins it on every request and records it in the plan. Also recorded in the manifest and the variant name. Omit to leave the provider default."
           }
         }
       }

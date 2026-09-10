@@ -260,7 +260,7 @@ def test_env_keys_must_be_posix_variable_names(tmp_path: Path) -> None:
         _expand(tmp_path, backends=backends)
 
 
-def test_conflicting_reasoning_within_a_backend_is_rejected(tmp_path: Path) -> None:
+def test_reasoning_is_written_per_variant_so_one_backend_can_mix_it(tmp_path: Path) -> None:
     models = [
         {
             "id": "gemma-4-26b-a4b",
@@ -280,8 +280,13 @@ def test_conflicting_reasoning_within_a_backend_is_rejected(tmp_path: Path) -> N
         },
         {"id": "qwen3-30b-a3b", "backend": "frink", "model": "ollama/qwen3:30b", "reasoning": True},
     ]
-    with pytest.raises(rg.GridValidationError, match="reasoning: true and reasoning: false"):
-        _expand(tmp_path, models=models)
+    exp = _expand(tmp_path, models=models)
+    frink = next(s for s in exp.sweeps if s.backend == "frink")
+    by_name = {v["name"]: v for v in frink.document["variants"]}
+    assert by_name["gemma-4-26b-a4b-nothink-frink"]["reasoning"] is False
+    assert by_name["qwen3-30b-a3b-think-frink"]["reasoning"] is True
+    openrouter = next(s for s in exp.sweeps if s.backend == "openrouter")
+    assert all("reasoning" not in v for v in openrouter.document["variants"])
 
 
 def test_colliding_sweep_names_are_rejected(tmp_path: Path) -> None:

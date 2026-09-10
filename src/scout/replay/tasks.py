@@ -46,6 +46,9 @@ class ReplayWorkerConfiguration:
     include_feedback_in_prompt: bool
     # Old manifests had no explicit limit. Never backfill today's bound.
     max_output_tokens: int | None = None
+    # The candidate's reasoning switch: None is the provider default.
+    # Old manifests predate the field and mean the same thing.
+    reasoning: bool | None = None
 
 
 class RelevanceGrader(Grader[RelevancePhaseOutput]):  # type: ignore[misc]

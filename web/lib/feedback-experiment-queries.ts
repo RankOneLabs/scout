@@ -81,6 +81,9 @@ const candidateConfigV2Schema = z
     system_prompt: z.string(),
     system_prompt_sha256: z.string().min(1),
     grader_attached: z.boolean(),
+    // Absent on rows written before replay carried a reasoning switch;
+    // absent and null both mean the provider default.
+    reasoning: z.boolean().nullable().optional(),
   })
   .strict();
 
@@ -92,6 +95,7 @@ const candidateConfigV4Schema = z
     model_override: z.string().min(1).nullable(),
     system_prompt_override: z.string().nullable(),
     system_prompt_override_sha256: z.string().min(1).nullable(),
+    reasoning_override: z.boolean().nullable().optional(),
     grader_attached: z.boolean(),
     sweep: z
       .object({
@@ -193,6 +197,9 @@ const replayWorkerConfigurationSchema: z.ZodType<ReplayWorkerConfiguration> = z
     max_llm_calls: z.number().int().positive(),
     max_parse_retries: z.number().int().nonnegative(),
     max_output_tokens: z.number().int().positive().nullable().optional(),
+    // Reasoning switch pinned on the candidate; absent on captures that
+    // predate it, and absent or null both mean the provider default.
+    reasoning: z.boolean().nullable().optional(),
     jig_revision: z.string().min(1),
     grader_version: z.string().min(1).nullable(),
     assembler_version: z.string().min(1).nullable(),

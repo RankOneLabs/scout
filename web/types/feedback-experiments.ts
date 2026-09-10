@@ -175,6 +175,7 @@ export interface CandidateConfigV2 {
   system_prompt: string;
   system_prompt_sha256: string;
   grader_attached: boolean;
+  reasoning?: boolean | null;
 }
 
 export interface CandidateConfigV4 {
@@ -184,6 +185,7 @@ export interface CandidateConfigV4 {
   model_override: string | null;
   system_prompt_override: string | null;
   system_prompt_override_sha256: string | null;
+  reasoning_override?: boolean | null;
   grader_attached: boolean;
   sweep: { name: string; axis: "model" | "prompt"; version: 1 } | null;
   plan_sha256: string;
@@ -255,6 +257,9 @@ export interface ReplayWorkerConfiguration {
   // Retained producer b9c4786 added an optional completion bound. Older
   // captures may omit it or record null; neither implies a current default.
   max_output_tokens?: number | null;
+  // Reasoning (thinking) switch pinned on every candidate request; absent
+  // or null is the provider default.
+  reasoning?: boolean | null;
   jig_revision: string;
   grader_version: string | null;
   assembler_version: string | null;

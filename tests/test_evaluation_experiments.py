@@ -60,8 +60,10 @@ class _FakeLLMClient(LLMClient):
         self._responses = list(responses)
         self._model = model
         self._error = error
+        self.seen_params: list[CompletionParams] = []
 
     async def complete(self, params: CompletionParams) -> LLMResponse:
+        self.seen_params.append(params)
         if self._error is not None:
             raise self._error
         if not self._responses:
@@ -1047,7 +1049,66 @@ class TestBuildCandidatePlan:
             "system_prompt": baseline.baseline_system_prompt,
             "system_prompt_sha256": plan.candidate_prompt_sha256,
             "grader_attached": False,
+            "reasoning": None,
         }
+
+    async def test_reasoning_override_is_recorded_and_never_a_no_op(
+        self, state, tracer, feedback
+    ) -> None:
+        baseline = await self._baseline(state, tracer, feedback)
+        plan = ee.build_candidate_plan(
+            baseline, model_override=None, system_prompt_override=None, reasoning_override=False,
+        )
+        # Same model and prompt as the baseline, but the baseline ran on the
+        # provider default, which the plan cannot observe: an explicit
+        # switch is always a change.
+        assert plan.is_no_op is False
+        assert plan.reasoning is False
+        assert json.loads(plan.candidate_config_json)["reasoning"] is False
+        assert ee.replay_worker_configuration(plan).reasoning is False
+
+    @pytest.mark.parametrize("bad", ["off", 1, 0])
+    async def test_non_boolean_reasoning_override_fails_before_any_write(
+        self, state, tracer, feedback, bad
+    ) -> None:
+        baseline = await self._baseline(state, tracer, feedback)
+        with pytest.raises(ee.ReasoningOverrideError, match="True, False, or None"):
+            ee.build_candidate_plan(
+                baseline, model_override=None, system_prompt_override=None,
+                reasoning_override=bad,
+            )
+
+    async def test_reasoning_override_is_pinned_on_every_candidate_request(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        trace_id = await _make_baseline_trace(tracer, feedback)
+        phase_run_id = _seed_phase_run(state, trace_id=trace_id, model="claude-haiku-4-5-20251001")
+        candidate_client = _FakeLLMClient(
+            [_submit_response(RELEVANCE_PAYLOAD_B)], model="claude-sonnet-4-20250514",
+        )
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate_client})
+        await ee.execute_replay(
+            state=state, tracer=tracer, feedback=feedback, phase_run_id=phase_run_id,
+            name="nothink", model_override="claude-sonnet-4-20250514",
+            system_prompt_override=None, reasoning_override=False,
+        )
+        assert candidate_client.seen_params
+        assert all(params.reasoning is False for params in candidate_client.seen_params)
+
+    async def test_without_reasoning_override_the_request_is_left_alone(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        trace_id = await _make_baseline_trace(tracer, feedback)
+        phase_run_id = _seed_phase_run(state, trace_id=trace_id, model="claude-haiku-4-5-20251001")
+        candidate_client = _FakeLLMClient(
+            [_submit_response(RELEVANCE_PAYLOAD_B)], model="claude-sonnet-4-20250514",
+        )
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate_client})
+        await ee.execute_replay(
+            state=state, tracer=tracer, feedback=feedback, phase_run_id=phase_run_id,
+            name="default", model_override="claude-sonnet-4-20250514", system_prompt_override=None,
+        )
+        assert all(params.reasoning is None for params in candidate_client.seen_params)
 
     async def test_reply_draft_candidate_config_has_grader_attached(
         self, state, tracer, feedback
@@ -2790,6 +2851,53 @@ class TestSweepValidation:
         assert "grounded, concise reply" in variants[0].system_prompt_override
         assert variants[1].name == "treatment-a"
         assert "warm, concise reply" in variants[1].system_prompt_override
+
+    def test_variant_reasoning_defers_to_the_shared_switch(self, tmp_path) -> None:
+        doc = {
+            "version": 1, "name": "n", "axis": "model", "reasoning": False,
+            "variants": [
+                {"name": "a", "model": "claude-haiku-4-5-20251001"},
+                {"name": "b", "model": "claude-sonnet-4-20250514", "reasoning": True},
+            ],
+        }
+        sweep = ee.validate_sweep_document(doc, base_dir=tmp_path)
+        assert sweep.shared_reasoning is False
+        assert [v.reasoning for v in sweep.variants] == [None, True]
+        variants = ee.batch_variants_for_sweep(sweep, base_dir=tmp_path)
+        assert [v.reasoning_override for v in variants] == [False, True]
+
+    def test_same_model_with_different_reasoning_is_distinct(self, tmp_path) -> None:
+        doc = {
+            "version": 1, "name": "n", "axis": "model",
+            "variants": [
+                {"name": "think", "model": "claude-haiku-4-5-20251001", "reasoning": True},
+                {"name": "nothink", "model": "claude-haiku-4-5-20251001", "reasoning": False},
+            ],
+        }
+        sweep = ee.validate_sweep_document(doc, base_dir=tmp_path)
+        assert [v.name for v in sweep.variants] == ["think", "nothink"]
+
+    def test_same_model_and_same_effective_reasoning_is_rejected(self, tmp_path) -> None:
+        doc = {
+            "version": 1, "name": "n", "axis": "model", "reasoning": True,
+            "variants": [
+                {"name": "a", "model": "claude-haiku-4-5-20251001"},
+                {"name": "b", "model": "claude-haiku-4-5-20251001", "reasoning": True},
+            ],
+        }
+        with pytest.raises(ee.SweepValidationError, match="same reasoning switch"):
+            ee.validate_sweep_document(doc, base_dir=tmp_path)
+
+    def test_non_boolean_reasoning_is_rejected_by_the_contract(self, tmp_path) -> None:
+        doc = {
+            "version": 1, "name": "n", "axis": "model",
+            "variants": [
+                {"name": "a", "model": "claude-haiku-4-5-20251001", "reasoning": "off"},
+                {"name": "b", "model": "claude-sonnet-4-20250514"},
+            ],
+        }
+        with pytest.raises(ee.SweepValidationError, match="replay-sweep v1"):
+            ee.validate_sweep_document(doc, base_dir=tmp_path)
 
     def test_prompt_sweep_rejects_variant_with_model(self, tmp_path) -> None:
         doc = {

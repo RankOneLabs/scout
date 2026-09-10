@@ -55,10 +55,20 @@ def _read_prompt_file(path: str) -> str:
         raise SystemExit(2) from exc
 
 
+def _reasoning_flag(value: str | None) -> bool | None:
+    """--reasoning on|off -> True|False; absent -> None (provider default)."""
+    return None if value is None else value == "on"
+
+
+def _describe_reasoning(value: bool | None) -> str:
+    return "provider default" if value is None else ("on" if value else "off")
+
+
 def _print_preview(preview: ReplayPreview) -> None:
     print(f"phase: {preview.phase}")
     print(f"baseline model: {preview.baseline_model}")
     print(f"candidate model: {preview.candidate_model}")
+    print(f"candidate reasoning: {_describe_reasoning(preview.reasoning)}")
     print(f"baseline system_prompt sha256: {preview.baseline_prompt_sha256}")
     print(f"candidate system_prompt sha256: {preview.candidate_prompt_sha256}")
     print(f"baseline prompt reused: {preview.baseline_prompt_reused}")
@@ -104,6 +114,7 @@ def replay_feedback(args: argparse.Namespace) -> None:
                     phase_run_id=args.phase_run_id,
                     model_override=args.model,
                     system_prompt_override=system_prompt_override,
+                    reasoning_override=_reasoning_flag(args.reasoning),
                 )
                 _print_preview(preview)
                 return
@@ -115,6 +126,7 @@ def replay_feedback(args: argparse.Namespace) -> None:
                 name=name,
                 model_override=args.model,
                 system_prompt_override=system_prompt_override,
+                reasoning_override=_reasoning_flag(args.reasoning),
             )
             _print_outcome(outcome)
 
@@ -138,6 +150,11 @@ def _print_batch_preview(preview: ee.BatchPreview) -> None:
     if plan.dropped_duplicate_phase_run_ids:
         print(f"dropped duplicate baselines: {list(plan.dropped_duplicate_phase_run_ids)}")
     print(f"variants: {[variant.name for variant in plan.variants]}")
+    for variant in plan.variants:
+        print(
+            f"  variant {variant.name!r}: reasoning "
+            f"{_describe_reasoning(variant.reasoning_override)}"
+        )
     print(f"scored: {preview.scored_count}")
     print(f"unscored: {preview.unscored_count}")
     print(f"no-op: {preview.no_op_count}")
@@ -233,9 +250,9 @@ def _resolve_batch_variants(
     args: argparse.Namespace,
 ) -> tuple[tuple[ee.BatchVariant, ...], ee.SweepDefinition | None]:
     if args.sweep_file:
-        if args.model or args.prompt_file:
+        if args.model or args.prompt_file or args.reasoning:
             print(
-                "error: --sweep-file cannot be combined with --model/--prompt-file",
+                "error: --sweep-file cannot be combined with --model/--prompt-file/--reasoning",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -248,7 +265,12 @@ def _resolve_batch_variants(
         return variants, sweep
     system_prompt_override = _read_prompt_file(args.prompt_file) if args.prompt_file else None
     return (
-        (ee.BatchVariant(ee.DEFAULT_BATCH_VARIANT_NAME, args.model, system_prompt_override),),
+        (
+            ee.BatchVariant(
+                ee.DEFAULT_BATCH_VARIANT_NAME, args.model, system_prompt_override,
+                reasoning_override=_reasoning_flag(args.reasoning),
+            ),
+        ),
         None,
     )
 

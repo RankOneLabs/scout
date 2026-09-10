@@ -83,7 +83,7 @@ def _patch_replay_runtime(monkeypatch, state, tracer, feedback):
 def _base_args(**overrides) -> argparse.Namespace:
     defaults = dict(
         phase_run_id=1, name="test-experiment", model=None, prompt_file=None,
-        execute_paid_replay=False,
+        reasoning=None, execute_paid_replay=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -194,7 +194,8 @@ def _batch_args(**overrides) -> argparse.Namespace:
     defaults = dict(
         phase_run_id=None, scan_id=None, from_utc=None, to_utc=None,
         graded_with_corrections=False, name="cli-batch", model=None, prompt_file=None,
-        sweep_file=None, skip_unscored=False, skip_no_op=False, skip_unpriceable=False,
+        reasoning=None, sweep_file=None, skip_unscored=False, skip_no_op=False,
+        skip_unpriceable=False,
         pricing_catalog=None, dossier_root=None, authorize_plan_sha256=None,
         execute_paid_replay=False,
     )

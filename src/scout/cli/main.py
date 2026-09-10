@@ -318,6 +318,15 @@ def parse_args() -> argparse.Namespace:
         help="UTF-8 text file replacing only the candidate's AgentConfig.system_prompt",
     )
     replay_p.add_argument(
+        "--reasoning",
+        choices=("on", "off"),
+        default=None,
+        help=(
+            "Pin the candidate's reasoning (thinking) switch on every request; "
+            "omit to leave the provider default"
+        ),
+    )
+    replay_p.add_argument(
         "--execute-paid-replay",
         action="store_true",
         help="Authorize execution: without this flag, replay only previews read-only",
@@ -378,6 +387,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "UTF-8 text file replacing every case's candidate system_prompt "
             "(plain batch only, not --sweep-file)"
+        ),
+    )
+    batch_replay_p.add_argument(
+        "--reasoning",
+        choices=("on", "off"),
+        default=None,
+        help=(
+            "Pin every case's candidate reasoning (thinking) switch "
+            "(plain batch only, not --sweep-file); omit to leave the provider default"
         ),
     )
     batch_replay_p.add_argument(

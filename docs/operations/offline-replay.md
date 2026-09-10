@@ -326,6 +326,18 @@ variants:
     model: claude-sonnet-4-20250514
 ```
 
+Any variant, on either axis, may also carry `reasoning: true|false`, and
+the document may carry a shared `reasoning` that every variant without
+its own inherits. It pins the model's reasoning ("thinking") switch on
+every request the candidate makes — Ollama `think`, OpenRouter
+`reasoning.enabled` — and is recorded in the variant's plan entry, the
+worker configuration, and the parent's `reasoning_override`, so it moves
+the plan hash. Omitting it everywhere leaves the provider default, which
+is what every sweep before this field ran on. Two variants that differ
+only in their effective switch are distinct; a provider that cannot
+honour the switch fails the attempt before any request is made. A plain
+batch or single replay takes the same switch as `--reasoning on|off`.
+
 `prompt_file` paths are resolved relative to the sweep document's own
 directory. Validation rejects, before any write: a prompt-axis variant
 carrying a `model` field (or vice versa); fewer than two variants;

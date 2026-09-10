@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://scout.internal/contracts/replay-sweep.v1.schema.json",
   "title": "Scout replay sweep v1",
-  "description": "A named, versioned, one-axis batch-replay sweep: either every variant shares one candidate model and varies only its system prompt (axis: prompt), or every variant shares one candidate system prompt and varies only its model (axis: model). At least two named variants are required, and a variant may only carry the field matching the declared axis.",
+  "description": "A named, versioned, one-axis batch-replay sweep: either every variant shares one candidate model and varies only its system prompt (axis: prompt), or every variant shares one candidate system prompt and varies only its model (axis: model). At least two named variants are required, and a variant may only carry the field matching the declared axis, plus an optional `reasoning` switch (true/false pins the model's reasoning mode on every request; omitted defers to the sweep's shared `reasoning`, and omitting both leaves the provider default).",
   "type": "object",
   "required": ["version", "name", "axis", "variants"],
   "additionalProperties": false,
@@ -20,6 +20,10 @@
       "minLength": 1,
       "description": "Shared candidate system-prompt file (UTF-8, resolved relative to the sweep document's own directory) for every variant of a model-axis sweep. Omit to reuse each baseline case's own recorded system prompt."
     },
+    "reasoning": {
+      "type": "boolean",
+      "description": "Shared reasoning (thinking) switch for every variant that does not set its own. Omit to leave the provider default."
+    },
     "variants": {
       "type": "array",
       "minItems": 2,
@@ -30,7 +34,8 @@
         "properties": {
           "name": { "type": "string", "minLength": 1 },
           "model": { "type": "string", "minLength": 1 },
-          "prompt_file": { "type": "string", "minLength": 1 }
+          "prompt_file": { "type": "string", "minLength": 1 },
+          "reasoning": { "type": "boolean" }
         }
       }
     }
@@ -48,7 +53,8 @@
               "additionalProperties": false,
               "properties": {
                 "name": { "type": "string", "minLength": 1 },
-                "prompt_file": { "type": "string", "minLength": 1 }
+                "prompt_file": { "type": "string", "minLength": 1 },
+                "reasoning": { "type": "boolean" }
               }
             }
           }
@@ -67,7 +73,8 @@
               "additionalProperties": false,
               "properties": {
                 "name": { "type": "string", "minLength": 1 },
-                "model": { "type": "string", "minLength": 1 }
+                "model": { "type": "string", "minLength": 1 },
+                "reasoning": { "type": "boolean" }
               }
             }
           }
