@@ -2706,6 +2706,115 @@ class TestRetryBatchReplay:
         run_id = outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME]
         return run_id, lo, hi
 
+    async def _repeated_batch(
+        self, state, tracer, feedback, monkeypatch, *, responses: int,
+    ) -> tuple[int, int, int, ee.BatchPlan]:
+        """Two cases x two repeats with `responses` scripted candidate
+        replies; the fifth attempt onward fails on client exhaustion.
+        Returns (experiment_run_id, lo, hi, plan)."""
+        _patch_resolve_dossier(monkeypatch)
+        a, _ = await _seed_reply_draft_correction(
+            state, tracer, feedback, model="claude-opus-4-20250514",
+        )
+        b, _ = await _seed_reply_draft_correction(
+            state, tracer, feedback, model="claude-opus-4-20250514",
+        )
+        lo, hi = sorted([a, b])
+        candidate_client = _FakeLLMClient(
+            [_submit_response(_GRADED_CANDIDATE_PAYLOAD) for _ in range(responses)],
+            model="claude-sonnet-4-20250514",
+        )
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate_client})
+        variants = (
+            ee.BatchVariant(ee.DEFAULT_BATCH_VARIANT_NAME, "claude-sonnet-4-20250514", None),
+        )
+        selector = ee.BatchSelector.by_phase_run_ids([lo, hi])
+        plan = await ee.build_batch_plan(
+            state=state, tracer=tracer, selector=selector, variants=variants,
+            skip_policy=ee.SkipPolicy(), pricing_catalog=_pricing_catalog_for_tests(),
+            dossier_root=Path("/unused"), repeats=2,
+        )
+        outcome = await ee.execute_batch_replay(
+            state=state, tracer=tracer, feedback=feedback, name="repeated",
+            selector=selector, variants=variants, skip_policy=ee.SkipPolicy(),
+            authorize_plan_sha256=plan.plan_sha256, pricing_catalog=_pricing_catalog_for_tests(),
+            dossier_root=Path("/unused"), repeats=2,
+        )
+        return outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME], lo, hi, plan
+
+    async def test_repeats_are_part_of_the_plan_and_the_spend_estimate(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        _patch_resolve_dossier(monkeypatch)
+        a, _ = await _seed_reply_draft_correction(
+            state, tracer, feedback, model="claude-opus-4-20250514",
+        )
+        variants = (
+            ee.BatchVariant(ee.DEFAULT_BATCH_VARIANT_NAME, "claude-sonnet-4-20250514", None),
+        )
+        selector = ee.BatchSelector.by_phase_run_ids([a])
+        once, twice = [
+            await ee.preview_batch_replay(
+                state=state, tracer=tracer, selector=selector, variants=variants,
+                skip_policy=ee.SkipPolicy(), pricing_catalog=_pricing_catalog_for_tests(),
+                dossier_root=Path("/unused"), repeats=repeats,
+            )
+            for repeats in (1, 2)
+        ]
+        assert once.plan.plan_sha256 != twice.plan.plan_sha256
+        assert json.loads(twice.plan.plan_json)["repeats"] == 2
+        assert twice.total_estimated_usd == pytest.approx(2 * once.total_estimated_usd)
+        assert twice.aggregate_max_llm_calls == 2 * once.aggregate_max_llm_calls
+        assert (once.planned_attempt_count, twice.planned_attempt_count) == (1, 2)
+        with pytest.raises(ee.RepeatCountError, match="positive integer"):
+            await ee.build_batch_plan(
+                state=state, tracer=tracer, selector=selector, variants=variants,
+                skip_policy=ee.SkipPolicy(), pricing_catalog=_pricing_catalog_for_tests(),
+                dossier_root=Path("/unused"), repeats=0,
+            )
+
+    async def test_repeats_execute_every_pair_that_many_times(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        run_id, lo, hi, _plan = await self._repeated_batch(
+            state, tracer, feedback, monkeypatch, responses=4,
+        )
+        attempts = state.list_experiment_attempts(run_id)
+        placed = sorted(
+            (a["phase_run_id"], a["repeat_index"], a["attempt_number"]) for a in attempts
+        )
+        assert placed == [(lo, 1, 1), (lo, 2, 2), (hi, 1, 1), (hi, 2, 2)]
+        assert all(a["status"] == "complete" for a in attempts)
+        assert json.loads(state.get_experiment_run(run_id)["candidate_config"])["repeats"] == 2
+        assert state.get_experiment_run(run_id)["status"] == "complete"
+
+    async def test_retry_retries_only_the_failed_repeat(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        # Three replies for four attempts: (hi, repeat 2) fails on exhaustion.
+        run_id, lo, hi, _plan = await self._repeated_batch(
+            state, tracer, feedback, monkeypatch, responses=3,
+        )
+        assert state.get_experiment_run(run_id)["status"] == "partial"
+        retry_client = _FakeLLMClient(
+            [_submit_response(_GRADED_CANDIDATE_PAYLOAD)], model="claude-sonnet-4-20250514",
+        )
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": retry_client})
+        retried = await ee.retry_batch_replay(
+            state=state, tracer=tracer, feedback=feedback, experiment_run_id=run_id,
+            pricing_catalog=_pricing_catalog_for_tests(), dossier_root=Path("/unused"),
+        )
+        assert [(a.phase_run_id, a.repeat_index, a.status) for a in retried.attempts] == [
+            (hi, 2, "complete"),
+        ]
+        chain = [
+            a for a in state.list_experiment_attempts(run_id)
+            if a["phase_run_id"] == hi and a["repeat_index"] == 2
+        ]
+        assert [a["attempt_number"] for a in chain] == [2, 3]
+        assert chain[1]["supersedes_experiment_id"] == chain[0]["id"]
+        assert state.get_experiment_run(run_id)["status"] == "complete"
+
     async def test_retry_creates_new_attempt_for_failed_case_only(
         self, state, tracer, feedback, monkeypatch
     ) -> None:

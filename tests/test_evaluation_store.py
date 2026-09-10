@@ -1300,6 +1300,83 @@ class TestExperimentRunsAndAttempts:
         # see TestExperimentRunStatusProjection for the full matrix.
         assert in_memory_state.get_experiment_run(run_id)["status"] == "queued"
 
+    def test_each_repeat_gets_its_own_first_attempt_with_unique_attempt_numbers(
+        self, in_memory_state: StateManager
+    ) -> None:
+        phase_run_id = self._seed_phase_run(in_memory_state)
+        run_id = in_memory_state.create_experiment_run(name="r", candidate_config="{}")
+        first = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+        )
+        second = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+            repeat_index=2,
+        )
+        rows = [in_memory_state.get_experiment(i) for i in (first, second)]
+        assert [(r["repeat_index"], r["attempt_number"]) for r in rows] == [(1, 1), (2, 2)]
+        assert all(r["supersedes_experiment_id"] is None for r in rows)
+        # A second first-attempt of the same repeat is still a caller bug.
+        with pytest.raises(ExperimentCASError, match="repeat 2 already has an attempt"):
+            in_memory_state.insert_experiment_attempt(
+                experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+                repeat_index=2,
+            )
+
+    def test_retry_chains_within_one_repeat(self, in_memory_state: StateManager) -> None:
+        phase_run_id = self._seed_phase_run(in_memory_state)
+        run_id = in_memory_state.create_experiment_run(name="r", candidate_config="{}")
+        first = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+        )
+        second = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+            repeat_index=2,
+        )
+        in_memory_state.cas_experiment_to_running(second)
+        in_memory_state.fail_experiment(second, error_detail="boom")
+        # Repeat 1's latest is `first`, not `second`: the chain is per repeat.
+        with pytest.raises(ExperimentCASError, match="not the latest attempt"):
+            in_memory_state.insert_experiment_attempt(
+                experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+                supersedes_experiment_id=second, repeat_index=1,
+            )
+        retry = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+            supersedes_experiment_id=second, repeat_index=2,
+        )
+        row = in_memory_state.get_experiment(retry)
+        # attempt_number stays unique per (run, case) across repeats.
+        assert (row["repeat_index"], row["attempt_number"]) == (2, 3)
+        assert row["supersedes_experiment_id"] == second
+        assert in_memory_state.get_experiment(first)["attempt_number"] == 1
+
+    def test_run_status_projects_every_repeat_chain(self, in_memory_state: StateManager) -> None:
+        phase_run_id = self._seed_phase_run(in_memory_state)
+        run_id = in_memory_state.create_experiment_run(name="r", candidate_config="{}")
+        first = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+        )
+        second = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+            repeat_index=2,
+        )
+        for experiment_id in (first, second):
+            in_memory_state.cas_experiment_to_running(experiment_id)
+        in_memory_state.fail_experiment(first, error_detail="boom")
+        assert in_memory_state.get_experiment_run(run_id)["status"] == "running"
+        in_memory_state.fail_experiment(second, error_detail="boom")
+        assert in_memory_state.get_experiment_run(run_id)["status"] == "failed"
+
+    @pytest.mark.parametrize("bad", [0, -1, True, "2"])
+    def test_invalid_repeat_index_rejected(self, in_memory_state: StateManager, bad) -> None:
+        phase_run_id = self._seed_phase_run(in_memory_state)
+        run_id = in_memory_state.create_experiment_run(name="r", candidate_config="{}")
+        with pytest.raises(ExperimentCASError, match="repeat_index"):
+            in_memory_state.insert_experiment_attempt(
+                experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+                repeat_index=bad,
+            )
+
     def test_insert_experiment_attempt_rejects_missing_run(
         self, in_memory_state: StateManager
     ) -> None:
@@ -2396,14 +2473,16 @@ class TestMigration36ExperimentEvidence:
 
     def test_migrated_schema_converges_with_fresh_bootstrap(self) -> None:
         """The migrated tables' structural shape (columns/fks/indexes/
-        checks) matches a fresh v36 bootstrap — see TestSchemaConvergence
-        for the full-chain (v1->v36) equivalent of this check."""
-        from scout.storage.migrations import _migrate_to_36
+        checks) matches a fresh bootstrap once the later evaluation_
+        experiments migration (v41 repeat_index) has also run — see
+        TestSchemaConvergence for the full-chain equivalent of this check."""
+        from scout.storage.migrations import _migrate_to_36, _migrate_to_41
         from scout.storage.state import SCHEMA
 
         conn = self._v35_connection()
         try:
             _migrate_to_36(conn)
+            _migrate_to_41(conn)
             migrated_snapshot, _ = schema_snapshot(conn)
         finally:
             conn.close()

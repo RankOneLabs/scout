@@ -178,6 +178,8 @@ class Experiment:
     error_detail: str | None
     created_at: str
     completed_at: str | None
+    # Which planned repeat of the (run, case) pair this attempt serves.
+    repeat_index: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +265,7 @@ def _row_to_experiment(row: sqlite3.Row) -> Experiment:
         error_detail=row["error_detail"],
         created_at=row["created_at"],
         completed_at=row["completed_at"],
+        repeat_index=row["repeat_index"],
     )
 
 
@@ -486,13 +489,16 @@ class EvaluationStore:
             "_recompute_experiment_run_status requires an active Db transaction context"
         )
         rows = self._conn.execute(
-            "SELECT phase_run_id, attempt_number, status FROM evaluation_experiments "
-            "WHERE experiment_run_id = ? ORDER BY phase_run_id, attempt_number",
+            "SELECT phase_run_id, repeat_index, attempt_number, status "
+            "FROM evaluation_experiments "
+            "WHERE experiment_run_id = ? ORDER BY phase_run_id, repeat_index, attempt_number",
             (experiment_run_id,),
         ).fetchall()
-        latest_status_by_case: dict[int, str] = {}
+        # One entry per (case, repeat): each planned repeat has its own
+        # retry chain, and the projection reads every chain's latest.
+        latest_status_by_case: dict[tuple[int, int], str] = {}
         for row in rows:
-            latest_status_by_case[row["phase_run_id"]] = row["status"]
+            latest_status_by_case[(row["phase_run_id"], row["repeat_index"])] = row["status"]
         statuses = list(latest_status_by_case.values())
         if not statuses:
             return
@@ -524,19 +530,24 @@ class EvaluationStore:
         phase_run_id: int,
         baseline_evidence: str,
         supersedes_experiment_id: int | None = None,
+        repeat_index: int = 1,
     ) -> int:
         """Insert a new, clean 'queued' evaluation_experiments attempt for
-        one baseline case (phase_run_id) under `experiment_run_id`, and
-        return its id.
+        one baseline case (phase_run_id) and one planned repeat
+        (`repeat_index`, 1-based) under `experiment_run_id`, and return
+        its id.
 
-        A baseline case's first attempt under a run passes
-        `supersedes_experiment_id=None` and is rejected if that case
-        already has an attempt under this run; a retry passes the id of
-        that case's current latest attempt under this run and is rejected
-        otherwise — closing both silent re-attempts of an already-tried
-        case and retries that don't chain from the actual latest attempt.
-        attempt_number is allocated as 1 plus the case's existing attempt
-        count. A retry is accepted even when the parent run has already
+        A (case, repeat)'s first attempt under a run passes
+        `supersedes_experiment_id=None` and is rejected if that (case,
+        repeat) already has an attempt under this run; a retry passes the
+        id of that (case, repeat)'s current latest attempt under this run
+        and is rejected otherwise — closing both silent re-attempts of an
+        already-tried pair and retries that don't chain from the actual
+        latest attempt. attempt_number is allocated as 1 plus the highest
+        attempt_number the case already has under this run across every
+        repeat, so it stays unique per (run, case); within one repeat the
+        chain is ordered by attempt_number and linked by
+        supersedes_experiment_id. A retry is accepted even when the parent run has already
         reached a terminal projected status (complete/partial/failed) —
         that is the main reason retries exist: fixing the one failed
         baseline case in an otherwise-successful batch run without
@@ -550,6 +561,10 @@ class EvaluationStore:
         database's own JSON-validity trigger. Recomputes the parent's
         projected status in the same transaction as the insert.
         """
+        if isinstance(repeat_index, bool) or not isinstance(repeat_index, int) or repeat_index < 1:
+            raise ExperimentCASError(
+                f"repeat_index must be a positive integer, not {repeat_index!r}"
+            )
         now = datetime.now(UTC).isoformat()
         with self._uow.begin_immediate():
             run_row = self._conn.execute(
@@ -559,40 +574,45 @@ class EvaluationStore:
                 raise ExperimentCASError(f"no experiment_runs row with id={experiment_run_id}")
             latest = self._conn.execute(
                 "SELECT id, attempt_number, status FROM evaluation_experiments "
-                "WHERE experiment_run_id = ? AND phase_run_id = ? "
+                "WHERE experiment_run_id = ? AND phase_run_id = ? AND repeat_index = ? "
                 "ORDER BY attempt_number DESC LIMIT 1",
-                (experiment_run_id, phase_run_id),
+                (experiment_run_id, phase_run_id, repeat_index),
             ).fetchone()
             if supersedes_experiment_id is None:
                 if latest is not None:
                     raise ExperimentCASError(
-                        f"phase_run_id={phase_run_id} already has an attempt under "
-                        f"experiment_run {experiment_run_id}; pass supersedes_experiment_id "
-                        "to retry it"
+                        f"phase_run_id={phase_run_id} repeat {repeat_index} already has an "
+                        f"attempt under experiment_run {experiment_run_id}; pass "
+                        "supersedes_experiment_id to retry it"
                     )
-                next_attempt = 1
             else:
                 if latest is None or latest["id"] != supersedes_experiment_id:
                     raise ExperimentCASError(
                         f"supersedes_experiment_id={supersedes_experiment_id} is not the "
                         f"latest attempt for (experiment_run_id={experiment_run_id}, "
-                        f"phase_run_id={phase_run_id})"
+                        f"phase_run_id={phase_run_id}, repeat_index={repeat_index})"
                     )
                 if latest["status"] not in ("complete", "failed"):
                     raise ExperimentCASError(
                         f"attempt {supersedes_experiment_id} is still {latest['status']!r}; "
                         "a retry requires the attempt it supersedes to already be terminal"
                     )
-                next_attempt = latest["attempt_number"] + 1
+            highest = self._conn.execute(
+                "SELECT COALESCE(MAX(attempt_number), 0) FROM evaluation_experiments "
+                "WHERE experiment_run_id = ? AND phase_run_id = ?",
+                (experiment_run_id, phase_run_id),
+            ).fetchone()[0]
+            next_attempt = int(highest) + 1
             cursor = self._conn.execute(
                 "INSERT INTO evaluation_experiments "
-                "(experiment_run_id, phase_run_id, attempt_number, supersedes_experiment_id, "
-                "status, baseline_evidence, created_at) "
-                "VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+                "(experiment_run_id, phase_run_id, attempt_number, repeat_index, "
+                "supersedes_experiment_id, status, baseline_evidence, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
                 (
                     experiment_run_id,
                     phase_run_id,
                     next_attempt,
+                    repeat_index,
                     supersedes_experiment_id,
                     baseline_evidence,
                     now,
@@ -607,7 +627,7 @@ class EvaluationStore:
         """Return one evaluation_experiments attempt row, or None if it
         does not exist."""
         row = self._conn.execute(
-            "SELECT id, experiment_run_id, phase_run_id, attempt_number, "
+            "SELECT id, experiment_run_id, phase_run_id, attempt_number, repeat_index, "
             "supersedes_experiment_id, status, baseline_evidence, candidate_trace_id, "
             "candidate_llm_call_count, candidate_cost, error_detail, created_at, completed_at "
             "FROM evaluation_experiments WHERE id = ?",
@@ -618,15 +638,15 @@ class EvaluationStore:
         return _row_to_experiment(row)
 
     def list_experiment_attempts(self, experiment_run_id: int) -> list[Experiment]:
-        """Return every attempt under `experiment_run_id`, oldest first,
-        ordered by (phase_run_id, attempt_number) so retry chains stay
-        contiguous."""
+        """Return every attempt under `experiment_run_id`, ordered by
+        (phase_run_id, repeat_index, attempt_number) so each repeat's retry
+        chain stays contiguous."""
         rows = self._conn.execute(
-            "SELECT id, experiment_run_id, phase_run_id, attempt_number, "
+            "SELECT id, experiment_run_id, phase_run_id, attempt_number, repeat_index, "
             "supersedes_experiment_id, status, baseline_evidence, candidate_trace_id, "
             "candidate_llm_call_count, candidate_cost, error_detail, created_at, completed_at "
             "FROM evaluation_experiments WHERE experiment_run_id = ? "
-            "ORDER BY phase_run_id, attempt_number",
+            "ORDER BY phase_run_id, repeat_index, attempt_number",
             (experiment_run_id,),
         ).fetchall()
         return [_row_to_experiment(row) for row in rows]

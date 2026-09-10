@@ -32,6 +32,7 @@ function makeDetail(overrides: Partial<ExperimentDetailResponse> = {}): Experime
       completed_at: "2026-01-01T00:01:00.000000+00:00",
     },
     attempt_number: 1,
+    repeat_index: 1,
     supersedes_experiment_id: null,
     status: "complete",
     error_detail: null,
@@ -267,6 +268,7 @@ describe("ExperimentDetail", () => {
   it("renders the pinned correction oracle and score evidence for a graded reply_draft attempt", async () => {
     const detail = makeDetail({
       attempt_number: 2,
+      repeat_index: 1,
       supersedes_experiment_id: 7,
       experiment_run: {
         id: 1,

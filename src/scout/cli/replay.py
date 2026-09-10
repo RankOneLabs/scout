@@ -155,6 +155,8 @@ def _print_batch_preview(preview: ee.BatchPreview) -> None:
             f"  variant {variant.name!r}: reasoning "
             f"{_describe_reasoning(variant.reasoning_override)}"
         )
+    print(f"repeats per scored pair: {preview.repeats}")
+    print(f"planned attempts: {preview.planned_attempt_count}")
     print(f"scored: {preview.scored_count}")
     print(f"unscored: {preview.unscored_count}")
     print(f"no-op: {preview.no_op_count}")
@@ -190,7 +192,7 @@ def _print_batch_outcome(outcome: ee.BatchExecutionOutcome) -> None:
         detail = "" if attempt.error_detail is None else f" ({attempt.error_detail})"
         print(
             f"  phase_run_id={attempt.phase_run_id} variant={attempt.variant_name!r} "
-            f"status={attempt.status}{detail}"
+            f"repeat={attempt.repeat_index} status={attempt.status}{detail}"
         )
 
 
@@ -325,6 +327,7 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
                     pricing_catalog=catalog,
                     dossier_root=dossier_root,
                     sweep=sweep,
+                    repeats=args.repeats,
                 )
                 _print_batch_preview(preview)
                 return
@@ -340,6 +343,7 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
                 pricing_catalog=catalog,
                 dossier_root=dossier_root,
                 sweep=sweep,
+                repeats=args.repeats,
             )
             _print_batch_outcome(outcome)
 

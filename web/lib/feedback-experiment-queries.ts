@@ -96,6 +96,7 @@ const candidateConfigV4Schema = z
     system_prompt_override: z.string().nullable(),
     system_prompt_override_sha256: z.string().min(1).nullable(),
     reasoning_override: z.boolean().nullable().optional(),
+    repeats: z.number().int().positive().optional(),
     grader_attached: z.boolean(),
     sweep: z
       .object({
@@ -600,6 +601,7 @@ interface ExperimentListSqlRow {
   id: number;
   experiment_run_id: number;
   attempt_number: number;
+  repeat_index: number;
   supersedes_experiment_id: number | null;
   status: string;
   candidate_trace_id: string | null;
@@ -645,6 +647,7 @@ export function listExperiments(filters: ExperimentListFilters): ExperimentListR
       `SELECT
          e.id AS id, e.experiment_run_id AS experiment_run_id,
          e.attempt_number AS attempt_number,
+         e.repeat_index AS repeat_index,
          e.supersedes_experiment_id AS supersedes_experiment_id,
          e.status AS status,
          e.candidate_trace_id AS candidate_trace_id,
@@ -704,6 +707,7 @@ export function listExperiments(filters: ExperimentListFilters): ExperimentListR
       run_status: row.run_status as ExperimentListRow["run_status"],
       phase: row.phase as FeedbackPhase,
       attempt_number: row.attempt_number,
+      repeat_index: row.repeat_index,
       supersedes_experiment_id: row.supersedes_experiment_id,
       grader_attached: candidateConfig.grader_attached,
       baseline_phase_run_id: row.baseline_phase_run_id,
@@ -769,7 +773,7 @@ function loadRunAttempts(runIds: number[]): Map<number, RunAttemptEvidence[]> {
   const placeholders = runIds.map(() => "?").join(",");
   const rows = getDb().prepare(
     `SELECT e.id, e.experiment_run_id, e.phase_run_id AS baseline_phase_run_id,
-            e.attempt_number, e.supersedes_experiment_id, e.status,
+            e.attempt_number, e.repeat_index, e.supersedes_experiment_id, e.status,
             e.baseline_evidence, e.candidate_trace_id, e.candidate_llm_call_count,
             e.candidate_cost, e.created_at, e.completed_at,
             er.name AS run_name, er.status AS run_status, er.candidate_config,
@@ -820,7 +824,7 @@ function loadRunAttempts(runIds: number[]): Map<number, RunAttemptEvidence[]> {
       id: row.id, experiment_run_id: row.experiment_run_id, name: row.run_name,
       status: row.status as ExperimentStatus, run_status: row.run_status as ExperimentRunStatus,
       phase: row.phase as FeedbackPhase, attempt_number: row.attempt_number,
-      supersedes_experiment_id: row.supersedes_experiment_id,
+      repeat_index: row.repeat_index, supersedes_experiment_id: row.supersedes_experiment_id,
       grader_attached: config.grader_attached, baseline_phase_run_id: row.baseline_phase_run_id,
       candidate_trace_id: row.candidate_trace_id, baseline_model: row.baseline_model,
       candidate_model: config.version === 2 ? config.model : (baselineEvidence as BatchCaseEvidenceV1).candidate_model,
@@ -838,6 +842,7 @@ function loadRunAttempts(runIds: number[]): Map<number, RunAttemptEvidence[]> {
     const evidence: RunAttemptEvidence = {
       row: projected, experiment_run_id: row.experiment_run_id,
       phase_run_id: row.baseline_phase_run_id, attempt_number: row.attempt_number,
+      repeat_index: row.repeat_index,
       supersedes_experiment_id: row.supersedes_experiment_id, score_evidence: scoreEvidence,
       trace_diff: traceDiff, cost_delta_available: traceDiff !== null && costsAvailable,
       latency_delta_available: traceDiff !== null && latencyAvailable,
@@ -903,15 +908,20 @@ export function getExperimentRunDetail(runId: number): ExperimentRunDetailRespon
   const config = parseCandidateConfig(row.candidate_config, row.id);
   const attempts = loadRunAttempts([runId]).get(runId) ?? [];
   const summary = aggregateParent(row, attempts);
-  const byCase = new Map<number, RunAttemptEvidence[]>();
+  // One entry per (case, repeat): each planned repeat is its own retry chain.
+  const byChain = new Map<string, RunAttemptEvidence[]>();
   for (const attempt of attempts) {
-    const group = byCase.get(attempt.phase_run_id) ?? [];
-    group.push(attempt); byCase.set(attempt.phase_run_id, group);
+    const key = `${attempt.phase_run_id}:${attempt.repeat_index}`;
+    const group = byChain.get(key) ?? [];
+    group.push(attempt); byChain.set(key, group);
   }
-  const cases = [...byCase.entries()].sort(([a], [b]) => a - b).map(([phaseRunId, group]) => {
-    const ordered = [...group].sort((a, b) => b.attempt_number - a.attempt_number);
-    return { phase_run_id: phaseRunId, current: ordered[0].row, history: ordered.slice(1).map((item) => item.row) };
-  });
+  const cases = [...byChain.values()]
+    .map((group) => [...group].sort((a, b) => b.attempt_number - a.attempt_number))
+    .sort((a, b) => a[0].phase_run_id - b[0].phase_run_id || a[0].repeat_index - b[0].repeat_index)
+    .map((ordered) => ({
+      phase_run_id: ordered[0].phase_run_id, repeat_index: ordered[0].repeat_index,
+      current: ordered[0].row, history: ordered.slice(1).map((item) => item.row),
+    }));
   return {
     run: summary,
     configuration: {
@@ -970,6 +980,7 @@ interface ExperimentDetailSqlRow {
   id: number;
   experiment_run_id: number;
   attempt_number: number;
+  repeat_index: number;
   supersedes_experiment_id: number | null;
   status: string;
   baseline_evidence: string;
@@ -1018,6 +1029,7 @@ export function getExperimentDetail(experimentId: number): ExperimentDetailRespo
       `SELECT
          e.id AS id, e.experiment_run_id AS experiment_run_id,
          e.attempt_number AS attempt_number,
+         e.repeat_index AS repeat_index,
          e.supersedes_experiment_id AS supersedes_experiment_id,
          e.status AS status, e.baseline_evidence AS baseline_evidence,
          e.error_detail AS error_detail,
@@ -1146,6 +1158,7 @@ export function getExperimentDetail(experimentId: number): ExperimentDetailRespo
       completed_at: expRow.run_completed_at,
     },
     attempt_number: expRow.attempt_number,
+    repeat_index: expRow.repeat_index,
     supersedes_experiment_id: expRow.supersedes_experiment_id,
     status: expRow.status as ExperimentStatus,
     error_detail: expRow.error_detail,

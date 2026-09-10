@@ -112,9 +112,9 @@ CANDIDATE_CONFIG_VERSION = 2
 BASELINE_EVIDENCE_VERSION = 2
 
 # v2 additionally pins the complete controlled worker configuration.
-PLAN_SCHEMA_VERSION = 2
+PLAN_SCHEMA_VERSION = 3
 # Relevance plans pin a corpus target, not a reply-correction oracle.
-RELEVANCE_PLAN_SCHEMA_VERSION = 3
+RELEVANCE_PLAN_SCHEMA_VERSION = 4
 
 # replay-sweep v1 (contracts/replay-sweep.v1.schema.json).
 SWEEP_SCHEMA_VERSION = 1
@@ -173,6 +173,10 @@ class ReasoningOverrideError(ReplayError):
     """The candidate's reasoning switch is not True, False, or None —
     from a caller or from malformed stored batch configuration on retry.
     Raised while building the plan, before any write."""
+
+
+class RepeatCountError(ReplayError):
+    """`repeats` is not a positive integer."""
 
 
 class NoOpReplayError(ReplayError):
@@ -1806,6 +1810,9 @@ class BatchPlan:
     pricing_catalog: PricingCatalog
     sweep: SweepDefinition | None
     relevance_population: RelevancePopulation | None = None
+    # Planned attempts per scored (case, variant) pair, each its own
+    # immutable row and retry chain; part of the canonical plan.
+    repeats: int = 1
 
     def pair_for(self, phase_run_id: int, variant_name: str) -> PairClassification:
         for pair in self.pairs:
@@ -1825,6 +1832,7 @@ def _build_canonical_plan_document(
     pricing_catalog: PricingCatalog,
     sweep: SweepDefinition | None,
     relevance_population: RelevancePopulation | None = None,
+    repeats: int = 1,
 ) -> dict[str, Any]:
     variant_docs = [
         {
@@ -1898,6 +1906,7 @@ def _build_canonical_plan_document(
         "variants": variant_docs,
         "cases": case_docs,
         "pairs": pair_docs,
+        "repeats": repeats,
         "skip_policy": {
             "skip_unscored": skip_policy.skip_unscored,
             "skip_no_op": skip_policy.skip_no_op,
@@ -1930,9 +1939,12 @@ async def build_batch_plan(
     pricing_catalog: PricingCatalog,
     dossier_root: Path,
     sweep: SweepDefinition | None = None,
+    repeats: int = 1,
 ) -> BatchPlan:
     """Resolve one batch selector and every (case, variant) pair's
     classification, and build the canonical plan document and its hash.
+    `repeats` is how many attempts every scored pair gets; it is part of
+    the plan document, so changing it changes the hash.
 
     Entirely read-only: never inserts a row and never calls a model. Called
     identically by preview (to report) and by execution (to recompute and
@@ -1941,6 +1953,8 @@ async def build_batch_plan(
     """
     if not variants:
         raise SelectorResolutionError("a batch plan requires at least one candidate variant")
+    if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
+        raise RepeatCountError(f"repeats must be a positive integer, not {repeats!r}")
     if (selector.kind == "relevance_corpus") != (selector.relevance_task is not None):
         raise SelectorResolutionError(
             "Relevance task and corpus selector must be supplied together"
@@ -1985,7 +1999,7 @@ async def build_batch_plan(
     plan_document = _build_canonical_plan_document(
         selector=selector, population=population, variants=variants, cases=cases,
         pairs=pairs, skip_policy=skip_policy, pricing_catalog=pricing_catalog, sweep=sweep,
-        relevance_population=relevance_population,
+        relevance_population=relevance_population, repeats=repeats,
     )
     plan_json = _canonical_json(plan_document)
     plan_sha256 = _sha256_utf8(plan_json)
@@ -2001,6 +2015,7 @@ async def build_batch_plan(
         pricing_catalog=pricing_catalog,
         sweep=sweep,
         relevance_population=relevance_population,
+        repeats=repeats,
     )
 
 
@@ -2020,6 +2035,9 @@ class BatchPreview:
     skipped_count: int
     max_llm_calls_per_case: int
     aggregate_max_llm_calls: int
+    repeats: int = 1
+    # Attempts execution will insert: scored pairs x repeats.
+    planned_attempt_count: int = 0
 
 
 async def preview_batch_replay(
@@ -2032,27 +2050,29 @@ async def preview_batch_replay(
     pricing_catalog: PricingCatalog | None = None,
     dossier_root: Path | str | None = None,
     sweep: SweepDefinition | None = None,
+    repeats: int = 1,
 ) -> BatchPreview:
     """Read-only batch/sweep preview: resolves the full plan and summarizes
     per-model and total estimated spend, classification totals, and the
-    aggregate maximum LLM call ceiling. Never writes to the database and
-    never calls a model."""
+    aggregate maximum LLM call ceiling — spend and call ceilings count
+    every planned repeat. Never writes to the database and never calls a
+    model."""
     catalog = pricing_catalog if pricing_catalog is not None else load_pricing_catalog()
     plan = await build_batch_plan(
         state=state, tracer=tracer, selector=selector, variants=variants,
         skip_policy=skip_policy, pricing_catalog=catalog,
-        dossier_root=_resolve_dossier_root(dossier_root), sweep=sweep,
+        dossier_root=_resolve_dossier_root(dossier_root), sweep=sweep, repeats=repeats,
     )
     counts = Counter(pair.classification for pair in plan.pairs)
     totals_by_model: dict[str, float] = {}
     total = 0.0
     for pair in plan.pairs:
         if pair.classification == "scored" and pair.price_estimate is not None:
+            pair_usd = pair.price_estimate.estimated_usd * plan.repeats
             totals_by_model[pair.plan.candidate_model] = (
-                totals_by_model.get(pair.plan.candidate_model, 0.0)
-                + pair.price_estimate.estimated_usd
+                totals_by_model.get(pair.plan.candidate_model, 0.0) + pair_usd
             )
-            total += pair.price_estimate.estimated_usd
+            total += pair_usd
     max_calls = PHASE_REPLAY_CONFIGS[next(iter(plan.cases.values())).baseline.phase].max_llm_calls
     scored = counts.get("scored", 0)
     return BatchPreview(
@@ -2066,7 +2086,9 @@ async def preview_batch_replay(
         selected_count=scored,
         skipped_count=len(plan.pairs) - scored,
         max_llm_calls_per_case=max_calls,
-        aggregate_max_llm_calls=max_calls * scored,
+        aggregate_max_llm_calls=max_calls * scored * plan.repeats,
+        repeats=plan.repeats,
+        planned_attempt_count=scored * plan.repeats,
     )
 
 
@@ -2098,6 +2120,7 @@ def build_batch_candidate_config(
     sweep: SweepDefinition | None,
     plan_sha256: str,
     reasoning_override: bool | None = None,
+    repeats: int = 1,
     phase_run_ids: tuple[int, ...],
     dropped_duplicate_phase_run_ids: tuple[int, ...],
     skipped_pairs: tuple[dict[str, Any], ...],
@@ -2143,6 +2166,7 @@ def build_batch_candidate_config(
                 _sha256_utf8(system_prompt_override) if system_prompt_override is not None else None
             ),
             "reasoning_override": reasoning_override,
+            "repeats": repeats,
             "grader_attached": grader_attached,
             "sweep": (
                 {"name": sweep.name, "axis": sweep.axis, "version": SWEEP_SCHEMA_VERSION}
@@ -2255,6 +2279,7 @@ class BatchAttemptOutcome:
     candidate_llm_call_count: int | None
     candidate_cost: float | None
     error_detail: str | None
+    repeat_index: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -2276,6 +2301,7 @@ async def _execute_one_batch_attempt(
     case: BatchCase,
     pair: PairClassification,
     supersedes_experiment_id: int | None = None,
+    repeat_index: int = 1,
 ) -> BatchAttemptOutcome:
     """Execute one already-classified 'scored' pair as a new attempt under
     `experiment_run_id`. A ReplayError raised anywhere in the shared
@@ -2296,6 +2322,7 @@ async def _execute_one_batch_attempt(
         phase_run_id=case.phase_run_id,
         baseline_evidence=baseline_evidence_json,
         supersedes_experiment_id=supersedes_experiment_id,
+        repeat_index=repeat_index,
     )
     state.cas_experiment_to_running(experiment_id)
 
@@ -2319,12 +2346,14 @@ async def _execute_one_batch_attempt(
             experiment_id=experiment_id, candidate_trace_id=current["candidate_trace_id"],
             candidate_llm_call_count=current["candidate_llm_call_count"],
             candidate_cost=current["candidate_cost"], error_detail=str(exc),
+            repeat_index=repeat_index,
         )
 
     return BatchAttemptOutcome(
         phase_run_id=case.phase_run_id, variant_name=pair.variant_name, status="complete",
         experiment_id=experiment_id, candidate_trace_id=candidate_trace_id,
         candidate_llm_call_count=llm_call_count, candidate_cost=candidate_cost, error_detail=None,
+        repeat_index=repeat_index,
     )
 
 
@@ -2341,6 +2370,7 @@ async def execute_batch_replay(
     pricing_catalog: PricingCatalog | None = None,
     dossier_root: Path | str | None = None,
     sweep: SweepDefinition | None = None,
+    repeats: int = 1,
 ) -> BatchExecutionOutcome:
     """Execute one explicitly authorized batch or sweep replay end to end.
 
@@ -2351,8 +2381,9 @@ async def execute_batch_replay(
     this check before any row insertion or provider call. Then refuses to
     proceed if any non-'scored' pair is not explicitly excluded by
     `skip_policy`. Opens one experiment_runs parent per variant; each
-    scored pair becomes one immutable evaluation_experiments attempt under
-    its variant's parent. One case's failure never aborts the batch — every
+    scored pair becomes `repeats` immutable evaluation_experiments attempts
+    (repeat_index 1..repeats) under its variant's parent. One attempt's
+    failure never aborts the batch — every
     other case still executes, and the parent's projected status reflects
     exactly what happened (see StateManager._recompute_experiment_run_status).
     """
@@ -2361,6 +2392,7 @@ async def execute_batch_replay(
     plan = await build_batch_plan(
         state=state, tracer=tracer, selector=selector, variants=variants,
         skip_policy=skip_policy, pricing_catalog=catalog, dossier_root=root, sweep=sweep,
+        repeats=repeats,
     )
     if plan.plan_sha256 != authorize_plan_sha256:
         raise PlanAuthorizationError(
@@ -2391,6 +2423,7 @@ async def execute_batch_replay(
             model_override=variant.model_override,
             system_prompt_override=variant.system_prompt_override,
             reasoning_override=variant.reasoning_override,
+            repeats=plan.repeats,
             grader_attached=True, sweep=sweep, plan_sha256=plan.plan_sha256,
             phase_run_ids=plan.phase_run_ids,
             dropped_duplicate_phase_run_ids=plan.dropped_duplicate_phase_run_ids,
@@ -2409,24 +2442,29 @@ async def execute_batch_replay(
             if pair.classification != "scored":
                 continue
             attempted_variant = True
-            outcome = await _execute_one_batch_attempt(
-                state=state, tracer=tracer, feedback=feedback,
-                experiment_run_id=experiment_run_id, case=plan.cases[phase_run_id], pair=pair,
-            )
-            attempts.append(outcome)
+            for repeat_index in range(1, plan.repeats + 1):
+                outcome = await _execute_one_batch_attempt(
+                    state=state, tracer=tracer, feedback=feedback,
+                    experiment_run_id=experiment_run_id, case=plan.cases[phase_run_id],
+                    pair=pair, repeat_index=repeat_index,
+                )
+                attempts.append(outcome)
         if not attempted_variant:
             state.complete_experiment_run_without_attempts(experiment_run_id)
 
     return BatchExecutionOutcome(experiment_run_ids=experiment_run_ids, attempts=tuple(attempts))
 
 
-def latest_attempts_by_case(attempts: Sequence[Experiment]) -> dict[int, Experiment]:
-    """Select by immutable attempt number, independent of storage iteration order."""
-    latest: dict[int, Experiment] = {}
+def latest_attempts_by_case(attempts: Sequence[Experiment]) -> dict[tuple[int, int], Experiment]:
+    """The latest attempt of every (phase_run_id, repeat_index) retry chain,
+    selected by immutable attempt number, independent of storage iteration
+    order. Rows written before repeats existed all read repeat_index 1."""
+    latest: dict[tuple[int, int], Experiment] = {}
     for attempt in attempts:
-        current = latest.get(attempt.phase_run_id)
+        key = (attempt.phase_run_id, attempt.repeat_index)
+        current = latest.get(key)
         if current is None or attempt.attempt_number > current.attempt_number:
-            latest[attempt.phase_run_id] = attempt
+            latest[key] = attempt
     return latest
 
 
@@ -2459,12 +2497,13 @@ async def retry_batch_replay(
     dossier_root: Path | str | None = None,
 ) -> BatchExecutionOutcome:
     """Retry every (or a caller-selected subset of) failed latest-attempt
-    cases under one existing batch/sweep experiment_runs parent, as new
-    linked attempts (supersedes_experiment_id set) — never a fresh case,
-    and never a case whose latest attempt is not 'failed'. Reuses the
-    parent's own stored candidate_config verbatim (its model/prompt
-    override policy), so a retry can never silently drift from what was
-    originally authorized.
+    (case, repeat) chains under one existing batch/sweep experiment_runs
+    parent, as new linked attempts (supersedes_experiment_id set) — never
+    a fresh case or repeat, and never a chain whose latest attempt is not
+    'failed'. `phase_run_ids` selects every repeat of the named cases.
+    Reuses the parent's own stored candidate_config verbatim (its
+    model/prompt/reasoning override policy), so a retry can never silently
+    drift from what was originally authorized.
     """
     run = state.get_experiment_run(experiment_run_id)
     if run is None:
@@ -2480,23 +2519,25 @@ async def retry_batch_replay(
     )
 
     failed_cases = {
-        phase_run_id: attempt
-        for phase_run_id, attempt in latest_by_case.items()
-        if attempt.status == "failed"
+        key: attempt for key, attempt in latest_by_case.items() if attempt.status == "failed"
     }
     if phase_run_ids is not None:
-        unknown = sorted(set(phase_run_ids) - set(latest_by_case))
+        known_ids = {phase_run_id for phase_run_id, _repeat in latest_by_case}
+        unknown = sorted(set(phase_run_ids) - known_ids)
         if unknown:
             raise RetryResolutionError(
                 f"phase_run_id(s) {unknown} are not part of experiment_run {experiment_run_id}"
             )
-        not_failed = sorted(pid for pid in phase_run_ids if pid not in failed_cases)
+        failed_ids = {phase_run_id for phase_run_id, _repeat in failed_cases}
+        not_failed = sorted(pid for pid in phase_run_ids if pid not in failed_ids)
         if not_failed:
             raise RetryResolutionError(
                 f"phase_run_id(s) {not_failed} are not experiment_run {experiment_run_id}'s "
                 "latest failed attempt"
             )
-        failed_cases = {pid: failed_cases[pid] for pid in phase_run_ids}
+        failed_cases = {
+            key: attempt for key, attempt in failed_cases.items() if key[0] in phase_run_ids
+        }
 
     if not failed_cases:
         raise RetryResolutionError(
@@ -2518,7 +2559,7 @@ async def retry_batch_replay(
         relevance_by_phase = {case.phase_run.id: case for case in loaded.value.cases}
 
     attempts_out: list[BatchAttemptOutcome] = []
-    for phase_run_id, failed_attempt in sorted(failed_cases.items()):
+    for (phase_run_id, repeat_index), failed_attempt in sorted(failed_cases.items()):
         try:
             pinned_evidence = json.loads(failed_attempt.baseline_evidence)
         except (TypeError, json.JSONDecodeError) as exc:
@@ -2582,6 +2623,7 @@ async def retry_batch_replay(
         outcome = await _execute_one_batch_attempt(
             state=state, tracer=tracer, feedback=feedback, experiment_run_id=experiment_run_id,
             case=case, pair=pair, supersedes_experiment_id=failed_attempt.id,
+            repeat_index=repeat_index,
         )
         attempts_out.append(outcome)
 
@@ -2624,6 +2666,7 @@ __all__ = [
     "ExperimentOutcome",
     "ModelResolutionError",
     "ReasoningOverrideError",
+    "RepeatCountError",
     "NoOpReplayError",
     "NonExecutablePopulationError",
     "PairClassification",

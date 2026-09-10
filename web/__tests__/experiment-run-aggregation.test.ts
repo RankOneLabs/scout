@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { aggregateExperimentRun, type RunAttemptEvidence } from "@/lib/experiment-run-aggregation";
 import type { ExperimentListRow, ScoreEvidence } from "@/types/feedback-experiments";
 
-function attempt(id: number, number: number, supersedes: number | null, delta: number, cost: number): RunAttemptEvidence {
+function attempt(id: number, number: number, supersedes: number | null, delta: number, cost: number, repeat = 1): RunAttemptEvidence {
   const row: ExperimentListRow = {
     id, experiment_run_id: 7, name: "run", status: "complete", run_status: "complete",
-    phase: "reply_draft", attempt_number: number, supersedes_experiment_id: supersedes,
+    phase: "reply_draft", attempt_number: number, repeat_index: repeat, supersedes_experiment_id: supersedes,
     grader_attached: true, baseline_phase_run_id: 11, candidate_trace_id: `candidate-${id}`,
     baseline_model: "base", candidate_model: "candidate", created_at: `2026-01-0${number}T00:00:00Z`,
     completed_at: `2026-01-0${number}T00:01:00Z`, candidate_llm_call_count: number,
     candidate_cost: cost, comparison_complete: true,
   };
   const score_evidence: ScoreEvidence = { grader_version: "g", assembler_version: "a", correction_sha256: "c", reply_revision_id: 2, baseline_distance: 4, candidate_distance: 4 + delta, delta, grader_attached: true };
-  return { row, experiment_run_id: 7, phase_run_id: 11, attempt_number: number, supersedes_experiment_id: supersedes, score_evidence, trace_diff: null, cost_delta_available: false, latency_delta_available: false };
+  return { row, experiment_run_id: 7, phase_run_id: 11, attempt_number: number, repeat_index: repeat, supersedes_experiment_id: supersedes, score_evidence, trace_diff: null, cost_delta_available: false, latency_delta_available: false };
 }
 
 describe("aggregateExperimentRun", () => {
@@ -23,6 +23,18 @@ describe("aggregateExperimentRun", () => {
     expect(result.total_llm_call_count).toBe(3);
     expect(result.correction_distance.mean_delta).toBe(-1);
     expect(result.verdict).toBe("candidate_recommended");
+  });
+
+  it("treats each repeat as its own chain and counts the case once", () => {
+    const config = { version: 2 as const, phase: "reply_draft" as const, model: "candidate", system_prompt: "p", system_prompt_sha256: "h", grader_attached: true };
+    // Repeat 2's root is attempt #2 with no predecessor; its retry is #3.
+    const result = aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, null, 4, 0.1, 2), attempt(3, 3, 2, -1, 0.1, 2)] });
+    expect(result.attempted_case_count).toBe(1);
+    expect(result.current_case_count).toBe(2);
+    expect(result.retry_count).toBe(1);
+    expect(result.correction_distance.case_count).toBe(2);
+    // A repeat-2 root that claims a predecessor is still broken.
+    expect(() => aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, 1, 4, 0.1, 2)] })).toThrow(/lineage root/);
   });
 
   it("rejects broken lineage", () => {

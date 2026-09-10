@@ -13,6 +13,7 @@ export interface RunAttemptEvidence {
   experiment_run_id: number;
   phase_run_id: number;
   attempt_number: number;
+  repeat_index: number;
   supersedes_experiment_id: number | null;
   score_evidence: ScoreEvidence | null;
   trace_diff: TraceDiff | null;
@@ -55,7 +56,11 @@ function metric(pairs: Array<[number, number]>) {
 
 export function aggregateExperimentRun(input: AggregateExperimentRunInput): ExperimentRunSummary {
   const { candidate_config: config } = input;
-  const byPhaseRun = new Map<number, RunAttemptEvidence[]>();
+  // A retry chain is one (case, repeat); attempt_number is unique per case
+  // across its repeats, so a chain's root past repeat 1 need not be #1.
+  const byChain = new Map<string, RunAttemptEvidence[]>();
+  const caseIds = new Set<number>();
+  const numbersByCase = new Map<number, Set<number>>();
   const ids = new Set<number>();
   for (const attempt of input.attempts) {
     if (attempt.experiment_run_id !== input.id) fail("attempt belongs to another parent");
@@ -64,25 +69,28 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     if (attempt.row.experiment_run_id !== input.id || attempt.row.baseline_phase_run_id !== attempt.phase_run_id) {
       fail("attempt projection identity mismatch");
     }
-    const group = byPhaseRun.get(attempt.phase_run_id) ?? [];
+    if (!Number.isInteger(attempt.repeat_index) || attempt.repeat_index < 1) fail("invalid repeat index");
+    const numbers = numbersByCase.get(attempt.phase_run_id) ?? new Set<number>();
+    if (numbers.has(attempt.attempt_number)) fail("duplicate attempt number");
+    numbers.add(attempt.attempt_number);
+    numbersByCase.set(attempt.phase_run_id, numbers);
+    const key = `${attempt.phase_run_id}:${attempt.repeat_index}`;
+    const group = byChain.get(key) ?? [];
     group.push(attempt);
-    byPhaseRun.set(attempt.phase_run_id, group);
+    byChain.set(key, group);
+    caseIds.add(attempt.phase_run_id);
   }
 
   const latest: RunAttemptEvidence[] = [];
-  for (const attempts of byPhaseRun.values()) {
+  for (const attempts of byChain.values()) {
     attempts.sort((a, b) => a.attempt_number - b.attempt_number);
-    const seenNumbers = new Set<number>();
     for (let index = 0; index < attempts.length; index += 1) {
       const attempt = attempts[index];
-      if (seenNumbers.has(attempt.attempt_number)) fail("duplicate attempt number");
-      seenNumbers.add(attempt.attempt_number);
       if (index === 0) {
-        if (attempt.attempt_number !== 1 || attempt.supersedes_experiment_id !== null) fail("invalid lineage root");
-      } else if (
-        attempt.attempt_number !== attempts[index - 1].attempt_number + 1 ||
-        attempt.supersedes_experiment_id !== attempts[index - 1].row.id
-      ) {
+        if (attempt.supersedes_experiment_id !== null || (attempt.repeat_index === 1 && attempt.attempt_number !== 1)) {
+          fail("invalid lineage root");
+        }
+      } else if (attempt.supersedes_experiment_id !== attempts[index - 1].row.id) {
         fail("broken supersedes lineage");
       }
     }
@@ -90,7 +98,7 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
   }
 
   let skipped = 0;
-  let planned = byPhaseRun.size;
+  let planned = caseIds.size;
   if (config.version !== 2) {
     const plannedIds = new Set(config.phase_run_ids);
     if (plannedIds.size !== config.phase_run_ids.length) fail("duplicate planned phase run");
@@ -98,13 +106,13 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     for (const pair of config.skipped_pairs) {
       if (skippedIds.has(pair.phase_run_id)) fail("duplicate skipped pair");
       if (!plannedIds.has(pair.phase_run_id)) fail("skipped pair outside plan");
-      if (byPhaseRun.has(pair.phase_run_id)) fail("attempted and skipped populations overlap");
+      if (caseIds.has(pair.phase_run_id)) fail("attempted and skipped populations overlap");
       skippedIds.add(pair.phase_run_id);
     }
-    for (const phaseRunId of byPhaseRun.keys()) if (!plannedIds.has(phaseRunId)) fail("attempt outside plan");
+    for (const phaseRunId of caseIds) if (!plannedIds.has(phaseRunId)) fail("attempt outside plan");
     skipped = skippedIds.size;
     planned = config.phase_run_ids.length;
-    if (planned !== byPhaseRun.size + skipped) fail("plan population is incomplete");
+    if (planned !== caseIds.size + skipped) fail("plan population is incomplete");
   }
 
   const statusCounts: Record<ExperimentStatus, number> = { queued: 0, running: 0, complete: 0, failed: 0 };
@@ -151,7 +159,7 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     created_at: input.created_at,
     completed_at: input.completed_at,
     planned_case_count: planned,
-    attempted_case_count: byPhaseRun.size,
+    attempted_case_count: caseIds.size,
     skipped_case_count: skipped,
     current_case_count: latest.length,
     retry_count: input.attempts.length - latest.length,

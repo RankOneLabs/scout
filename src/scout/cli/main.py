@@ -419,6 +419,15 @@ def parse_args() -> argparse.Namespace:
         help="Exclude unpriceable pairs (missing usage or pricing) rather than refusing",
     )
     batch_replay_p.add_argument(
+        "--repeats",
+        type=positive_int,
+        default=1,
+        help=(
+            "Attempts per scored (case, variant) pair, each its own immutable row; "
+            "part of the authorized plan (default 1)"
+        ),
+    )
+    batch_replay_p.add_argument(
         "--pricing-catalog",
         default=None,
         help="Path to a replay-pricing v1 catalog (defaults to contracts/replay-pricing.v1.json)",

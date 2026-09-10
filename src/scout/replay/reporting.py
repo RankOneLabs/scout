@@ -44,6 +44,15 @@ score evidence) is kept out of the distance population and counted per
 variant as its own outcome class; evidence written before the abstain
 flags existed is treated as unknown and stays in the population.
 
+A plan may run every scored pair more than once (`repeats`); each repeat
+is its own attempt row and retry chain. The paired bootstrap resamples
+cases, not attempts: a case's delta is the mean over its repeats that are
+in the distance population, and the mean within-case range (max − min
+over a case's repeat deltas) is reported beside the mean so run-to-run
+variance is visible rather than attributed to the variant. With one
+repeat the range is unavailable and every count below reduces to the
+single-attempt reading.
+
 Relevance reports (a separate document, RELEVANCE_REPORT_SCHEMA_VERSION)
 carry, beside symmetric accuracy, each side's precision and recall and
 the segment's majority-class reference — the accuracy of always
@@ -72,8 +81,8 @@ from scout.replay.tasks import RelevanceScore, RelevanceTask
 from scout.storage.evaluations import Experiment
 from scout.storage.state import StateManager
 
-REPORT_SCHEMA_VERSION = 5
-RELEVANCE_REPORT_SCHEMA_VERSION = 4
+REPORT_SCHEMA_VERSION = 6
+RELEVANCE_REPORT_SCHEMA_VERSION = 5
 BOOTSTRAP_METHOD = "paired_bootstrap_percentile"
 BOOTSTRAP_VERSION = 1
 BOOTSTRAP_RESAMPLES = 10_000
@@ -158,6 +167,7 @@ def _collect_parents(
 @dataclass(frozen=True, slots=True)
 class RelevanceReportCase:
     phase_run_id: int
+    repeat_index: int
     variant: str
     baseline_model: str
     baseline_prompt_sha256: str
@@ -203,6 +213,18 @@ def _delta(candidate: float | None, baseline: float | None) -> float | None:
     return candidate - baseline
 
 
+def _one_score_per_case(scores: Sequence[RelevanceScore]) -> list[RelevanceScore]:
+    """Repeats share a target; keep the first observation of each case so
+    case-level references are not weighted by repeat count."""
+    seen: set[int] = set()
+    unique = []
+    for score in scores:
+        if score.target.evaluation_id not in seen:
+            seen.add(score.target.evaluation_id)
+            unique.append(score)
+    return unique
+
+
 def _majority_class_reference(scores: Sequence[RelevanceScore]) -> dict[str, Any]:
     """The trivial reference every variant's accuracy has to beat: always
     predict the more common label on the common case set. Ties report the
@@ -231,7 +253,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             Experiment(**row)
             for row in state.list_experiment_attempts(parent["experiment_run_id"])
         ])
-        for phase_run_id, attempt in sorted(latest.items()):
+        for (phase_run_id, repeat_index), attempt in sorted(latest.items()):
             if attempt.status not in REPORTABLE_ATTEMPT_STATUSES:
                 continue
             evidence = json.loads(attempt.baseline_evidence)
@@ -249,6 +271,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             cases.append(
                 RelevanceReportCase(
                     phase_run_id=phase_run_id,
+                    repeat_index=repeat_index,
                     variant=parent["variant_name"],
                     baseline_model=evidence["baseline_model"],
                     baseline_prompt_sha256=evidence["baseline_prompt_sha256"],
@@ -266,6 +289,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             "no reportable evidence (attempts or skipped pairs) under the given experiment_run_ids"
         )
     variants = sorted(parent["variant_name"] for parent in parents)
+    repeats_by_variant = {parent["variant_name"]: parent.get("repeats", 1) for parent in parents}
     segment_keys = sorted({(case.baseline_model, case.baseline_prompt_sha256) for case in cases})
     segments = []
     for model, prompt in segment_keys:
@@ -286,12 +310,18 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
         summaries = []
         common_scores: list[RelevanceScore] = []
         for variant, values in by_variant.items():
+            # Every completed repeat is one observation; the common set and
+            # the reference are still counted in cases.
             scores = [
                 case.score
                 for case in values
                 if case.phase_run_id in common and case.score is not None
             ]
             common_scores = common_scores or scores
+            by_case: dict[int, set[bool]] = defaultdict(set)
+            for case in values:
+                if case.phase_run_id in common and case.score is not None:
+                    by_case[case.phase_run_id].add(case.score.candidate_relevant)
             baseline_confusion = _relevance_confusion(scores, candidate=False)
             candidate_confusion = _relevance_confusion(scores, candidate=True)
             baseline_precision = _precision(baseline_confusion)
@@ -301,8 +331,13 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             summaries.append(
                 {
                     "variant": variant,
-                    "scored_case_count": len(values),
-                    "common_case_count": len(scores),
+                    "repeat_count": repeats_by_variant.get(variant, 1),
+                    "scored_case_count": len({case.phase_run_id for case in values}),
+                    "scored_attempt_count": len(values),
+                    "common_case_count": len(by_case),
+                    "common_attempt_count": len(scores),
+                    # Cases whose repeats did not agree on the candidate's label.
+                    "unstable_case_count": sum(1 for labels in by_case.values() if len(labels) > 1),
                     "baseline_confusion": baseline_confusion,
                     "candidate_confusion": candidate_confusion,
                     "baseline_accuracy": _ratio(
@@ -328,7 +363,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
                 "baseline_prompt_sha256": prompt,
                 # The common set is shared by every variant in the segment,
                 # so one reference applies to all of them.
-                "reference": _majority_class_reference(common_scores),
+                "reference": _majority_class_reference(_one_score_per_case(common_scores)),
                 "variants": summaries,
             }
         )
@@ -344,6 +379,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
         "cases": [
             {
                 "phase_run_id": case.phase_run_id,
+                "repeat_index": case.repeat_index,
                 "variant": case.variant,
                 "status": case.status,
                 "score": case.score.model_dump(mode="json") if case.score else None,
@@ -381,6 +417,8 @@ class ReportCase:
     baseline_model: str
     baseline_prompt_sha256: str
     status: str
+    repeat_index: int
+    repeat_count: int
     baseline_distance: float | None
     candidate_distance: float | None
     delta: float | None
@@ -424,6 +462,7 @@ def _collect_attempted_cases(
     for parent in parents:
         experiment_run_id = parent["experiment_run_id"]
         variant_name = parent.get("variant_name", DEFAULT_BATCH_VARIANT_NAME)
+        repeat_count = parent.get("repeats", 1)
 
         latest_by_case = latest_attempts_by_case([
             Experiment(**row) for row in state.list_experiment_attempts(experiment_run_id)
@@ -455,6 +494,8 @@ def _collect_attempted_cases(
                     baseline_model=evidence["baseline_model"],
                     baseline_prompt_sha256=evidence["baseline_prompt_sha256"],
                     status=attempt.status,
+                    repeat_index=attempt.repeat_index,
+                    repeat_count=repeat_count,
                     baseline_distance=baseline_distance,
                     candidate_distance=candidate_distance,
                     delta=delta,
@@ -518,6 +559,12 @@ class VariantSegmentSummary:
     ci_lower: float | None
     ci_upper: float | None
     interval_excludes_zero: bool | None
+    repeat_count: int = 1
+    scored_attempt_count: int = 0
+    failed_attempt_count: int = 0
+    # Mean over common cases with >1 repeat delta of (max − min); None
+    # when no case has more than one.
+    within_case_range_mean: float | None = None
 
 
 def _ranking_key(summary: VariantSegmentSummary) -> float:
@@ -611,9 +658,18 @@ def _build_segments(
             variant_skipped = by_variant_skipped.get(variant_name, [])
             scored = [c for c in variant_cases if c.status == "complete"]
             failed = [c for c in variant_cases if c.status == "failed"]
+            # One paired delta per common case: the mean over its repeats
+            # that are in the distance population, in phase_run_id order so
+            # the seeded bootstrap sees the same sequence every render.
+            deltas_by_case: dict[int, list[float]] = defaultdict(list)
+            for c in scored:
+                if c.phase_run_id in common_ids and c.in_distance_population:
+                    assert c.delta is not None
+                    deltas_by_case[c.phase_run_id].append(c.delta)
             common_deltas = [
-                c.delta for c in scored if c.phase_run_id in common_ids and c.delta is not None
+                sum(values) / len(values) for _, values in sorted(deltas_by_case.items())
             ]
+            ranges = [max(v) - min(v) for v in deltas_by_case.values() if len(v) > 1]
             baseline_abstains = sum(1 for c in scored if c.baseline_abstained)
             candidate_abstains = sum(1 for c in scored if c.candidate_abstained)
             mean_delta = sum(common_deltas) / len(common_deltas) if common_deltas else None
@@ -626,8 +682,12 @@ def _build_segments(
             summaries.append(
                 VariantSegmentSummary(
                     variant_name=variant_name,
-                    scored_case_count=len(scored),
-                    failed_case_count=len(failed),
+                    scored_case_count=len({c.phase_run_id for c in scored}),
+                    failed_case_count=len({c.phase_run_id for c in failed}),
+                    scored_attempt_count=len(scored),
+                    failed_attempt_count=len(failed),
+                    repeat_count=max((c.repeat_count for c in variant_cases), default=1),
+                    within_case_range_mean=sum(ranges) / len(ranges) if ranges else None,
                     unscored_count=skip_counts.get("unscored", 0),
                     no_op_count=skip_counts.get("no_op", 0),
                     unpriceable_count=skip_counts.get("unpriceable", 0),
@@ -755,6 +815,10 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                         "unpriceable_count": variant.unpriceable_count,
                         "baseline_abstain_count": variant.baseline_abstain_count,
                         "candidate_abstain_count": variant.candidate_abstain_count,
+                        "repeat_count": variant.repeat_count,
+                        "scored_attempt_count": variant.scored_attempt_count,
+                        "failed_attempt_count": variant.failed_attempt_count,
+                        "within_case_range_mean": variant.within_case_range_mean,
                         "common_case_count": variant.common_case_count,
                         "mean_delta": variant.mean_delta,
                         "interval_available": variant.interval_available,
@@ -768,6 +832,7 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                 "cases": [
                     {
                         "phase_run_id": case.phase_run_id,
+                        "repeat_index": case.repeat_index,
                         "variant": case.variant_name,
                         "status": case.status,
                         "baseline_distance": case.baseline_distance,
@@ -780,7 +845,7 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                     }
                     for case in sorted(
                         (c for c in cases if c.segment_key == segment.segment_key),
-                        key=lambda c: (c.phase_run_id, c.variant_name),
+                        key=lambda c: (c.phase_run_id, c.variant_name, c.repeat_index),
                     )
                 ],
             }
@@ -873,14 +938,16 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
                 f"cases ({reference['relevant_case_count']} relevant). A variant's accuracy "
                 "means nothing unless it beats this.",
                 "",
-                "| variant | scored | common | baseline accuracy | candidate accuracy | delta |",
-                "|---|---|---|---|---|---|",
+                "| variant | repeats | scored cases | common cases | unstable cases "
+                "| baseline accuracy | candidate accuracy | delta |",
+                "|---|---|---|---|---|---|---|---|",
             ]
         )
         for variant in segment["variants"]:
             lines.append(
-                f"| `{variant['variant']}` | {variant['scored_case_count']} | "
-                f"{variant['common_case_count']} | "
+                f"| `{variant['variant']}` | {variant['repeat_count']} | "
+                f"{variant['scored_case_count']} | {variant['common_case_count']} | "
+                f"{variant['unstable_case_count']} | "
                 f"{_format_metric(variant['baseline_accuracy'])} | "
                 f"{_format_metric(variant['candidate_accuracy'])} | "
                 f"{_format_metric(variant['accuracy_delta'])} |"
@@ -888,7 +955,8 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "Precision, recall, and confusion counts on common successful cases "
+                "Precision, recall, and confusion counts on common successful attempts, "
+                "every completed repeat one observation "
                 "(FP = replied to an irrelevant post, FN = missed a relevant post):",
                 "",
                 "| variant | prediction | precision | recall | TP | FP | TN | FN |",
@@ -979,13 +1047,18 @@ def render_markdown(report: dict[str, Any]) -> str:
             "- Abstains are their own outcome: a case where either side abstained is "
             "counted below and left out of the common distance set"
         )
+        lines.append(
+            "- Repeats: a case's delta is the mean over its repeats; within-case range is "
+            "the mean (max − min) over cases with more than one repeat delta"
+        )
         lines.append("")
         lines.append(
-            "| variant | scored | failed | unscored | no-op | unpriceable "
+            "| variant | repeats | scored cases (attempts) | failed cases (attempts) "
+            "| unscored | no-op | unpriceable "
             "| abstains (baseline / candidate) | common "
-            "| mean delta | 95% CI | excludes zero | seed |"
+            "| mean delta | within-case range | 95% CI | excludes zero | seed |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for variant in segment["variants"]:
             mean_delta = "n/a" if variant["mean_delta"] is None else f"{variant['mean_delta']:.4f}"
             ci = (
@@ -999,19 +1072,26 @@ def render_markdown(report: dict[str, Any]) -> str:
                 else ("yes" if variant["interval_excludes_zero"] else "no")
             )
             seed = variant["interval_seed"] if variant["interval_seed"] is not None else "n/a"
+            within = (
+                "n/a"
+                if variant["within_case_range_mean"] is None
+                else f"{variant['within_case_range_mean']:.4f}"
+            )
             lines.append(
-                f"| `{variant['variant_name']}` | {variant['scored_case_count']} | "
-                f"{variant['failed_case_count']} | {variant['unscored_count']} | "
+                f"| `{variant['variant_name']}` | {variant['repeat_count']} | "
+                f"{variant['scored_case_count']} ({variant['scored_attempt_count']}) | "
+                f"{variant['failed_case_count']} ({variant['failed_attempt_count']}) | "
+                f"{variant['unscored_count']} | "
                 f"{variant['no_op_count']} | {variant['unpriceable_count']} | "
                 f"{variant['baseline_abstain_count']} / {variant['candidate_abstain_count']} | "
-                f"{variant['common_case_count']} | {mean_delta} | {ci} | {excludes_zero} | "
-                f"{seed} |"
+                f"{variant['common_case_count']} | {mean_delta} | {within} | {ci} | "
+                f"{excludes_zero} | {seed} |"
             )
         lines.append("")
         if segment["cases"]:
-            lines.append("| phase_run_id | variant | status | baseline dist | candidate dist "
-                         "| delta | abstained | est. USD | actual USD |")
-            lines.append("|---|---|---|---|---|---|---|---|---|")
+            lines.append("| phase_run_id | repeat | variant | status | baseline dist "
+                         "| candidate dist | delta | abstained | est. USD | actual USD |")
+            lines.append("|---|---|---|---|---|---|---|---|---|---|")
             for case in segment["cases"]:
                 baseline_dist = (
                     "n/a"
@@ -1030,7 +1110,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 est = _format_usd(case["estimated_usd"])
                 actual = _format_usd(case["actual_usd"])
                 lines.append(
-                    f"| `{case['phase_run_id']}` | `{case['variant']}` | {case['status']} | "
+                    f"| `{case['phase_run_id']}` | {case['repeat_index']} | "
+                    f"`{case['variant']}` | {case['status']} | "
                     f"{baseline_dist} | {candidate_dist} | {delta} | {abstained} | {est} | "
                     f"{actual} |"
                 )

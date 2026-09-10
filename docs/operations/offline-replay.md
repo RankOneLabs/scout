@@ -386,15 +386,27 @@ re-run preview and re-authorize.
 ## Batch/sweep execution and failure
 
 Each variant's `experiment_runs` parent gets one immutable
-`evaluation_experiments` attempt per scored case — the same
-insert-then-CAS lifecycle (`queued → running → complete`/`failed`)
-single-phase replay uses, reused as-is. **One case failing never aborts
-the batch**: every other case still executes, and the parent's status
-(`experiment_runs.status`) is the deterministic projection of every
-case's latest attempt — `complete` only if every case succeeded,
-`partial` when cases disagree, `failed` only if every case failed. Failed
-attempts, and their (possibly partial) recorded cost, are retained exactly
-as they landed.
+`evaluation_experiments` attempt per scored case and planned repeat —
+the same insert-then-CAS lifecycle (`queued → running → complete`/
+`failed`) single-phase replay uses, reused as-is. **One attempt failing
+never aborts the batch**: every other attempt still executes, and the
+parent's status (`experiment_runs.status`) is the deterministic
+projection of every (case, repeat) chain's latest attempt — `complete`
+only if every chain succeeded, `partial` when chains disagree, `failed`
+only if every chain failed. Failed attempts, and their (possibly partial)
+recorded cost, are retained exactly as they landed.
+
+`--repeats N` (default 1) runs every scored pair N times. Each repeat is
+its own row (`repeat_index`, 1-based) and its own retry chain;
+`attempt_number` stays unique per (run, case) across repeats. The count
+is part of the canonical plan (so it moves the hash), of the preview's
+spend estimate and call ceiling (both multiplied), and of each parent's
+`candidate_config` (`repeats`), which `batch-retry` reads back so a
+retry reruns only the failed repeat. A non-deterministic decoder's
+run-to-run variance is otherwise invisible: with one draw per pair the
+paired bootstrap measures between-case variance only and attributes the
+rest to the variant. The grid's own `repeats` still expands separate
+sweeps (`-r2`, `-r3`, ...); moving it onto this flag is a follow-up.
 
 Each variant's parent row's `candidate_config` durably carries the
 **authorized `plan_sha256`**, the plan's full resolved population
@@ -489,6 +501,20 @@ comparison set stays shared — and counted per variant as
 `baseline_abstain_count` / `candidate_abstain_count` instead. Evidence
 written before the flags existed reads as unknown and stays in the
 population; the per-case `abstained` column says `unknown` for it.
+
+Repeats are paired per case, not per attempt. A case's delta is the mean
+over its repeats in the distance population; the bootstrap resamples
+those per-case means, so `common_case_count` counts cases. Beside the
+mean, `within_case_range_mean` is the mean (max − min) over common cases
+with more than one repeat delta — the run-to-run spread the interval
+does not capture — and is `null` with one repeat. Per variant,
+`scored_case_count`/`failed_case_count` count distinct cases and
+`scored_attempt_count`/`failed_attempt_count` count attempts; every
+per-case row carries its `repeat_index`. The relevance report treats
+every completed repeat as one observation for accuracy, precision, and
+recall, counts its common set and majority-class reference in cases, and
+reports `unstable_case_count`: cases whose repeats disagreed on the
+candidate's label.
 
 The report carries: **correction coverage** (`population_size`, dropped
 duplicate baselines, attempted/scored/failed, and skipped broken out by
