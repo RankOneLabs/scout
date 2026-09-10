@@ -1288,7 +1288,7 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
     if shared_model is not None:
         try:
             from_model(shared_model)
-        except ValueError as exc:
+        except (ValueError, ImportError) as exc:
             raise SweepValidationError(
                 f"sweep model {shared_model!r} is not routable: {exc}"
             ) from exc
@@ -1304,7 +1304,7 @@ def validate_sweep_document(document: dict[str, Any], *, base_dir: Path) -> Swee
         if variant_model is not None:
             try:
                 from_model(variant_model)
-            except ValueError as exc:
+            except (ValueError, ImportError) as exc:
                 raise SweepValidationError(
                     f"sweep variant {raw['name']!r} model {variant_model!r} is not routable: {exc}"
                 ) from exc

@@ -1,8 +1,0 @@
-version: 1
-name: relevance-frink-agent-ops-current
-axis: model
-variants:
-  - name: qwen3-30b-a3b-q4-frink
-    model: ollama/qwen3:30b-a3b-instruct-2507-q4_K_M
-  - name: llama-3-3-70b-q4-frink
-    model: ollama/llama3.3:70b-instruct-q4_K_M

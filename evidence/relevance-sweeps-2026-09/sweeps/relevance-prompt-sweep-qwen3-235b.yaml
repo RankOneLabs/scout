@@ -1,9 +1,0 @@
-version: 1
-name: relevance-prompt-agent-ops-c9fdbfa-qwen3-235b
-axis: prompt
-model: openrouter/qwen/qwen3-235b-a22b-2507
-variants:
-  - name: no-reject
-    prompt_file: ../prompts/prompt-agent-ops-no-reject.md
-  - name: topical
-    prompt_file: ../prompts/prompt-agent-ops-topical.md

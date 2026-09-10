@@ -1,0 +1,57 @@
+# replay-sweep-grid v1 — the whole September 2026 relevance study in one document.
+# `scout feedback grid expand study.yaml --out /tmp/study` writes the replay-sweep v1
+# files, manifest.json (every cell's attributes) and run.sh that batch-replay consumes.
+# The recorded runs in pooled-*.txt were executed from hand-written per-axis sweeps
+# equivalent to this grid's cells (the grid postdates them); their variant names are
+# the legacy ones mapped in scripts/format_report.py.
+version: 1
+name: relevance-2026-09
+projects:
+  agent-ops:
+    task_config: relevance-task-af08aa7b-agent-ops.json     # snapshot cb09c4f0, 51 cases
+    dossier_root: /srv/content-agn
+  agent-evals:
+    task_config: relevance-task-af08aa7b-agent-evals.json   # snapshot 33bf631e, 73 cases (45 GAIA excluded at pooling)
+    dossier_root: /srv/content-agn
+prompts:
+  current: null            # reuse each case's recorded system prompt
+  no-reject:
+    files: {agent-ops: prompts/prompt-agent-ops-no-reject.md, agent-evals: prompts/prompt-agent-evals-no-reject.md}
+  topical:
+    files: {agent-ops: prompts/prompt-agent-ops-topical.md, agent-evals: prompts/prompt-agent-evals-topical.md}
+backends:
+  openrouter:
+    pricing_catalog: pricing-openrouter-20260909b.json
+    identity_config: identity-config.json
+  frink:                   # Ollama 0.33.3 on the Ryzen AI Max+, called from the willie container
+    pricing_catalog: pricing-local-20260909.json            # nominal 0.001/M entries so the cost gate passes
+    identity_config: identity-config-local.json
+    env:
+      OLLAMA_HOST: http://frink:11434
+      SCOUT_REPLAY_REASONING: "off"    # ephemeral container patch until batch-replay carries `reasoning`
+models:
+  # frontier / large hosted
+  - {id: gemini-2.5-flash,     backend: openrouter, model: openrouter/google/gemini-2.5-flash}
+  - {id: qwen3-235b-2507,      backend: openrouter, model: openrouter/qwen/qwen3-235b-a22b-2507}
+  - {id: kimi-k2-0905,         backend: openrouter, model: openrouter/moonshotai/kimi-k2-0905}
+  # local-class through OpenRouter (provider precision; the hosted ceiling)
+  - {id: qwen3-30b-a3b-2507,   backend: openrouter, model: openrouter/qwen/qwen3-30b-a3b-instruct-2507}
+  - {id: gpt-oss-20b,          backend: openrouter, model: openrouter/openai/gpt-oss-20b}
+  - {id: gemma-4-26b-a4b,      backend: openrouter, model: openrouter/google/gemma-4-26b-a4b-it}
+  - {id: gemma-4-31b,          backend: openrouter, model: openrouter/google/gemma-4-31b-it}
+  - {id: mistral-small-2603,   backend: openrouter, model: openrouter/mistralai/mistral-small-2603}
+  - {id: nemotron-3-nano-30b,  backend: openrouter, model: openrouter/nvidia/nemotron-3-nano-30b-a3b}
+  - {id: qwen3-32b,            backend: openrouter, model: openrouter/qwen/qwen3-32b}
+  - {id: llama-3.3-70b,        backend: openrouter, model: openrouter/meta-llama/llama-3.3-70b-instruct}
+  - {id: qwen3-next-80b-a3b,   backend: openrouter, model: openrouter/qwen/qwen3-next-80b-a3b-instruct}
+  - {id: gpt-oss-120b,         backend: openrouter, model: openrouter/openai/gpt-oss-120b}
+  - {id: glm-4.5-air,          backend: openrouter, model: openrouter/z-ai/glm-4.5-air}
+  - {id: glm-4.7-flash,        backend: openrouter, model: openrouter/z-ai/glm-4.7-flash}
+  - {id: nemotron-3-super-120b, backend: openrouter, model: openrouter/nvidia/nemotron-3-super-120b-a12b}
+  - {id: llama-4-scout,        backend: openrouter, model: openrouter/meta-llama/llama-4-scout}
+  # true-local on frink, Q4_K_M GGUF, reasoning off
+  - {id: qwen3-30b-a3b-2507,   backend: frink, model: ollama/qwen3:30b-a3b-instruct-2507-q4_K_M, quant: Q4_K_M}
+  - {id: gemma-4-26b-a4b,      backend: frink, model: ollama/gemma4:26b, quant: Q4_K_M, reasoning: false}
+  - {id: gemma-4-31b,          backend: frink, model: ollama/gemma4:31b, quant: Q4_K_M, reasoning: false}
+skip:
+  - {prompt: no-reject, backend: frink}   # no-reject was only ever a hosted probe

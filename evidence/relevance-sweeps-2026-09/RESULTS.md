@@ -72,10 +72,16 @@ snapshots via `scout feedback batch-replay`. Response writing is not measured.
   (submit_output not called, or called without the required `relevant` field),
   which its OpenRouter run did not; at 15–30 s/case on frink it is out of
   contention regardless.
-- Third-chain sweep files: `sweeps/relevance-frink3-*.yaml` (gemma no-think plus
-  qwen3 Q4), runner `scripts/run-frink4.sh`; earlier frink chains
-  `sweeps/relevance-frink-*.yaml`, `relevance-frink2-*.yaml`,
-  `scripts/run-frink.sh`, `run-frink3.sh`.
+- **Sweep definitions.** The whole study is one replay-sweep-grid v1 document,
+  `study.yaml` (projects x prompts x backends, with the models each backend
+  serves). `scout feedback grid expand study.yaml --out DIR` regenerates the
+  per-axis replay-sweep v1 files, a `manifest.json` carrying every cell's
+  attributes (model, backend, quant, reasoning, prompt, project, repeat) and the
+  `run.sh` that previews and executes them. The recorded runs predate the grid
+  and were executed from hand-written per-axis sweeps equivalent to its cells
+  (frink chains 1–3 added the thinking-on and llama rows the grid no longer
+  declares); their legacy variant names are mapped in `scripts/format_report.py`.
+  Task configs `relevance-task-af08aa7b-*.json` pin the snapshots.
 
 ### Prompt grid (frontier / large API models)
 
