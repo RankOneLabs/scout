@@ -469,7 +469,7 @@ class TestRelevanceBatch:
             sum(item["candidate_confusion"].values()) == partial_success_count for item in summaries
         )
         markdown = render_markdown(report)
-        assert "| variant | prediction | TP | FP | TN | FN |" in markdown
+        assert "| variant | prediction | precision | recall | TP | FP | TN | FN |" in markdown
         assert (
             "| 1.0000 | 0.0000 | -1.0000 |" if partial_success_count else "| n/a | n/a | n/a |"
         ) in markdown
@@ -838,12 +838,29 @@ class TestRelevanceBatch:
             await ee.retry_batch_replay(
                 state=state, tracer=tracer, feedback=feedback, experiment_run_id=run_id,
             )
-        assert report["segments"][0]["variants"][0]["candidate_confusion"] == {
+        segment = report["segments"][0]
+        variant = segment["variants"][0]
+        assert variant["candidate_confusion"] == {
             "true_positive": 1,
             "true_negative": 0,
             "false_positive": 1,
             "false_negative": 0,
         }
+        # One relevant and one irrelevant case, both predicted relevant.
+        assert variant["candidate_precision"] == 0.5
+        assert variant["candidate_recall"] == 1.0
+        assert variant["precision_delta"] == variant["candidate_precision"] - (
+            variant["baseline_precision"]
+        )
+        assert segment["reference"] == {
+            "common_case_count": 2,
+            "relevant_case_count": 1,
+            "majority_label_relevant": True,
+            "majority_class_accuracy": 0.5,
+        }
+        markdown = render_markdown(report)
+        assert "Majority-class reference: accuracy 0.5000" in markdown
+        assert "| precision | recall |" in markdown
         assert report["task"]["snapshot_digest"] == task.snapshot_digest
 
     async def test_authorization_binds_the_frozen_task(
@@ -1389,7 +1406,9 @@ class TestReplyCorrectionGrader:
         assert scores[0].dimension == "normalized_edit_distance/v1"
         assert scores[0].value == 0.0
         assert scores[0].source == ScoreSource.GROUND_TRUTH
-        assert scores[0].metadata == {"assembler_version": DRAFT_TEXT_ASSEMBLER_VERSION}
+        assert scores[0].metadata == {
+            "assembler_version": DRAFT_TEXT_ASSEMBLER_VERSION, "posture": "answer",
+        }
 
     async def test_resource_segment_assembly(self) -> None:
         correction = "Resource: Gateway — https://example.com/gateway"
@@ -1431,6 +1450,9 @@ class TestReplyCorrectionGrader:
         scores = await grader.grade(input="ignored", output=draft)
 
         assert scores[0].value == 1.0
+        # The distance alone cannot tell an abstain from a maximally wrong
+        # draft; the posture in the score metadata can.
+        assert scores[0].metadata["posture"] == "abstain"
 
 
 class TestResolveBaselineStructuredDraft:
@@ -1769,6 +1791,8 @@ class TestExecuteReplayReplyDraft:
         assert score_evidence["baseline_distance"] == pytest.approx(expected_baseline_distance)
         assert score_evidence["delta"] == pytest.approx(0.0 - expected_baseline_distance)
         assert score_evidence["delta"] < 0  # candidate is an improvement
+        assert score_evidence["baseline_abstained"] is False
+        assert score_evidence["candidate_abstained"] is False
 
         run = state.get_experiment_run(outcome.experiment_run_id)
         assert run is not None

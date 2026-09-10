@@ -133,6 +133,63 @@ async def _run_two_variant_sweep(
     return outcome.experiment_run_ids, phase_run_ids
 
 
+_ABSTAIN_PAYLOAD = {
+    "posture": "abstain",
+    "segments": [],
+    "claims": [],
+    "resources_used": [],
+    "abstain_reason": "nothing to add",
+}
+
+
+async def _run_abstaining_sweep(
+    state, tracer, feedback, monkeypatch, *, case_count: int = 3,
+) -> dict[str, int]:
+    """Seed `case_count` shared cases and execute a two-variant model sweep
+    where variant "a" assembles the correction exactly and variant "b"
+    abstains on every case. Returns experiment_run_ids_by_variant."""
+    _patch_resolve_dossier(monkeypatch)
+    phase_run_ids = []
+    for _ in range(case_count):
+        phase_run_id, _ = await _seed_reply_draft_correction(
+            state, tracer, feedback, model="claude-opus-4-20250514",
+        )
+        phase_run_ids.append(phase_run_id)
+    client_a = _FakeLLMClient(
+        [_submit_response(_GRADED_CANDIDATE_PAYLOAD) for _ in range(case_count)],
+        model="claude-sonnet-4-20250514",
+    )
+    client_b = _FakeLLMClient(
+        [_submit_response(_ABSTAIN_PAYLOAD) for _ in range(case_count)],
+        model="claude-haiku-4-5-20251001",
+    )
+    _stub_from_model(monkeypatch, {
+        "claude-sonnet-4-20250514": client_a, "claude-haiku-4-5-20251001": client_b,
+    })
+    sweep = ee.SweepDefinition(
+        name="abstain-tune", axis="model", shared_model=None, shared_prompt_file=None,
+        variants=(
+            ee.SweepVariant("a", "claude-sonnet-4-20250514", None),
+            ee.SweepVariant("b", "claude-haiku-4-5-20251001", None),
+        ),
+    )
+    variants = ee.batch_variants_for_sweep(sweep, base_dir=Path("/unused"))
+    selector = ee.BatchSelector.by_phase_run_ids(phase_run_ids)
+    catalog = _pricing_catalog_for_tests()
+    plan = await ee.build_batch_plan(
+        state=state, tracer=tracer, selector=selector, variants=variants,
+        skip_policy=ee.SkipPolicy(), pricing_catalog=catalog, dossier_root=Path("/unused"),
+        sweep=sweep,
+    )
+    outcome = await ee.execute_batch_replay(
+        state=state, tracer=tracer, feedback=feedback, name="abstain-tune",
+        selector=selector, variants=variants, skip_policy=ee.SkipPolicy(),
+        authorize_plan_sha256=plan.plan_sha256, pricing_catalog=catalog,
+        dossier_root=Path("/unused"), sweep=sweep,
+    )
+    return outcome.experiment_run_ids
+
+
 async def _run_mixed_segment_batch(
     state, tracer, feedback, monkeypatch,
 ) -> tuple[int, dict[str, list[int]]]:
@@ -257,6 +314,61 @@ class TestBuildBatchReport:
         assert segment["indistinguishable_from_baseline"] == ["a", "b"]
         assert segment["interval_family_size"] == 0
         assert all(v["interval_available"] is False for v in segment["variants"])
+
+    async def test_abstaining_variant_is_counted_not_distanced(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        experiment_run_ids = await _run_abstaining_sweep(
+            state, tracer, feedback, monkeypatch, case_count=3,
+        )
+        report = rr.build_batch_report(state, experiment_run_ids=list(experiment_run_ids.values()))
+        segment = report["segments"][0]
+        by_name = {v["variant_name"]: v for v in segment["variants"]}
+        # "b" abstained on every case: all three are scored attempts, all
+        # three are counted as abstains, and none of them carries a
+        # distance delta into the comparison.
+        assert by_name["b"]["scored_case_count"] == 3
+        assert by_name["b"]["candidate_abstain_count"] == 3
+        assert by_name["b"]["baseline_abstain_count"] == 0
+        assert by_name["b"]["common_case_count"] == 0
+        assert by_name["b"]["mean_delta"] is None
+        # One variant's abstain removes the case from every variant's
+        # common distance set, so "a" has nothing to pair either.
+        assert by_name["a"]["candidate_abstain_count"] == 0
+        assert by_name["a"]["common_case_count"] == 0
+        assert segment["ranking"] == []
+        assert segment["indistinguishable_from_baseline"] == []
+        abstained = {
+            (case["variant"], case["candidate_abstained"]) for case in segment["cases"]
+        }
+        assert abstained == {("a", False), ("b", True)}
+        assert all(case["baseline_abstained"] is False for case in segment["cases"])
+
+    async def test_evidence_without_abstain_flags_stays_in_population(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        run_id, _ = await _run_single_variant_batch(
+            state, tracer, feedback, monkeypatch, case_count=2,
+        )
+        # Serve the retained evidence without the flags, as rows written
+        # before they existed look (the table itself is immutable).
+        get_trace_comparison = state.get_trace_comparison
+
+        def without_abstain_flags(experiment_id: int):
+            comparison = dict(get_trace_comparison(experiment_id))
+            score = json.loads(comparison["score_evidence"])
+            del score["baseline_abstained"], score["candidate_abstained"]
+            comparison["score_evidence"] = json.dumps(score)
+            return comparison
+
+        monkeypatch.setattr(state, "get_trace_comparison", without_abstain_flags)
+        report = rr.build_batch_report(state, experiment_run_ids=[run_id])
+        variant = report["segments"][0]["variants"][0]
+        assert variant["common_case_count"] == 2
+        assert variant["candidate_abstain_count"] == 0
+        assert all(
+            case["candidate_abstained"] is None for case in report["segments"][0]["cases"]
+        )
 
     async def test_exclusions_report_failed_case_reason(
         self, state, tracer, feedback, monkeypatch
@@ -588,7 +700,8 @@ def _summary(
 ) -> rr.VariantSegmentSummary:
     return rr.VariantSegmentSummary(
         variant_name=name, scored_case_count=0, failed_case_count=0, unscored_count=0,
-        no_op_count=0, unpriceable_count=0, common_case_count=0, mean_delta=mean,
+        no_op_count=0, unpriceable_count=0, baseline_abstain_count=0,
+        candidate_abstain_count=0, common_case_count=0, mean_delta=mean,
         interval_available=ci is not None, interval_seed=None,
         ci_lower=None if ci is None else ci[0], ci_upper=None if ci is None else ci[1],
         interval_excludes_zero=rr._interval_excludes_zero(
@@ -657,6 +770,8 @@ class TestRenderJsonAndMarkdown:
         assert f"## Segment `{report['segments'][0]['segment_key']}`" in markdown
         assert "95% CI" in markdown
         assert "excludes zero" in markdown
+        assert "abstains (baseline / candidate)" in markdown
+        assert "| abstained |" in markdown
         assert "Indistinguishable from baseline" in markdown
         assert f"unavailable (< {rr.BOOTSTRAP_MIN_PAIRED_CASES} paired cases)" in markdown
 
@@ -668,3 +783,35 @@ class TestRenderJsonAndMarkdown:
         markdown = rr.render_markdown(report)
         assert "excludes zero only: none" in markdown
         assert "unordered): `a`, `b`" in markdown
+
+    async def test_render_markdown_names_abstaining_side(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        experiment_run_ids = await _run_abstaining_sweep(state, tracer, feedback, monkeypatch)
+        report = rr.build_batch_report(state, experiment_run_ids=list(experiment_run_ids.values()))
+        markdown = rr.render_markdown(report)
+        assert "| 0 / 3 |" in markdown  # variant b: no baseline abstains, three candidate
+        assert "| candidate |" in markdown
+        assert "| unknown |" not in markdown
+
+
+class TestRelevanceRates:
+    def test_precision_is_none_without_predicted_positives(self) -> None:
+        confusion = {
+            "true_positive": 0, "true_negative": 3, "false_positive": 0, "false_negative": 2,
+        }
+        assert rr._precision(confusion) is None
+        assert rr._recall(confusion) == 0.0
+
+    def test_recall_is_none_without_relevant_cases(self) -> None:
+        confusion = {
+            "true_positive": 0, "true_negative": 3, "false_positive": 1, "false_negative": 0,
+        }
+        assert rr._recall(confusion) is None
+        assert rr._precision(confusion) == 0.0
+
+    def test_majority_reference_on_empty_common_set(self) -> None:
+        reference = rr._majority_class_reference([])
+        assert reference["majority_class_accuracy"] is None
+        assert reference["majority_label_relevant"] is None
+        assert reference["common_case_count"] == 0

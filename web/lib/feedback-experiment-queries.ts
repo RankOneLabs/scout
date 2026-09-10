@@ -311,6 +311,8 @@ const replyScoreEvidenceSchema = z
     baseline_distance: z.number(),
     candidate_distance: z.number(),
     delta: z.number(),
+    baseline_abstained: z.boolean().optional(),
+    candidate_abstained: z.boolean().optional(),
     grader_attached: z.literal(true),
   })
   .strict();

@@ -36,6 +36,20 @@ listed unordered under `indistinguishable_from_baseline`. The number of
 intervals in the segment (`interval_family_size`) is recorded so the
 unadjusted per-interval level is auditable; no multiple-comparison
 correction is applied.
+
+An abstain assembles to empty text and always scores the maximum
+distance, so it is indistinguishable from a maximally wrong draft by
+distance alone. A case where either side abstained (per the retained
+score evidence) is kept out of the distance population and counted per
+variant as its own outcome class; evidence written before the abstain
+flags existed is treated as unknown and stays in the population.
+
+Relevance reports (a separate document, RELEVANCE_REPORT_SCHEMA_VERSION)
+carry, beside symmetric accuracy, each side's precision and recall and
+the segment's majority-class reference — the accuracy of always
+predicting the more common label on the common case set — because an
+accuracy figure with no trivial reference beside it is uninterpretable
+on an imbalanced population.
 """
 
 from __future__ import annotations
@@ -58,8 +72,8 @@ from scout.replay.tasks import RelevanceScore, RelevanceTask
 from scout.storage.evaluations import Experiment
 from scout.storage.state import StateManager
 
-REPORT_SCHEMA_VERSION = 4  # kept distinct from RELEVANCE_REPORT_SCHEMA_VERSION
-RELEVANCE_REPORT_SCHEMA_VERSION = 3
+REPORT_SCHEMA_VERSION = 5
+RELEVANCE_REPORT_SCHEMA_VERSION = 4
 BOOTSTRAP_METHOD = "paired_bootstrap_percentile"
 BOOTSTRAP_VERSION = 1
 BOOTSTRAP_RESAMPLES = 10_000
@@ -163,6 +177,47 @@ def _relevance_confusion(scores: list[RelevanceScore], *, candidate: bool) -> di
     return counts
 
 
+def _ratio(numerator: int, denominator: int) -> float | None:
+    return None if denominator == 0 else numerator / denominator
+
+
+def _precision(confusion: dict[str, int]) -> float | None:
+    """Share of predicted-relevant cases that were relevant; None when
+    nothing was predicted relevant."""
+    return _ratio(
+        confusion["true_positive"], confusion["true_positive"] + confusion["false_positive"]
+    )
+
+
+def _recall(confusion: dict[str, int]) -> float | None:
+    """Share of relevant cases that were predicted relevant; None when no
+    case was relevant."""
+    return _ratio(
+        confusion["true_positive"], confusion["true_positive"] + confusion["false_negative"]
+    )
+
+
+def _delta(candidate: float | None, baseline: float | None) -> float | None:
+    if candidate is None or baseline is None:
+        return None
+    return candidate - baseline
+
+
+def _majority_class_reference(scores: Sequence[RelevanceScore]) -> dict[str, Any]:
+    """The trivial reference every variant's accuracy has to beat: always
+    predict the more common label on the common case set. Ties report the
+    relevant label."""
+    relevant_count = sum(1 for score in scores if score.target.is_relevant)
+    majority_relevant = relevant_count * 2 >= len(scores)
+    majority_count = relevant_count if majority_relevant else len(scores) - relevant_count
+    return {
+        "common_case_count": len(scores),
+        "relevant_case_count": relevant_count,
+        "majority_label_relevant": majority_relevant if scores else None,
+        "majority_class_accuracy": _ratio(majority_count, len(scores)),
+    }
+
+
 def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) -> dict[str, Any]:
     task = RelevanceTask.model_validate(parents[0]["task"])
     if any(
@@ -229,34 +284,53 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             *[{case.phase_run_id for case in values} for values in by_variant.values()]
         )
         summaries = []
+        common_scores: list[RelevanceScore] = []
         for variant, values in by_variant.items():
             scores = [
                 case.score
                 for case in values
                 if case.phase_run_id in common and case.score is not None
             ]
+            common_scores = common_scores or scores
+            baseline_confusion = _relevance_confusion(scores, candidate=False)
+            candidate_confusion = _relevance_confusion(scores, candidate=True)
+            baseline_precision = _precision(baseline_confusion)
+            candidate_precision = _precision(candidate_confusion)
+            baseline_recall = _recall(baseline_confusion)
+            candidate_recall = _recall(candidate_confusion)
             summaries.append(
                 {
                     "variant": variant,
                     "scored_case_count": len(values),
                     "common_case_count": len(scores),
-                    "baseline_confusion": _relevance_confusion(scores, candidate=False),
-                    "candidate_confusion": _relevance_confusion(scores, candidate=True),
-                    "baseline_accuracy": sum(score.baseline_correct for score in scores)
-                    / len(scores)
-                    if scores
-                    else None,
-                    "candidate_accuracy": sum(score.candidate_correct for score in scores)
-                    / len(scores)
-                    if scores
-                    else None,
-                    "accuracy_delta": sum(score.accuracy_delta for score in scores) / len(scores)
-                    if scores
-                    else None,
+                    "baseline_confusion": baseline_confusion,
+                    "candidate_confusion": candidate_confusion,
+                    "baseline_accuracy": _ratio(
+                        sum(score.baseline_correct for score in scores), len(scores)
+                    ),
+                    "candidate_accuracy": _ratio(
+                        sum(score.candidate_correct for score in scores), len(scores)
+                    ),
+                    "accuracy_delta": _ratio(
+                        sum(score.accuracy_delta for score in scores), len(scores)
+                    ),
+                    "baseline_precision": baseline_precision,
+                    "candidate_precision": candidate_precision,
+                    "precision_delta": _delta(candidate_precision, baseline_precision),
+                    "baseline_recall": baseline_recall,
+                    "candidate_recall": candidate_recall,
+                    "recall_delta": _delta(candidate_recall, baseline_recall),
                 }
             )
         segments.append(
-            {"baseline_model": model, "baseline_prompt_sha256": prompt, "variants": summaries}
+            {
+                "baseline_model": model,
+                "baseline_prompt_sha256": prompt,
+                # The common set is shared by every variant in the segment,
+                # so one reference applies to all of them.
+                "reference": _majority_class_reference(common_scores),
+                "variants": summaries,
+            }
         )
     return {
         "version": RELEVANCE_REPORT_SCHEMA_VERSION,
@@ -284,9 +358,14 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             ),
         },
         "interpretation": (
-            "Accuracy on the selected labeled corpus only. Ranked discovery yield and "
-            "random-slice population rates are separate review reports. Variant comparisons "
-            "use common successful cases within each baseline model/prompt segment."
+            "Accuracy, precision, and recall on the selected labeled corpus only. Ranked "
+            "discovery yield and random-slice population rates are separate review reports. "
+            "Variant comparisons use common successful cases within each baseline "
+            "model/prompt segment; each segment's majority-class reference is the accuracy "
+            "of always predicting its more common label on that common set, which any "
+            "variant must beat before its accuracy means anything. A false positive (a reply "
+            "to an irrelevant post) and a false negative (a missed relevant post) are "
+            "reported separately because they do not cost the same."
         ),
     }
 
@@ -305,9 +384,24 @@ class ReportCase:
     baseline_distance: float | None
     candidate_distance: float | None
     delta: float | None
+    baseline_abstained: bool | None
+    candidate_abstained: bool | None
     estimated_usd: float | None
     actual_usd: float | None
     error_detail: str | None
+
+    @property
+    def in_distance_population(self) -> bool:
+        """A scored case contributes a paired distance delta unless the
+        retained evidence says either side abstained. Evidence without
+        the abstain flags (written before they existed) is unknown and
+        stays in the population."""
+        return (
+            self.status == "complete"
+            and self.delta is not None
+            and not self.baseline_abstained
+            and not self.candidate_abstained
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +437,7 @@ def _collect_attempted_cases(
                 evidence["baseline_model"], evidence["baseline_prompt_sha256"],
             )
             baseline_distance = candidate_distance = delta = None
+            baseline_abstained = candidate_abstained = None
             if attempt.status == "complete":
                 comparison = state.get_trace_comparison(attempt.id)
                 if comparison is not None and comparison["score_evidence"] is not None:
@@ -350,6 +445,8 @@ def _collect_attempted_cases(
                     baseline_distance = score["baseline_distance"]
                     candidate_distance = score["candidate_distance"]
                     delta = score["delta"]
+                    baseline_abstained = score.get("baseline_abstained")
+                    candidate_abstained = score.get("candidate_abstained")
             cases.append(
                 ReportCase(
                     phase_run_id=attempt.phase_run_id,
@@ -361,6 +458,8 @@ def _collect_attempted_cases(
                     baseline_distance=baseline_distance,
                     candidate_distance=candidate_distance,
                     delta=delta,
+                    baseline_abstained=baseline_abstained,
+                    candidate_abstained=candidate_abstained,
                     estimated_usd=evidence.get("estimated_usd"),
                     actual_usd=attempt.candidate_cost,
                     error_detail=attempt.error_detail,
@@ -410,6 +509,8 @@ class VariantSegmentSummary:
     unscored_count: int
     no_op_count: int
     unpriceable_count: int
+    baseline_abstain_count: int
+    candidate_abstain_count: int
     common_case_count: int
     mean_delta: float | None
     interval_available: bool
@@ -487,14 +588,21 @@ def _build_segments(
         for pair in segment_skipped:
             by_variant_skipped[pair.variant_name].append(pair)
 
-        scored_ids_by_variant = {
+        # The paired distance population: cases every variant scored and
+        # on which nobody abstained, so one variant's abstain removes the
+        # case from every variant's comparison set alike.
+        distance_ids_by_variant = {
             variant: {
-                c.phase_run_id for c in by_variant_cases.get(variant, []) if c.status == "complete"
+                c.phase_run_id
+                for c in by_variant_cases.get(variant, [])
+                if c.in_distance_population
             }
             for variant in variant_names
         }
         common_ids: set[int] = (
-            set.intersection(*scored_ids_by_variant.values()) if scored_ids_by_variant else set()
+            set.intersection(*distance_ids_by_variant.values())
+            if distance_ids_by_variant
+            else set()
         )
 
         summaries = []
@@ -506,6 +614,8 @@ def _build_segments(
             common_deltas = [
                 c.delta for c in scored if c.phase_run_id in common_ids and c.delta is not None
             ]
+            baseline_abstains = sum(1 for c in scored if c.baseline_abstained)
+            candidate_abstains = sum(1 for c in scored if c.candidate_abstained)
             mean_delta = sum(common_deltas) / len(common_deltas) if common_deltas else None
             interval_available = len(common_deltas) >= BOOTSTRAP_MIN_PAIRED_CASES
             interval_seed = ci_lower = ci_upper = None
@@ -521,6 +631,8 @@ def _build_segments(
                     unscored_count=skip_counts.get("unscored", 0),
                     no_op_count=skip_counts.get("no_op", 0),
                     unpriceable_count=skip_counts.get("unpriceable", 0),
+                    baseline_abstain_count=baseline_abstains,
+                    candidate_abstain_count=candidate_abstains,
                     common_case_count=len(common_deltas),
                     mean_delta=mean_delta,
                     interval_available=interval_available,
@@ -641,6 +753,8 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                         "unscored_count": variant.unscored_count,
                         "no_op_count": variant.no_op_count,
                         "unpriceable_count": variant.unpriceable_count,
+                        "baseline_abstain_count": variant.baseline_abstain_count,
+                        "candidate_abstain_count": variant.candidate_abstain_count,
                         "common_case_count": variant.common_case_count,
                         "mean_delta": variant.mean_delta,
                         "interval_available": variant.interval_available,
@@ -659,6 +773,8 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
                         "baseline_distance": case.baseline_distance,
                         "candidate_distance": case.candidate_distance,
                         "delta": case.delta,
+                        "baseline_abstained": case.baseline_abstained,
+                        "candidate_abstained": case.candidate_abstained,
                         "estimated_usd": case.estimated_usd,
                         "actual_usd": case.actual_usd,
                     }
@@ -685,6 +801,13 @@ def _format_usd(value: float | None) -> str:
 
 def _format_metric(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
+
+
+def _format_abstained(baseline: bool | None, candidate: bool | None) -> str:
+    if baseline is None and candidate is None:
+        return "unknown"
+    sides = [name for name, flag in (("baseline", baseline), ("candidate", candidate)) if flag]
+    return ", ".join(sides) or "no"
 
 
 def _render_relevance_markdown(report: dict[str, Any]) -> str:
@@ -729,9 +852,21 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
         )
         lines.append("")
     for segment in report["segments"]:
+        reference = segment["reference"]
+        majority_label = (
+            "n/a"
+            if reference["majority_label_relevant"] is None
+            else ("relevant" if reference["majority_label_relevant"] else "not relevant")
+        )
         lines.extend(
             [
                 f"## {segment['baseline_model']} / {segment['baseline_prompt_sha256']}",
+                "",
+                f"Majority-class reference: accuracy "
+                f"{_format_metric(reference['majority_class_accuracy'])} from always "
+                f"predicting `{majority_label}` on {reference['common_case_count']} common "
+                f"cases ({reference['relevant_case_count']} relevant). A variant's accuracy "
+                "means nothing unless it beats this.",
                 "",
                 "| variant | scored | common | baseline accuracy | candidate accuracy | delta |",
                 "|---|---|---|---|---|---|",
@@ -748,19 +883,22 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "Confusion counts on common successful cases:",
+                "Precision, recall, and confusion counts on common successful cases "
+                "(FP = replied to an irrelevant post, FN = missed a relevant post):",
                 "",
-                "| variant | prediction | TP | FP | TN | FN |",
-                "|---|---|---|---|---|---|",
+                "| variant | prediction | precision | recall | TP | FP | TN | FN |",
+                "|---|---|---|---|---|---|---|---|",
             ]
         )
         for variant in segment["variants"]:
             for side in ("baseline", "candidate"):
                 counts = variant[f"{side}_confusion"]
                 lines.append(
-                    f"| `{variant['variant']}` | {side} | {counts['true_positive']} | "
-                    f"{counts['false_positive']} | {counts['true_negative']} | "
-                    f"{counts['false_negative']} |"
+                    f"| `{variant['variant']}` | {side} | "
+                    f"{_format_metric(variant[f'{side}_precision'])} | "
+                    f"{_format_metric(variant[f'{side}_recall'])} | "
+                    f"{counts['true_positive']} | {counts['false_positive']} | "
+                    f"{counts['true_negative']} | {counts['false_negative']} |"
                 )
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -832,12 +970,17 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- Intervals in this segment: {segment['interval_family_size']} "
             "(each at the unadjusted 95% level; no multiple-comparison correction)"
         )
+        lines.append(
+            "- Abstains are their own outcome: a case where either side abstained is "
+            "counted below and left out of the common distance set"
+        )
         lines.append("")
         lines.append(
-            "| variant | scored | failed | unscored | no-op | unpriceable | common "
+            "| variant | scored | failed | unscored | no-op | unpriceable "
+            "| abstains (baseline / candidate) | common "
             "| mean delta | 95% CI | excludes zero | seed |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
         for variant in segment["variants"]:
             mean_delta = "n/a" if variant["mean_delta"] is None else f"{variant['mean_delta']:.4f}"
             ci = (
@@ -855,14 +998,15 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| `{variant['variant_name']}` | {variant['scored_case_count']} | "
                 f"{variant['failed_case_count']} | {variant['unscored_count']} | "
                 f"{variant['no_op_count']} | {variant['unpriceable_count']} | "
+                f"{variant['baseline_abstain_count']} / {variant['candidate_abstain_count']} | "
                 f"{variant['common_case_count']} | {mean_delta} | {ci} | {excludes_zero} | "
                 f"{seed} |"
             )
         lines.append("")
         if segment["cases"]:
             lines.append("| phase_run_id | variant | status | baseline dist | candidate dist "
-                         "| delta | est. USD | actual USD |")
-            lines.append("|---|---|---|---|---|---|---|---|")
+                         "| delta | abstained | est. USD | actual USD |")
+            lines.append("|---|---|---|---|---|---|---|---|---|")
             for case in segment["cases"]:
                 baseline_dist = (
                     "n/a"
@@ -875,11 +1019,15 @@ def render_markdown(report: dict[str, Any]) -> str:
                     else (f"{case['candidate_distance']:.4f}")
                 )
                 delta = "n/a" if case["delta"] is None else f"{case['delta']:.4f}"
+                abstained = _format_abstained(
+                    case["baseline_abstained"], case["candidate_abstained"]
+                )
                 est = _format_usd(case["estimated_usd"])
                 actual = _format_usd(case["actual_usd"])
                 lines.append(
                     f"| `{case['phase_run_id']}` | `{case['variant']}` | {case['status']} | "
-                    f"{baseline_dist} | {candidate_dist} | {delta} | {est} | {actual} |"
+                    f"{baseline_dist} | {candidate_dist} | {delta} | {abstained} | {est} | "
+                    f"{actual} |"
                 )
             lines.append("")
     return "\n".join(lines)
