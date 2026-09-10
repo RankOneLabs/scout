@@ -1,73 +1,92 @@
-run project     sweep                                            variant                prompt     n  ok  FP  FN fail      usd | baseline ok/FP/FN
- 24 agent-evals relevance-open-models-bounded-agent-evals        qwen3-235b-2507        reused    28  19   5   4    0   0.0026 | 23/5/0
- 25 agent-evals relevance-open-models-bounded-agent-evals        kimi-k2-0905           reused    28  15   1  12    0   0.0241 | 23/5/0
- 26 agent-ops   relevance-open-models-bounded-agent-ops          qwen3-235b-2507        reused    51  39   4   8    0   0.0039 | 42/7/2
- 27 agent-ops   relevance-open-models-bounded-agent-ops          kimi-k2-0905           reused    51  30   1  20    0   0.0429 | 42/7/2
- 28 agent-ops   relevance-prompt-agent-ops-gemini-2-5-flash      no-reject              override  51  42   8   1    0   0.0210 | 42/7/2
- 29 agent-ops   relevance-prompt-agent-ops-qwen3-235b            no-reject              override  51  40   8   3    0   0.0036 | 42/7/2
- 30 agent-ops   relevance-prompt-agent-ops-gemini-2-5-flash      topical                override  51  36  13   2    0   0.0266 | 42/7/2
- 31 agent-ops   relevance-prompt-agent-ops-qwen3-235b            topical                override  51  41   8   2    0   0.0037 | 42/7/2
- 32 agent-evals relevance-prompt-agent-evals-qwen3-235b          no-reject              override  28  21   6   1    0   0.0022 | 23/5/0
- 33 agent-evals relevance-prompt-agent-evals-gemini-2-5-flash    no-reject              override  28  23   5   0    0   0.0123 | 23/5/0
- 34 agent-ops   relevance-local-agent-ops-current                qwen3-30b-a3b-2507     reused    51  30   2  19    0   0.0039 | 42/7/2
- 35 agent-evals relevance-local-agent-evals-current              qwen3-30b-a3b-2507     reused    28  18   1   9    0   0.0023 | 23/5/0
- 36 agent-evals relevance-prompt-agent-evals-gemini-2-5-flash    topical                override  28  21   7   0    0   0.0139 | 23/5/0
- 37 agent-ops   relevance-local-agent-ops-current                gpt-oss-20b            reused    51  30   1  20    0   0.0021 | 42/7/2
- 38 agent-evals relevance-local-agent-evals-current              gpt-oss-20b            reused    28  15   4   9    0   0.0014 | 23/5/0
- 39 agent-evals relevance-prompt-agent-evals-qwen3-235b          topical                override  28  22   6   0    0   0.0021 | 23/5/0
- 40 agent-ops   relevance-local-agent-ops-current                gemma-4-26b-a4b        reused    51  30   1  20    0   0.0061 | 42/7/2
- 41 agent-ops   relevance-local-agent-ops-current                gemma-4-31b            reused    51  31   1  19    0   0.0138 | 42/7/2
- 42 agent-evals relevance-local-agent-evals-current              gemma-4-26b-a4b        reused    28  19   1   8    0   0.0036 | 23/5/0
- 43 agent-ops   relevance-local-agent-ops-current                mistral-small-2603     reused    51  34   2  15    0   0.0048 | 42/7/2
- 44 agent-evals relevance-local-agent-evals-current              gemma-4-31b            reused    28  17   0  11    0   0.0073 | 23/5/0
- 45 agent-ops   relevance-local-agent-ops-current                nemotron-3-nano-30b    reused    51  38   7   6    0   0.0204 | 42/7/2
- 46 agent-evals relevance-local-agent-evals-current              mistral-small-2603     reused    28  17   2   9    0   0.0032 | 23/5/0
- 47 agent-evals relevance-local-agent-evals-current              nemotron-3-nano-30b    reused    28  19   6   3    0   0.0119 | 23/5/0
- 48 agent-ops   relevance-local-agent-ops-current                llama-3-3-70b          reused    51  30   4  17    0   0.0068 | 42/7/2
- 49 agent-evals relevance-local-agent-evals-current              llama-3-3-70b          reused    28  19   4   5    0   0.0038 | 23/5/0
- 50 agent-ops   relevance-local-agent-ops-current                glm-4-5-air            reused    51  40   4   7    0   0.0236 | 42/7/2
- 51 agent-evals relevance-local-agent-evals-current              glm-4-5-air            reused    28  23   4   1    0   0.0127 | 23/5/0
- 52 agent-ops   relevance-local-agent-ops-current                glm-4-7-flash          reused    51  29   5  17    0   0.0139 | 42/7/2
- 53 agent-evals relevance-local-agent-evals-current              glm-4-7-flash          reused    28  18   5   5    0   0.0094 | 23/5/0
- 54 agent-ops   relevance-local-agent-ops-current                qwen3-next-80b-a3b     reused    51  29   2  20    0   0.0150 | 42/7/2
- 55 agent-ops   relevance-local-agent-ops-current                nemotron-3-super-120b  reused    51  23   1  13   14   0.0074 | 42/7/2
- 56 agent-ops   relevance-local-agent-ops-current                llama-4-scout          reused    51  33   2  11    5   0.0202 | 42/7/2
- 57 agent-evals relevance-local-agent-evals-current              qwen3-next-80b-a3b     reused    28  14   3  11    0   0.0068 | 23/5/0
- 58 agent-evals relevance-local-agent-evals-current              nemotron-3-super-120b  reused    28   6   2   6   14   0.0046 | 23/5/0
- 59 agent-ops   relevance-local-agent-ops-topical                qwen3-30b-a3b-2507     override  51  40   7   4    0   0.0042 | 42/7/2
- 60 agent-ops   relevance-local-agent-ops-topical                gpt-oss-20b            override  51  36  12   3    0   0.0027 | 42/7/2
- 61 agent-evals relevance-local-agent-evals-current              llama-4-scout          reused    28  12   1   2   13   0.0048 | 23/5/0
- 62 agent-ops   relevance-local-agent-ops-topical                gemma-4-26b-a4b        override  51  42   6   3    0   0.0069 | 42/7/2
- 63 agent-ops   relevance-local-agent-ops-topical                gemma-4-31b            override  51  41   7   3    0   0.0128 | 42/7/2
- 64 agent-evals relevance-local-agent-evals-topical              qwen3-30b-a3b-2507     override  28  20   5   3    0   0.0024 | 23/5/0
- 65 agent-ops   relevance-local-agent-ops-topical                mistral-small-2603     override  51  39  10   2    0   0.0050 | 42/7/2
- 66 agent-evals relevance-local-agent-evals-topical              gpt-oss-20b            override  28  20   7   1    0   0.0015 | 23/5/0
- 67 agent-ops   relevance-local-agent-ops-topical                nemotron-3-nano-30b    override  51  34  16   1    0   0.0186 | 42/7/2
- 68 agent-ops   relevance-local-agent-ops-topical                llama-3-3-70b          override  51  38  10   3    0   0.0085 | 42/7/2
- 69 agent-evals relevance-local-agent-evals-topical              gemma-4-26b-a4b        override  28  24   4   0    0   0.0035 | 23/5/0
- 70 agent-ops   relevance-local-agent-ops-topical                glm-4-5-air            override  51  35  16   0    0   0.0237 | 42/7/2
- 71 agent-evals relevance-local-agent-evals-topical              gemma-4-31b            override  28  24   4   0    0   0.0082 | 23/5/0
- 72 agent-evals relevance-local-agent-evals-topical              mistral-small-2603     override  28  22   6   0    0   0.0034 | 23/5/0
- 73 agent-evals relevance-local-agent-evals-topical              nemotron-3-nano-30b    override  28  20   7   1    0   0.0077 | 23/5/0
- 74 agent-ops   relevance-local-agent-ops-topical                glm-4-7-flash          override  51  40   7   4    0   0.0158 | 42/7/2
- 75 agent-evals relevance-local-agent-evals-topical              llama-3-3-70b          override  28  22   6   0    0   0.0044 | 23/5/0
- 76 agent-evals relevance-local-agent-evals-topical              glm-4-5-air            override  28  22   6   0    0   0.0129 | 23/5/0
- 77 agent-evals relevance-local-agent-evals-topical              glm-4-7-flash          override  28  21   6   1    0   0.0087 | 23/5/0
- 78 agent-ops   relevance-local-agent-ops-topical                qwen3-next-80b-a3b     override  51  42   6   3    0   0.0129 | 42/7/2
- 79 agent-ops   relevance-local-agent-ops-topical                nemotron-3-super-120b  override  51  26   6   2   17   0.0095 | 42/7/2
- 80 agent-ops   relevance-local-agent-ops-topical                llama-4-scout          override  51  34  15   2    0   0.0193 | 42/7/2
- 81 agent-ops   relevance-local-agent-ops-topical                qwen3-32b              override  51  33  16   2    0   0.0124 | 42/7/2
- 82 agent-evals relevance-local-agent-evals-topical              qwen3-next-80b-a3b     override  28  21   7   0    0   0.0066 | 23/5/0
- 83 agent-evals relevance-local-agent-evals-topical              nemotron-3-super-120b  override  28  12   5   1   10   0.0039 | 23/5/0
- 84 agent-evals relevance-local-agent-evals-topical              llama-4-scout          override  28  20   4   0    4   0.0094 | 23/5/0
- 85 agent-ops   relevance-local-agent-ops-topical                gpt-oss-120b           override  51  40   8   3    0   0.0057 | 42/7/2
- 86 agent-evals relevance-local-agent-evals-topical              qwen3-32b              override  28  23   5   0    0   0.0070 | 23/5/0
- 87 agent-evals relevance-local-agent-evals-topical              gpt-oss-120b           override  28  21   6   1    0   0.0049 | 23/5/0
- 88 agent-ops   relevance-rerun-agent-ops-current                nemotron-3-super-120b  reused    51  25   1   8   17   0.0081 | 42/7/2
- 89 agent-ops   relevance-rerun-agent-ops-current                llama-4-scout          reused    51  33   2  10    6   0.0217 | 42/7/2
- 90 agent-evals relevance-rerun-agent-evals-current              nemotron-3-super-120b  reused    28   9   3   6   10   0.0038 | 23/5/0
- 91 agent-evals relevance-rerun-agent-evals-current              llama-4-scout          reused    28  16   3   2    7   0.0079 | 23/5/0
- 92 agent-ops   relevance-rerun-agent-ops-topical                nemotron-3-super-120b  override  51  30   6   2   13   0.0133 | 42/7/2
- 93 agent-ops   relevance-rerun-agent-ops-topical                llama-4-scout          override  51  33  13   2    3   0.0153 | 42/7/2
- 94 agent-evals relevance-rerun-agent-evals-topical              nemotron-3-super-120b  override  28  15   4   0    9   0.0064 | 23/5/0
- 95 agent-evals relevance-rerun-agent-evals-topical              llama-4-scout          override  28  20   5   0    3   0.0097 | 23/5/0
+run project     sweep                                            variant                        prompt     n  ok  FP  FN fail      usd | baseline ok/FP/FN | med_s p95_s out_tok
+ 24 agent-evals relevance-open-models-bounded-agent-evals        qwen3-235b-2507                reused    28  19   5   4    0   0.0026 | 23/5/0 | 5.6 8.8 126
+ 25 agent-evals relevance-open-models-bounded-agent-evals        kimi-k2-0905                   reused    28  15   1  12    0   0.0241 | 23/5/0 | 4.1 4.7 135
+ 26 agent-ops   relevance-open-models-bounded-agent-ops          qwen3-235b-2507                reused    51  39   4   8    0   0.0039 | 42/7/2 | 4.6 6.3 117
+ 27 agent-ops   relevance-open-models-bounded-agent-ops          kimi-k2-0905                   reused    51  30   1  20    0   0.0429 | 42/7/2 | 3.6 5.1 137
+ 28 agent-ops   relevance-prompt-agent-ops-gemini-2-5-flash      no-reject                      override  51  42   8   1    0   0.0210 | 42/7/2 | 1.5 3.6 77
+ 29 agent-ops   relevance-prompt-agent-ops-qwen3-235b            no-reject                      override  51  40   8   3    0   0.0036 | 42/7/2 | 3.5 4.7 119
+ 30 agent-ops   relevance-prompt-agent-ops-gemini-2-5-flash      topical                        override  51  36  13   2    0   0.0266 | 42/7/2 | 1.3 3.5 93
+ 31 agent-ops   relevance-prompt-agent-ops-qwen3-235b            topical                        override  51  41   8   2    0   0.0037 | 42/7/2 | 3.6 4.6 118
+ 32 agent-evals relevance-prompt-agent-evals-qwen3-235b          no-reject                      override  28  21   6   1    0   0.0022 | 23/5/0 | 4.4 5.6 126
+ 33 agent-evals relevance-prompt-agent-evals-gemini-2-5-flash    no-reject                      override  28  23   5   0    0   0.0123 | 23/5/0 | 1.3 1.7 82
+ 34 agent-ops   relevance-local-agent-ops-current                qwen3-30b-a3b-2507             reused    51  30   2  19    0   0.0039 | 42/7/2 | 1.7 3.1 137
+ 35 agent-evals relevance-local-agent-evals-current              qwen3-30b-a3b-2507             reused    28  18   1   9    0   0.0023 | 23/5/0 | 1.8 2.9 161
+ 36 agent-evals relevance-prompt-agent-evals-gemini-2-5-flash    topical                        override  28  21   7   0    0   0.0139 | 23/5/0 | 1.3 1.7 76
+ 37 agent-ops   relevance-local-agent-ops-current                gpt-oss-20b                    reused    51  30   1  20    0   0.0021 | 42/7/2 | 5.3 9.7 243
+ 38 agent-evals relevance-local-agent-evals-current              gpt-oss-20b                    reused    28  15   4   9    0   0.0014 | 23/5/0 | 6.5 10.9 313
+ 39 agent-evals relevance-prompt-agent-evals-qwen3-235b          topical                        override  28  22   6   0    0   0.0021 | 23/5/0 | 3.5 5.8 116
+ 40 agent-ops   relevance-local-agent-ops-current                gemma-4-26b-a4b                reused    51  30   1  20    0   0.0061 | 42/7/2 | 1.8 3.1 102
+ 41 agent-ops   relevance-local-agent-ops-current                gemma-4-31b                    reused    51  31   1  19    0   0.0138 | 42/7/2 | 3.0 8.9 101
+ 42 agent-evals relevance-local-agent-evals-current              gemma-4-26b-a4b                reused    28  19   1   8    0   0.0036 | 23/5/0 | 2.1 3.1 119
+ 43 agent-ops   relevance-local-agent-ops-current                mistral-small-2603             reused    51  34   2  15    0   0.0048 | 42/7/2 | 1.1 1.5 81
+ 44 agent-evals relevance-local-agent-evals-current              gemma-4-31b                    reused    28  17   0  11    0   0.0073 | 23/5/0 | 2.7 5.7 107
+ 45 agent-ops   relevance-local-agent-ops-current                nemotron-3-nano-30b            reused    51  38   7   6    0   0.0204 | 42/7/2 | 8.7 18.1 1685
+ 46 agent-evals relevance-local-agent-evals-current              mistral-small-2603             reused    28  17   2   9    0   0.0032 | 23/5/0 | 1.2 1.7 97
+ 47 agent-evals relevance-local-agent-evals-current              nemotron-3-nano-30b            reused    28  19   6   3    0   0.0119 | 23/5/0 | 7.9 19.3 1802
+ 48 agent-ops   relevance-local-agent-ops-current                llama-3-3-70b                  reused    51  30   4  17    0   0.0068 | 42/7/2 | 4.9 12.2 64
+ 49 agent-evals relevance-local-agent-evals-current              llama-3-3-70b                  reused    28  19   4   5    0   0.0038 | 23/5/0 | 4.5 8.5 70
+ 50 agent-ops   relevance-local-agent-ops-current                glm-4-5-air                    reused    51  40   4   7    0   0.0236 | 42/7/2 | 8.6 10.1 492
+ 51 agent-evals relevance-local-agent-evals-current              glm-4-5-air                    reused    28  23   4   1    0   0.0127 | 23/5/0 | 7.6 11.1 479
+ 52 agent-ops   relevance-local-agent-ops-current                glm-4-7-flash                  reused    51  29   5  17    0   0.0139 | 42/7/2 | 11.3 23.6 542
+ 53 agent-evals relevance-local-agent-evals-current              glm-4-7-flash                  reused    28  18   5   5    0   0.0094 | 23/5/0 | 12.2 25.1 683
+ 54 agent-ops   relevance-local-agent-ops-current                qwen3-next-80b-a3b             reused    51  29   2  20    0   0.0150 | 42/7/2 | 0.9 1.1 119
+ 55 agent-ops   relevance-local-agent-ops-current                nemotron-3-super-120b          reused    51  23   1  13   14   0.0074 | 42/7/2 | 7.9 16.9 535
+ 56 agent-ops   relevance-local-agent-ops-current                llama-4-scout                  reused    51  33   2  11    5   0.0202 | 42/7/2 | 3.1 7.0 129
+ 57 agent-evals relevance-local-agent-evals-current              qwen3-next-80b-a3b             reused    28  14   3  11    0   0.0068 | 23/5/0 | 1.4 2.9 135
+ 58 agent-evals relevance-local-agent-evals-current              nemotron-3-super-120b          reused    28   6   2   6   14   0.0046 | 23/5/0 | 9.8 20.1 658
+ 59 agent-ops   relevance-local-agent-ops-topical                qwen3-30b-a3b-2507             override  51  40   7   4    0   0.0042 | 42/7/2 | 2.0 3.7 136
+ 60 agent-ops   relevance-local-agent-ops-topical                gpt-oss-20b                    override  51  36  12   3    0   0.0027 | 42/7/2 | 5.1 12.2 286
+ 61 agent-evals relevance-local-agent-evals-current              llama-4-scout                  reused    28  12   1   2   13   0.0048 | 23/5/0 | 2.7 7.4 114
+ 62 agent-ops   relevance-local-agent-ops-topical                gemma-4-26b-a4b                override  51  42   6   3    0   0.0069 | 42/7/2 | 2.1 3.4 103
+ 63 agent-ops   relevance-local-agent-ops-topical                gemma-4-31b                    override  51  41   7   3    0   0.0128 | 42/7/2 | 1.5 4.1 108
+ 64 agent-evals relevance-local-agent-evals-topical              qwen3-30b-a3b-2507             override  28  20   5   3    0   0.0024 | 23/5/0 | 1.6 3.2 145
+ 65 agent-ops   relevance-local-agent-ops-topical                mistral-small-2603             override  51  39  10   2    0   0.0050 | 42/7/2 | 1.2 4.9 92
+ 66 agent-evals relevance-local-agent-evals-topical              gpt-oss-20b                    override  28  20   7   1    0   0.0015 | 23/5/0 | 12.3 24.6 295
+ 67 agent-ops   relevance-local-agent-ops-topical                nemotron-3-nano-30b            override  51  34  16   1    0   0.0186 | 42/7/2 | 7.0 28.0 1465
+ 68 agent-ops   relevance-local-agent-ops-topical                llama-3-3-70b                  override  51  38  10   3    0   0.0085 | 42/7/2 | 4.7 11.1 69
+ 69 agent-evals relevance-local-agent-evals-topical              gemma-4-26b-a4b                override  28  24   4   0    0   0.0035 | 23/5/0 | 1.6 3.3 105
+ 70 agent-ops   relevance-local-agent-ops-topical                glm-4-5-air                    override  51  35  16   0    0   0.0237 | 42/7/2 | 7.5 10.1 493
+ 71 agent-evals relevance-local-agent-evals-topical              gemma-4-31b                    override  28  24   4   0    0   0.0082 | 23/5/0 | 1.7 3.9 97
+ 72 agent-evals relevance-local-agent-evals-topical              mistral-small-2603             override  28  22   6   0    0   0.0034 | 23/5/0 | 1.2 1.5 91
+ 73 agent-evals relevance-local-agent-evals-topical              nemotron-3-nano-30b            override  28  20   7   1    0   0.0077 | 23/5/0 | 5.9 8.5 1024
+ 74 agent-ops   relevance-local-agent-ops-topical                glm-4-7-flash                  override  51  40   7   4    0   0.0158 | 42/7/2 | 19.2 58.4 601
+ 75 agent-evals relevance-local-agent-evals-topical              llama-3-3-70b                  override  28  22   6   0    0   0.0044 | 23/5/0 | 2.6 6.5 67
+ 76 agent-evals relevance-local-agent-evals-topical              glm-4-5-air                    override  28  22   6   0    0   0.0129 | 23/5/0 | 6.9 15.4 483
+ 77 agent-evals relevance-local-agent-evals-topical              glm-4-7-flash                  override  28  21   6   1    0   0.0087 | 23/5/0 | 15.2 27.2 603
+ 78 agent-ops   relevance-local-agent-ops-topical                qwen3-next-80b-a3b             override  51  42   6   3    0   0.0129 | 42/7/2 | 1.0 2.2 129
+ 79 agent-ops   relevance-local-agent-ops-topical                nemotron-3-super-120b          override  51  26   6   2   17   0.0095 | 42/7/2 | 14.4 34.3 868
+ 80 agent-ops   relevance-local-agent-ops-topical                llama-4-scout                  override  51  34  15   2    0   0.0193 | 42/7/2 | 1.9 5.1 86
+ 81 agent-ops   relevance-local-agent-ops-topical                qwen3-32b                      override  51  33  16   2    0   0.0124 | 42/7/2 | 14.0 23.3 536
+ 82 agent-evals relevance-local-agent-evals-topical              qwen3-next-80b-a3b             override  28  21   7   0    0   0.0066 | 23/5/0 | 0.9 1.6 114
+ 83 agent-evals relevance-local-agent-evals-topical              nemotron-3-super-120b          override  28  12   5   1   10   0.0039 | 23/5/0 | 10.0 30.6 702
+ 84 agent-evals relevance-local-agent-evals-topical              llama-4-scout                  override  28  20   4   0    4   0.0094 | 23/5/0 | 1.3 3.7 100
+ 85 agent-ops   relevance-local-agent-ops-topical                gpt-oss-120b                   override  51  40   8   3    0   0.0057 | 42/7/2 | 8.0 23.2 308
+ 86 agent-evals relevance-local-agent-evals-topical              qwen3-32b                      override  28  23   5   0    0   0.0070 | 23/5/0 | 12.2 19.0 547
+ 87 agent-evals relevance-local-agent-evals-topical              gpt-oss-120b                   override  28  21   6   1    0   0.0049 | 23/5/0 | 5.5 15.3 283
+ 88 agent-ops   relevance-rerun-agent-ops-current                nemotron-3-super-120b          reused    51  25   1   8   17   0.0081 | 42/7/2 | 11.3 19.7 558
+ 89 agent-ops   relevance-rerun-agent-ops-current                llama-4-scout                  reused    51  33   2  10    6   0.0217 | 42/7/2 | 2.7 4.7 127
+ 90 agent-evals relevance-rerun-agent-evals-current              nemotron-3-super-120b          reused    28   9   3   6   10   0.0038 | 23/5/0 | 15.8 27.9 722
+ 91 agent-evals relevance-rerun-agent-evals-current              llama-4-scout                  reused    28  16   3   2    7   0.0079 | 23/5/0 | 1.8 5.0 130
+ 92 agent-ops   relevance-rerun-agent-ops-topical                nemotron-3-super-120b          override  51  30   6   2   13   0.0133 | 42/7/2 | 14.3 30.3 842
+ 93 agent-ops   relevance-rerun-agent-ops-topical                llama-4-scout                  override  51  33  13   2    3   0.0153 | 42/7/2 | 1.3 2.8 71
+ 94 agent-evals relevance-rerun-agent-evals-topical              nemotron-3-super-120b          override  28  15   4   0    9   0.0064 | 23/5/0 | 12.1 25.2 712
+ 95 agent-evals relevance-rerun-agent-evals-topical              llama-4-scout                  override  28  20   5   0    3   0.0097 | 23/5/0 | 1.9 4.1 97
+ 96 agent-ops   relevance-frink-agent-ops-topical                qwen3-30b-a3b-q4-frink         override  51  40   9   2    0   0.0000 | 42/7/2 | 2.4 3.1 125
+ 97 agent-ops   relevance-frink-agent-ops-topical                llama-3-3-70b-q8-frink         override  51   8   1   0   42   0.0000 | 42/7/2 | 28.0 35.8 68
+ 98 agent-ops   relevance-frink-agent-ops-topical                qwen3-30b-a3b-q4-frink         override  51  41   7   3    0   0.0000 | 42/7/2 | 2.1 79.2 126
+ 99 agent-ops   relevance-frink-agent-ops-topical                gemma-4-26b-a4b-q4-frink       override  51  44   5   2    0   0.0000 | 42/7/2 | 16.5 42.3 1321
+100 agent-ops   relevance-frink-agent-ops-topical                gemma-4-31b-q4-frink           override  51  40  10   1    0   0.0000 | 42/7/2 | 19.2 24.9 141
+101 agent-ops   relevance-frink-agent-ops-topical                llama-3-3-70b-q8-frink         override   1   0   0   0    1   0.0000 | 2/0/0 | 0.0 0.0 0
+102 agent-ops   relevance-frink-agent-ops-topical                qwen3-30b-a3b-q4-frink         override  51  41   6   4    0   0.0000 | 42/7/2 | 2.1 2.5 122
+104 agent-ops   relevance-frink-agent-ops-topical                gemma-4-26b-a4b-q4-nothink-frink override  51  45   3   3    0   0.0000 | 42/7/2 | 2.6 3.4 109
+105 agent-ops   relevance-frink-agent-ops-topical                gemma-4-31b-q4-nothink-frink   override  51  40   9   2    0   0.0000 | 42/7/2 | 19.6 28.2 142
+106 agent-ops   relevance-frink-agent-ops-topical                qwen3-30b-a3b-q4-frink         override  51  42   6   3    0   0.0000 | 42/7/2 | 2.2 2.7 123
+107 agent-evals relevance-frink-agent-evals-topical              gemma-4-26b-a4b-q4-nothink-frink override  28  23   5   0    0   0.0000 | 23/5/0 | 2.4 3.6 102
+108 agent-evals relevance-frink-agent-evals-topical              gemma-4-31b-q4-nothink-frink   override  28  17   4   0    7   0.0000 | 23/5/0 | 29.1 50.6 202
+109 agent-evals relevance-frink-agent-evals-topical              qwen3-30b-a3b-q4-frink         override  28  21   5   2    0   0.0000 | 23/5/0 | 2.3 2.9 139
+110 agent-ops   relevance-frink-agent-ops-current                gemma-4-26b-a4b-q4-nothink-frink reused    51  31   1  19    0   0.0000 | 42/7/2 | 2.3 3.0 100
+111 agent-ops   relevance-frink-agent-ops-current                gemma-4-31b-q4-nothink-frink   reused    51  29   1  21    0   0.0000 | 42/7/2 | 15.5 18.9 105
+112 agent-ops   relevance-frink-agent-ops-current                qwen3-30b-a3b-q4-frink         reused    51  30   2  19    0   0.0000 | 42/7/2 | 2.3 2.8 131
+113 agent-evals relevance-frink-agent-evals-current              gemma-4-26b-a4b-q4-nothink-frink reused    28  18   1   9    0   0.0000 | 23/5/0 | 2.6 3.4 122
+114 agent-evals relevance-frink-agent-evals-current              gemma-4-31b-q4-nothink-frink   reused    28  17   0  11    0   0.0000 | 23/5/0 | 16.1 18.6 119
+115 agent-evals relevance-frink-agent-evals-current              qwen3-30b-a3b-q4-frink         reused    28  18   1   9    0   0.0000 | 23/5/0 | 2.4 2.8 143

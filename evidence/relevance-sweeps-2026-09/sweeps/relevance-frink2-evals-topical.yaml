@@ -5,9 +5,5 @@ prompt_file: ../prompts/prompt-agent-evals-topical.md
 variants:
   - name: qwen3-30b-a3b-q4-frink
     model: ollama/qwen3:30b-a3b-instruct-2507-q4_K_M
-  - name: gemma-4-26b-a4b-q4-frink
-    model: ollama/gemma4:26b
-  - name: gemma-4-31b-q4-frink
-    model: ollama/gemma4:31b
-  - name: llama-3-3-70b-q8-frink
-    model: ollama/llama3.3:70b-instruct-q8_0
+  - name: llama-3-3-70b-q4-frink
+    model: ollama/llama3.3:70b-instruct-q4_K_M

@@ -1,5 +1,5 @@
 """Pool relevance replay runs into one table. Usage: python - [--exclude-route GAIA] [run_id_min]"""
-import sqlite3, json, sys, collections
+import sqlite3, json, sys, collections, statistics
 args = sys.argv[1:]
 exclude_kw = None
 if "--exclude-route" in args:
@@ -14,7 +14,7 @@ def route(evid):
     return route_of[evid]
 rows = []
 for rid, name, status in c.execute("select id, name, status from experiment_runs where id>=? order by id", (run_min,)):
-    n = tp = fp = tn = fn = failed = 0; cost = 0.0; base = collections.Counter(); model = None; prompt_reused = None
+    n = tp = fp = tn = fn = failed = 0; cost = 0.0; base = collections.Counter(); model = None; prompt_reused = None; durs = []; outtok = []
     for ctid, bev, st, ccost in c.execute("select candidate_trace_id, baseline_evidence, status, candidate_cost from evaluation_experiments where experiment_run_id=?", (rid,)):
         ev = json.loads(bev); tgt = ev["target"]; evid = tgt["evaluation_id"]
         if exclude_kw and route(evid) == exclude_kw: continue
@@ -25,14 +25,19 @@ for rid, name, status in c.execute("select id, name, status from experiment_runs
         if st != "complete":
             failed += (st == "failed"); continue
         cost += ccost or 0
-        r = t.execute("select output from spans where trace_id=? and kind='agent_run'", (ctid,)).fetchone()
+        r = t.execute("select output, duration_ms from spans where trace_id=? and kind='agent_run'", (ctid,)).fetchone()
         o = json.loads(r[0]); ok = o["scores"][0]["value"] == 1.0
+        if r[1] is not None: durs.append(r[1] / 1000)
+        u = t.execute("select coalesce(sum(usage_output_tokens),0) from spans where trace_id=? and kind='llm_call'", (ctid,)).fetchone()
+        outtok.append(u[0])
         if ok: tp += tgt["is_relevant"]; tn += (not tgt["is_relevant"])
         else: fn += tgt["is_relevant"]; fp += (not tgt["is_relevant"])
     if n == 0: continue
     proj = "agent-evals" if "agent-evals" in name else "agent-ops"
     sweep, _, variant = name.rpartition(":")
-    rows.append((rid, proj, sweep, variant, model, "reused" if prompt_reused else "override", n, tp+tn, fp, fn, failed, cost, base["ok"], base["fp"], base["fn"]))
-print(f"{'run':>3} {'project':11} {'sweep':48} {'variant':22} {'prompt':8} {'n':>3} {'ok':>3} {'FP':>3} {'FN':>3} {'fail':>4} {'usd':>8} | baseline ok/FP/FN")
+    durs.sort(); med = statistics.median(durs) if durs else 0.0; p95 = durs[int(0.95 * (len(durs) - 1))] if durs else 0.0
+    tok = statistics.mean(outtok) if outtok else 0.0
+    rows.append((rid, proj, sweep, variant, model, "reused" if prompt_reused else "override", n, tp+tn, fp, fn, failed, cost, base["ok"], base["fp"], base["fn"], med, p95, tok))
+print(f"{'run':>3} {'project':11} {'sweep':48} {'variant':30} {'prompt':8} {'n':>3} {'ok':>3} {'FP':>3} {'FN':>3} {'fail':>4} {'usd':>8} | baseline ok/FP/FN | med_s p95_s out_tok")
 for r in rows:
-    print(f"{r[0]:>3} {r[1]:11} {r[2][:48]:48} {r[3]:22} {r[5]:8} {r[6]:>3} {r[7]:>3} {r[8]:>3} {r[9]:>3} {r[10]:>4} {r[11]:>8.4f} | {r[12]}/{r[13]}/{r[14]}")
+    print(f"{r[0]:>3} {r[1]:11} {r[2][:48]:48} {r[3]:30} {r[5]:8} {r[6]:>3} {r[7]:>3} {r[8]:>3} {r[9]:>3} {r[10]:>4} {r[11]:>8.4f} | {r[12]}/{r[13]}/{r[14]} | {r[15]:.1f} {r[16]:.1f} {r[17]:.0f}")

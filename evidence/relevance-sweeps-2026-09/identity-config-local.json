@@ -67,6 +67,11 @@
    "model": "ollama/gemma4:31b",
    "developer": "google",
    "family": "gemma"
+  },
+  {
+   "model": "ollama/llama3.3:70b-instruct-q4_K_M",
+   "developer": "meta-llama",
+   "family": "llama"
   }
  ]
 }

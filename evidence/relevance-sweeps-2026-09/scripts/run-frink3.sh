@@ -1,12 +1,12 @@
 #!/bin/bash
-# True-local sweeps against Ollama on frink. Waits for the qwen3 pull, then runs four sweeps.
+# True-local sweeps on frink, second chain: qwen3 Q4 + llama3.3-70b Q4 (Q8 did not fit beside the embed model).
 IDC=$(cat ~/apps/identity-config-local.json)
 export IDC
-until curl -s http://frink:11434/api/tags | grep -q "gemma4:31b"; do sleep 30; done
+until curl -s http://frink:11434/api/tags | grep -q "llama3.3:70b-instruct-q4_K_M"; do sleep 30; done
 echo "MODEL READY $(date -u +%FT%TZ)"
 for spec in "ops topical" "evals topical" "ops current" "evals current"; do
   set -- $spec; p=$1; v=$2
-  args="--name relevance-frink-agent-$p-$v --task-config /tmp/relevance-task-af08aa7b-agent-$p.json --sweep-file /tmp/relevance-frink-$p-$v.yaml --pricing-catalog /tmp/pricing-local-20260909.json --dossier-root /srv/content-agn"
+  args="--name relevance-frink-agent-$p-$v --task-config /tmp/relevance-task-af08aa7b-agent-$p.json --sweep-file /tmp/relevance-frink2-$p-$v.yaml --pricing-catalog /tmp/pricing-local-20260909.json --dossier-root /srv/content-agn"
   sha=$(docker exec -e SCOUT_MODEL_IDENTITY_CONFIG="$IDC" -e OLLAMA_HOST=http://frink:11434 engagement-scout uv run --no-sync scout feedback batch-replay $args 2>/dev/null | grep "canonical plan sha256" | grep -oE "[0-9a-f]{64}")
   echo "PLAN $p $v sha=$sha $(date -u +%FT%TZ)"
   [ -z "$sha" ] && { echo "NO SHA for $p $v"; continue; }

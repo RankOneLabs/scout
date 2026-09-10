@@ -1,0 +1,11 @@
+version: 1
+name: relevance-frink-agent-ops-topical
+axis: model
+prompt_file: ../prompts/prompt-agent-ops-topical.md
+variants:
+  - name: gemma-4-26b-a4b-q4-nothink-frink
+    model: ollama/gemma4:26b
+  - name: gemma-4-31b-q4-nothink-frink
+    model: ollama/gemma4:31b
+  - name: qwen3-30b-a3b-q4-frink
+    model: ollama/qwen3:30b-a3b-instruct-2507-q4_K_M

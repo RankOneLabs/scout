@@ -1,0 +1,442 @@
+"""Build charts.html (a self-contained page with inline SVG charts) from the
+pooled relevance rows. Usage: python make_charts.py [out.html]
+
+Reads pool_all.txt / pool_exgaia.txt via format_report.load(); everything on
+the page is derived from those two files, so re-pooling and re-running this
+script is the whole refresh.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from collections import defaultdict
+from datetime import date
+
+import format_report as fr
+
+LABELS = {
+    "gemini-2-5-flash": "gemini-2.5-flash",
+    "qwen3-235b-2507": "qwen3-235b-2507",
+    "kimi-k2-0905": "kimi-k2-0905",
+    "qwen3-30b-a3b-2507": "qwen3-30b-a3b",
+    "gpt-oss-20b": "gpt-oss-20b",
+    "gemma-4-26b-a4b": "gemma-4-26b-a4b",
+    "gemma-4-31b": "gemma-4-31b",
+    "mistral-small-2603": "mistral-small-2603",
+    "nemotron-3-nano-30b": "nemotron-3-nano-30b",
+    "qwen3-32b": "qwen3-32b",
+    "llama-3-3-70b": "llama-3.3-70b",
+    "qwen3-next-80b-a3b": "qwen3-next-80b-a3b",
+    "gpt-oss-120b": "gpt-oss-120b",
+    "glm-4-5-air": "glm-4.5-air",
+    "glm-4-7-flash": "glm-4.7-flash",
+    "nemotron-3-super-120b": "nemotron-3-super-120b",
+    "llama-4-scout": "llama-4-scout",
+    "qwen3-30b-a3b-q4-frink": "qwen3-30b-a3b Q4 · frink",
+    "gemma-4-26b-a4b-q4-nothink-frink": "gemma-4-26b-a4b Q4 · frink",
+    "gemma-4-31b-q4-nothink-frink": "gemma-4-31b Q4 · frink",
+    "gemma-4-26b-a4b-q4-frink": "gemma-4-26b-a4b Q4 +thinking · frink",
+    "gemma-4-31b-q4-frink": "gemma-4-31b Q4 +thinking · frink",
+}
+HOSTED_ORDER = [
+    "gemini-2-5-flash", "qwen3-235b-2507", "kimi-k2-0905",
+    "qwen3-30b-a3b-2507", "gpt-oss-20b", "gemma-4-26b-a4b", "gemma-4-31b",
+    "mistral-small-2603", "nemotron-3-nano-30b", "qwen3-32b", "llama-3-3-70b",
+    "qwen3-next-80b-a3b", "gpt-oss-120b", "glm-4-5-air", "glm-4-7-flash",
+    "nemotron-3-super-120b", "llama-4-scout",
+]
+FRINK_ORDER = [
+    "qwen3-30b-a3b-q4-frink", "gemma-4-26b-a4b-q4-nothink-frink", "gemma-4-31b-q4-nothink-frink",
+    "gemma-4-26b-a4b-q4-frink", "gemma-4-31b-q4-frink",
+]
+HOSTED_OF = {
+    "qwen3-30b-a3b-q4-frink": "qwen3-30b-a3b-2507",
+    "gemma-4-26b-a4b-q4-nothink-frink": "gemma-4-26b-a4b",
+    "gemma-4-31b-q4-nothink-frink": "gemma-4-31b",
+    "gemma-4-26b-a4b-q4-frink": "gemma-4-26b-a4b",
+    "gemma-4-31b-q4-frink": "gemma-4-31b",
+}
+UNUSABLE = {"nemotron-3-super-120b": "rate-limited upstream on every attempt"}
+
+
+def cell(r):
+    if r is None:
+        return None
+    return {k: r[k] for k in ("run", "ok", "n", "fp", "fn", "fail", "med", "p95", "tok", "usd")}
+
+
+def build():
+    ops, ev, ops_rows, ev_rows = fr.load()
+    b_ops = next(iter(ops.values()))
+    b_ev = next(iter(ev.values()))
+    baseline = {
+        "ops": {"ok": b_ops["bok"], "n": 51, "fp": b_ops["bfp"], "fn": b_ops["bfn"]},
+        "evals": {"ok": b_ev["bok"], "n": 28, "fp": b_ev["bfp"], "fn": b_ev["bfn"]},
+    }
+    models = []
+    for m in HOSTED_ORDER + FRINK_ORDER:
+        where = "frink" if m.endswith("-frink") else "hosted"
+        cells = {
+            "ops_current": cell(ops.get(("agent-ops", m, "current"))),
+            "ops_noreject": cell(ops.get(("agent-ops", m, "no-reject"))),
+            "ops_topical": cell(ops.get(("agent-ops", m, "topical"))),
+            "evals_current": cell(ev.get(("agent-evals", m, "current"))),
+            "evals_noreject": cell(ev.get(("agent-evals", m, "no-reject"))),
+            "evals_topical": cell(ev.get(("agent-evals", m, "topical"))),
+        }
+        if m == "gemini-2-5-flash":
+            # its "current" cells are the recorded production baseline
+            cells["ops_current"] = dict(baseline["ops"], fail=0, med=None, p95=None, tok=None, usd=0, run=None)
+            cells["evals_current"] = dict(baseline["evals"], fail=0, med=None, p95=None, tok=None, usd=0, run=None)
+        if not any(cells.values()):
+            continue
+        models.append({
+            "id": m, "label": LABELS.get(m, m), "where": where,
+            "fit": "frink" if where == "frink" else fr.FIT.get(m, "API"),
+            "hosted_of": HOSTED_OF.get(m), "unusable": UNUSABLE.get(m),
+            "thinking": m in ("gemma-4-26b-a4b-q4-frink", "gemma-4-31b-q4-frink"),
+            "cells": cells,
+        })
+    # repeat draws: every row per (proj, model, prompt)
+    groups = defaultdict(list)
+    for r in ops_rows + ev_rows:
+        k = (r["proj"],) + fr.variant_key(r)
+        groups[k].append(r)
+    repeats = []
+    for (proj, m, prm), rs in groups.items():
+        rs = [r for r in rs if r["fail"] == 0]
+        if len(rs) < 2:
+            continue
+        repeats.append({
+            "label": LABELS.get(m, m), "proj": proj.replace("agent-", ""), "prompt": prm,
+            "n": rs[0]["n"], "draws": sorted(r["ok"] for r in sorted(rs, key=lambda r: r["run"])),
+        })
+    return {"generated": date.today().isoformat(), "baseline": baseline, "models": models, "repeats": repeats}
+
+
+PAGE = r"""<title>Relevance Sweeps 2026-09</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f6f5f2; --surface:#fcfcfb; --line:#dcdad4; --grid:#e8e6e0;
+  --ink:#141412; --ink-2:#52514e; --ink-3:#8a8880;
+  --hosted:#2a78d6; --frink:#eb6834; --fp:#e87ba4; --fn:#eda100; --ref:#52514e;
+  --hosted-soft:#d6e5f8; --frink-soft:#fbdccd;
+  --font-display:"Sora","Segoe UI",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#131312; --surface:#1a1a19; --line:#33322f; --grid:#262523;
+    --ink:#f2f1ec; --ink-2:#c3c2b7; --ink-3:#8a8880;
+    --hosted:#3987e5; --frink:#d95926; --fp:#d55181; --fn:#c98500; --ref:#c3c2b7;
+    --hosted-soft:#1c3a63; --frink-soft:#5a2a14;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#131312; --surface:#1a1a19; --line:#33322f; --grid:#262523;
+  --ink:#f2f1ec; --ink-2:#c3c2b7; --ink-3:#8a8880;
+  --hosted:#3987e5; --frink:#d95926; --fp:#d55181; --fn:#c98500; --ref:#c3c2b7;
+  --hosted-soft:#1c3a63; --frink-soft:#5a2a14;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.55}
+main{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+h1,h2,h3{font-family:var(--font-display);font-weight:600;letter-spacing:-0.01em;text-wrap:balance;margin:0}
+h1{font-size:34px;line-height:1.15}
+h2{font-size:21px;margin-top:8px}
+p{max-width:66ch;margin:0}
+.eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.lede{font-size:17px;color:var(--ink-2);margin-top:14px;max-width:62ch}
+header{display:grid;gap:10px;padding-bottom:28px;border-bottom:1px solid var(--line)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:26px 0 0}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;display:grid;gap:4px}
+.tile .num{font-family:var(--font-mono);font-size:28px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1.1}
+.tile .lab{font-size:13px;color:var(--ink-2)}
+section{padding:36px 0 8px;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+.sub{color:var(--ink-2);margin-top:6px;max-width:70ch}
+.figure{margin-top:18px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px 16px 10px;overflow-x:auto}
+.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:var(--ink-2);margin:0 0 8px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:10px;height:10px;border-radius:50%;display:inline-block}
+.sw.sq{border-radius:2px;width:12px;height:12px}
+svg{display:block;font-family:var(--font-body);font-size:12px}
+svg text{fill:var(--ink-2)}
+svg .lbl{fill:var(--ink);font-size:12px}
+svg .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+svg .axis line,svg .axis path{stroke:var(--line)}
+svg .grid line{stroke:var(--grid)}
+svg .ref{stroke:var(--ref);stroke-dasharray:4 4;stroke-width:1.5}
+.caption{font-size:13px;color:var(--ink-2);margin-top:10px;max-width:74ch}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;padding:8px 10px;border-radius:4px;max-width:280px;line-height:1.4;z-index:10;font-family:var(--font-mono);font-variant-numeric:tabular-nums;opacity:0;transition:opacity .08s}
+.tip b{font-family:var(--font-body);font-weight:500;display:block;margin-bottom:2px}
+.hit{cursor:default}
+.hit:focus{outline:2px solid var(--hosted);outline-offset:2px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-weight:500;color:var(--ink-2);font-size:12px;letter-spacing:.03em}
+td.n{font-family:var(--font-mono)}
+.tablewrap{overflow-x:auto;margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.small{font-size:13px;color:var(--ink-2)}
+.prov{margin-top:28px;font-size:13px;color:var(--ink-2);display:grid;gap:4px}
+.prov code{font-family:var(--font-mono);font-size:12px;color:var(--ink)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media (max-width:820px){.two{grid-template-columns:1fr}}
+@media (prefers-reduced-motion: reduce){.tip{transition:none}}
+</style>
+<main>
+<header>
+  <div class="eyebrow">Scout · relevance grading · September 2026</div>
+  <h1>Which model decides if a post is worth a reply, and where can it run?</h1>
+  <p class="lede">Fifteen open models and three hosted frontier models replayed against the same frozen snapshots and human labels, on two prompts, with four of them re-run quantised on a local box. The short version: the prompt moved the numbers far more than the model, and a 26B mixture-of-experts at 4-bit on frink matches the hosted baseline at under three seconds a case.</p>
+  <div class="tiles" id="tiles"></div>
+</header>
+
+<section>
+  <div class="eyebrow">Figure 1 · agent-ops, topical prompt, 51 cases</div>
+  <h2>Accuracy against seconds per case</h2>
+  <p class="sub">Every model on the same prompt and cases. Hosted models are called through OpenRouter; frink rows run under Ollama on the Ryzen AI Max+ at 4-bit. The dashed line is the production gemini-2.5-flash baseline on its own recorded prompt.</p>
+  <div class="figure"><div class="legend"><span><i class="sw" style="background:var(--hosted)"></i>hosted (OpenRouter)</span><span><i class="sw" style="background:var(--frink)"></i>local (frink, Q4)</span><span><i class="sw" style="background:none;border-top:2px dashed var(--ref);width:16px;height:0;border-radius:0"></i>baseline 42/51</span></div><div id="fig1"></div></div>
+  <p class="caption">Median wall time per case from the traces, log scale. Rows above 5 s are reasoning models emitting hundreds of tokens per yes/no answer. Two cases on 51 is run-to-run noise (Figure 5), so the cluster between 38 and 42 is not an ordering.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Figure 2 · recorded prompt → topical prompt</div>
+  <h2>The prompt, not the model</h2>
+  <p class="sub">The recorded production prompt carries a reject list (announcements, news, commentary). Models that obey it lose twenty cases to false negatives; gemini ignores it. A subject-matter-only rubric recovers them for every open model.</p>
+  <div class="two">
+    <div class="figure"><div class="legend"><span><i class="sw" style="background:none;border:2px solid var(--ink-2)"></i>recorded prompt</span><span><i class="sw" style="background:var(--hosted)"></i>topical, hosted</span><span><i class="sw" style="background:var(--frink)"></i>topical, frink</span></div><div id="fig2a"></div></div>
+    <div class="figure"><div class="legend"><span>agent-evals ex-GAIA, 28 cases</span></div><div id="fig2b"></div></div>
+  </div>
+  <p class="caption">Left: agent-ops, 51 cases. Right: agent-evals, 28 cases after excluding the 45 GAIA-route posts with known-bad labels. Models are sorted by their topical agent-ops score. kimi-k2 and nemotron-3-super were not run on the topical prompt or were unusable.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Figure 3 · topical prompt, error split</div>
+  <h2>Where the remaining errors are</h2>
+  <p class="sub">Under the topical prompt the misses are mostly false positives, and they are the same posts for nearly every model: on-topic announcements, promos, paper headlines and tutorial plugs that the labels mark not relevant. That is a rubric question, not a model ranking.</p>
+  <div class="two">
+    <div class="figure"><div class="legend"><span><i class="sw sq" style="background:var(--fp)"></i>false positive</span><span><i class="sw sq" style="background:var(--fn)"></i>false negative</span><span><i class="sw sq" style="background:var(--ink-3)"></i>failed run</span></div><div id="fig3a"></div></div>
+    <div class="figure"><div class="legend"><span>agent-evals ex-GAIA, 28 cases</span></div><div id="fig3b"></div></div>
+  </div>
+  <p class="caption">Bars are errors out of the case count, so shorter is better. Failed runs are cases where the model never produced a valid submit_output call.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Figure 4 · same weights, hosted vs 4-bit on frink</div>
+  <h2>Quantised on frink against the hosted run</h2>
+  <p class="sub">Four cells per model. Blue is the OpenRouter run at the provider's precision; orange is Q4_K_M GGUF under Ollama on frink with reasoning off. The thinking-on gemma rows are Ollama's default for gemma4 and are shown separately because they are a different experiment.</p>
+  <div class="figure"><div class="legend"><span><i class="sw sq" style="background:var(--hosted)"></i>hosted</span><span><i class="sw sq" style="background:var(--frink)"></i>frink Q4</span></div><div id="fig4"></div></div>
+  <p class="caption">Bars show correct cases; the number to the right is median seconds per case on that path. Quantisation costs nothing measurable on the mixture models; the dense 31B loses its tool-calling reliability at Q4 and is eight times slower on frink than the 26B mixture.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Figure 5 · repeat draws of one configuration</div>
+  <h2>How much is noise</h2>
+  <p class="sub">Every cell on this page is one draw. Only one configuration was drawn more than once without failed cases; this is its spread. llama-4-scout was also drawn twice on both projects (34 then 33 on agent-ops, 20 then 20 on agent-evals) but with failed cases in one draw each.</p>
+  <div class="figure"><div id="fig5"></div></div>
+  <p class="caption">Each dot is one full pass over the case set. Two cases on 51 is the floor to read every other figure against; the harness does not yet run repeats, so no intervals are reported.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Appendix</div>
+  <h2>All cells</h2>
+  <p class="sub">Correct / cases, with false positives and false negatives. Median and p95 seconds per case are for the agent-ops topical run. Source rows are in <code>pooled-all.txt</code> and <code>pooled-exclude-gaia.txt</code>.</p>
+  <div class="tablewrap" id="table"></div>
+  <div class="prov" id="prov"></div>
+</section>
+</main>
+<div class="tip" id="tip"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const tip = document.getElementById('tip');
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent){ const e=document.createElementNS(NS, tag); for(const k in attrs) e.setAttribute(k, attrs[k]); if(parent) parent.appendChild(e); return e; }
+function txt(parent, x, y, s, attrs){ const t=el('text', Object.assign({x, y}, attrs||{}), parent); t.textContent=s; return t; }
+function showTip(ev, html){ tip.innerHTML=html; tip.style.opacity=1; moveTip(ev); }
+function moveTip(ev){ const x=ev.clientX+14, y=ev.clientY+14; tip.style.left=Math.min(x, window.innerWidth-300)+'px'; tip.style.top=y+'px'; }
+function hideTip(){ tip.style.opacity=0; }
+function hover(node, html){ node.classList.add('hit'); node.setAttribute('tabindex','0'); node.addEventListener('mouseenter', e=>showTip(e, html)); node.addEventListener('mousemove', moveTip); node.addEventListener('mouseleave', hideTip); node.addEventListener('focus', e=>{const r=node.getBoundingClientRect(); showTip({clientX:r.right, clientY:r.top}, html);}); node.addEventListener('blur', hideTip); }
+const col = w => w==='frink' ? 'var(--frink)' : 'var(--hosted)';
+const fmt = c => c ? `${c.ok}/${c.n} (FP${c.fp} FN${c.fn}${c.fail?` fail${c.fail}`:''})` : '—';
+const sec = c => (c && c.med!=null) ? `${c.med.toFixed(1)} s` : '—';
+const M = D.models, B = D.baseline;
+const byId = Object.fromEntries(M.map(m=>[m.id,m]));
+
+// tiles
+{
+  const best = M.filter(m=>m.where==='frink' && !m.thinking && m.cells.ops_topical).sort((a,b)=>b.cells.ops_topical.ok-a.cells.ops_topical.ok)[0];
+  const tiles = [
+    [`${B.ops.ok}/${B.ops.n}`, 'gemini-2.5-flash baseline, agent-ops (FP'+B.ops.fp+' FN'+B.ops.fn+')'],
+    [`${best.cells.ops_topical.ok}/${best.cells.ops_topical.n}`, best.label+', topical prompt, local Q4'],
+    [`${best.cells.ops_topical.med.toFixed(1)} s`, 'median per case for that model on frink'],
+    ['±2', 'cases of run-to-run noise on 51, from repeat draws'],
+  ];
+  document.getElementById('tiles').innerHTML = tiles.map(([n,l])=>`<div class="tile"><div class="num">${n}</div><div class="lab">${l}</div></div>`).join('');
+}
+
+// Figure 1: scatter accuracy vs latency (ops topical)
+{
+  const W=1040, H=430, m={t:28,r:150,b:44,l:44};
+  const pts = M.filter(x=>x.cells.ops_topical && x.cells.ops_topical.med!=null && !x.unusable).map(x=>({m:x, c:x.cells.ops_topical}));
+  const xs = pts.map(p=>p.c.med); const xmin=Math.min(...xs)*0.8, xmax=Math.max(...xs)*1.25;
+  const lx = v => m.l + (Math.log10(v)-Math.log10(xmin))/(Math.log10(xmax)-Math.log10(xmin))*(W-m.l-m.r);
+  const ymin=28, ymax=48; const ly = v => m.t + (ymax-v)/(ymax-ymin)*(H-m.t-m.b);
+  const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', height:H, role:'img','aria-label':'Scatter of accuracy against median seconds per case'}, document.getElementById('fig1'));
+  const grid = el('g',{class:'grid'},svg);
+  for(let v=ymin; v<ymax; v+=4){ el('line',{x1:m.l,x2:W-m.r,y1:ly(v),y2:ly(v)},grid); txt(svg, m.l-8, ly(v)+4, v, {'text-anchor':'end', class:'num'}); }
+  for(const v of [1,2,5,10,20,50]){ if(v<xmin||v>xmax) continue; el('line',{x1:lx(v),x2:lx(v),y1:m.t,y2:H-m.b},grid); txt(svg, lx(v), H-m.b+16, v+' s', {'text-anchor':'middle', class:'num'}); }
+  txt(svg, W-m.r, H-8, 'median seconds per case (log)', {'text-anchor':'end'});
+  txt(svg, m.l-30, 12, 'correct of 51', {'text-anchor':'start'});
+  el('line',{class:'ref', x1:m.l, x2:W-m.r, y1:ly(B.ops.ok), y2:ly(B.ops.ok)},svg);
+  txt(svg, W-m.r+6, ly(B.ops.ok)+4, `baseline ${B.ops.ok}/51`, {'text-anchor':'start'});
+  const labelled = new Set(['gemma-4-26b-a4b','gemma-4-26b-a4b-q4-nothink-frink','gemma-4-26b-a4b-q4-frink','qwen3-235b-2507','glm-4-5-air','qwen3-30b-a3b-q4-frink','gemma-4-31b-q4-nothink-frink','gemini-2-5-flash','qwen3-next-80b-a3b','llama-4-scout','glm-4-7-flash','gpt-oss-120b','qwen3-30b-a3b-2507']);
+  // greedy label placement: try right, then left, then nudge up/down until the box is free
+  const boxes=[]; const cw=6.2, lh=13;
+  const free = b => !boxes.some(o => !(b.x2<o.x1 || b.x1>o.x2 || b.y2<o.y1 || b.y1>o.y2));
+  for(const p of pts.slice().sort((a,b)=>b.c.ok-a.c.ok)){
+    const g = el('g',{},svg); const cx=lx(p.c.med), cy=ly(p.c.ok);
+    el('circle',{cx, cy, r:6, fill:col(p.m.where), stroke:'var(--surface)','stroke-width':2},g);
+    boxes.push({x1:cx-7,x2:cx+7,y1:cy-7,y2:cy+7});
+    if(labelled.has(p.m.id)){
+      const w = p.m.label.length*cw; let placed=null;
+      for(const dy of [0,-12,12,-24,24]){
+        for(const side of (cx > W-m.r-160 ? ['left','right'] : ['right','left'])){
+          const x1 = side==='right' ? cx+10 : cx-10-w; const b={x1, x2:x1+w, y1:cy+dy-lh/2, y2:cy+dy+lh/2};
+          if(b.x1>m.l-30 && b.x2<W-4 && free(b)){ placed={b, side, dy}; break; }
+        }
+        if(placed) break;
+      }
+      if(placed){ boxes.push(placed.b); txt(g, placed.side==='right'?cx+10:cx-10, cy+placed.dy+4, p.m.label, {class:'lbl','text-anchor': placed.side==='right'?'start':'end'}); }
+    }
+    hover(g, `<b>${p.m.label}</b>ops topical ${fmt(p.c)}<br>${p.c.med.toFixed(1)} s median · ${p.c.p95.toFixed(1)} s p95<br>${p.c.tok} output tokens/case`);
+  }
+}
+
+// Figure 2: dumbbells current -> topical
+function dumbbell(id, key1, key2, n, title){
+  const rows = M.filter(x=>x.cells[key2] && x.cells[key1] && !x.unusable).sort((a,b)=>(b.cells.ops_topical?b.cells.ops_topical.ok:0)-(a.cells.ops_topical?a.cells.ops_topical.ok:0));
+  const W=500, rh=22, m={t:26,r:16,b:8,l:170}; const H=m.t+rows.length*rh+m.b;
+  const xmin=Math.floor(n*0.45), xmax=n; const lx = v => m.l + (v-xmin)/(xmax-xmin)*(W-m.l-m.r);
+  const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', height:H, role:'img','aria-label':title}, document.getElementById(id));
+  const grid = el('g',{class:'grid'},svg);
+  const step = n>40?5:4;
+  for(let v=Math.ceil(xmin/step)*step; v<=xmax; v+=step){ el('line',{x1:lx(v),x2:lx(v),y1:m.t-6,y2:H-m.b},grid); txt(svg, lx(v), m.t-10, v, {'text-anchor':'middle', class:'num'}); }
+  rows.forEach((x,i)=>{
+    const y=m.t+i*rh+rh/2; const a=x.cells[key1].ok, b=x.cells[key2].ok;
+    const g=el('g',{},svg);
+    txt(g, m.l-8, y+4, x.label, {class:'lbl','text-anchor':'end'});
+    el('line',{x1:lx(a),x2:lx(b),y1:y,y2:y,stroke:col(x.where),'stroke-width':2,'stroke-opacity':.55},g);
+    el('circle',{cx:lx(a),cy:y,r:5,fill:'var(--surface)',stroke:'var(--ink-2)','stroke-width':2},g);
+    el('circle',{cx:lx(b),cy:y,r:5,fill:col(x.where),stroke:'var(--surface)','stroke-width':1.5},g);
+    txt(g, lx(Math.max(a,b))+9, y+4, `${b}`, {class:'num'});
+    hover(g, `<b>${x.label}</b>recorded prompt ${fmt(x.cells[key1])}<br>topical prompt ${fmt(x.cells[key2])}`);
+  });
+}
+dumbbell('fig2a','ops_current','ops_topical',51,'agent-ops, recorded prompt to topical prompt');
+dumbbell('fig2b','evals_current','evals_topical',28,'agent-evals, recorded prompt to topical prompt');
+
+// Figure 3: stacked errors
+function errors(id, key, n, title){
+  const rows = M.filter(x=>x.cells[key] && !x.unusable).sort((a,b)=>(a.cells[key].fp+a.cells[key].fn+a.cells[key].fail)-(b.cells[key].fp+b.cells[key].fn+b.cells[key].fail));
+  const W=500, rh=22, m={t:26,r:16,b:8,l:170}; const H=m.t+rows.length*rh+m.b;
+  const xmax = Math.max(...rows.map(x=>x.cells[key].fp+x.cells[key].fn+x.cells[key].fail))+2;
+  const lx = v => m.l + v/xmax*(W-m.l-m.r);
+  const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', height:H, role:'img','aria-label':title}, document.getElementById(id));
+  const grid = el('g',{class:'grid'},svg);
+  const step = xmax>16?5:4;
+  for(let v=0; v<=xmax; v+=step){ el('line',{x1:lx(v),x2:lx(v),y1:m.t-6,y2:H-m.b},grid); txt(svg, lx(v), m.t-10, v, {'text-anchor':'middle', class:'num'}); }
+  rows.forEach((x,i)=>{
+    const y=m.t+i*rh+3, h=rh-8, c=x.cells[key]; const g=el('g',{},svg);
+    txt(g, m.l-8, y+h/2+4, x.label, {class:'lbl','text-anchor':'end'});
+    let x0=0;
+    for(const [k,fill] of [['fp','var(--fp)'],['fn','var(--fn)'],['fail','var(--ink-3)']]){
+      if(!c[k]) continue;
+      el('rect',{x:lx(x0)+(x0?1:0), y, width:Math.max(0,lx(x0+c[k])-lx(x0)-(x0?1:0)), height:h, fill, rx:2},g); x0+=c[k];
+    }
+    txt(g, lx(x0)+6, y+h/2+4, `${c.ok}/${n}`, {class:'num'});
+    hover(g, `<b>${x.label}</b>${fmt(c)}`);
+  });
+}
+errors('fig3a','ops_topical',51,'agent-ops topical prompt error split');
+errors('fig3b','evals_topical',28,'agent-evals topical prompt error split');
+
+// Figure 4: hosted vs frink paired bars, small multiples
+{
+  const pairs = M.filter(x=>x.where==='frink').map(x=>({f:x, h:byId[x.hosted_of]}));
+  const keys=[['ops_current','ops · recorded',51],['ops_topical','ops · topical',51],['evals_current','evals · recorded',28],['evals_topical','evals · topical',28]];
+  const pw=250, ph=150, cols=Math.min(pairs.length, 4), W=Math.max(pw*cols, 700); const rows=Math.ceil(pairs.length/cols); const H=rows*(ph+40);
+  const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', height:H, role:'img','aria-label':'Hosted versus frink paired bars'}, document.getElementById('fig4'));
+  pairs.forEach((p,i)=>{
+    const ox=(i%cols)*pw, oy=Math.floor(i/cols)*(ph+40);
+    const g=el('g',{transform:`translate(${ox},${oy})`},svg);
+    txt(g, 8, 16, p.f.label, {class:'lbl'});
+    const m={t:26,l:96,r:44}; const bw=9, rh=28;
+    keys.forEach(([k,lab,n],j)=>{
+      const y=m.t+j*rh; const hc=p.h?p.h.cells[k]:null, fc=p.f.cells[k];
+      txt(g, m.l-6, y+13, lab, {'text-anchor':'end'});
+      const lx = v => m.l + v/n*(pw-m.l-m.r);
+      el('line',{x1:m.l,x2:lx(n),y1:y+11,y2:y+11,stroke:'var(--grid)'},g);
+      if(hc){ el('rect',{x:m.l,y:y+1,width:lx(hc.ok)-m.l,height:bw,fill:'var(--hosted)',rx:1.5},g); txt(g, lx(hc.ok)+4, y+9, `${hc.ok}`, {class:'num'}); }
+      if(fc){ el('rect',{x:m.l,y:y+bw+3,width:lx(fc.ok)-m.l,height:bw,fill:'var(--frink)',rx:1.5},g); txt(g, lx(fc.ok)+4, y+bw+11, `${fc.ok}${fc.fail?'*':''}`, {class:'num'}); }
+      const gg=el('rect',{x:0,y,width:pw,height:rh,fill:'transparent'},g);
+      hover(gg, `<b>${p.f.label} · ${lab} (n=${n})</b>hosted ${fmt(hc)} · ${sec(hc)}<br>frink ${fmt(fc)} · ${sec(fc)}`);
+    });
+    const oc=p.f.cells.ops_topical, hc=p.h?p.h.cells.ops_topical:null;
+    txt(g, 8, ph-2, `${sec(hc)} hosted · ${sec(oc)} frink, per case (ops topical)`, {});
+  });
+}
+
+// Figure 5: repeat draws
+{
+  const rows = D.repeats.sort((a,b)=>b.n-a.n || a.label.localeCompare(b.label));
+  const W=1040, rh=24, m={t:26,r:16,b:8,l:300}; const H=m.t+rows.length*rh+m.b;
+  const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, width:'100%', height:H, role:'img','aria-label':'Repeat draws'}, document.getElementById('fig5'));
+  const xmin=10, xmax=51; const lx = v => m.l + (v-xmin)/(xmax-xmin)*(W-m.l-m.r);
+  const grid=el('g',{class:'grid'},svg);
+  for(let v=15; v<=50; v+=5){ el('line',{x1:lx(v),x2:lx(v),y1:m.t-6,y2:H-m.b},grid); txt(svg, lx(v), m.t-10, v, {'text-anchor':'middle', class:'num'}); }
+  rows.forEach((r,i)=>{
+    const y=m.t+i*rh+rh/2; const g=el('g',{},svg);
+    txt(g, m.l-8, y+4, `${r.label} · ${r.proj} ${r.prompt} (n=${r.n})`, {class:'lbl','text-anchor':'end'});
+    const lo=Math.min(...r.draws), hi=Math.max(...r.draws);
+    el('line',{x1:lx(lo),x2:lx(hi),y1:y,y2:y,stroke:'var(--ink-3)','stroke-width':2},g);
+    r.draws.forEach(v=>el('circle',{cx:lx(v),cy:y,r:5,fill:r.label.includes('frink')?'var(--frink)':'var(--hosted)',stroke:'var(--surface)','stroke-width':1.5},g));
+    txt(g, lx(hi)+10, y+4, r.draws.join(' · '), {class:'num'});
+    hover(g, `<b>${r.label}</b>${r.draws.length} draws: ${r.draws.join(', ')} of ${r.n}`);
+  });
+}
+
+// Appendix table
+{
+  const cols=[['ops_current','ops recorded'],['ops_noreject','ops no-reject'],['ops_topical','ops topical'],['evals_current','evals recorded'],['evals_noreject','evals no-reject'],['evals_topical','evals topical']];
+  let h='<table><thead><tr><th>model</th><th>where</th><th>fit</th>'+cols.map(c=>`<th>${c[1]}</th>`).join('')+'<th>s/case med · p95</th></tr></thead><tbody>';
+  for(const x of M){
+    const ot=x.cells.ops_topical;
+    h+=`<tr><td>${x.label}${x.unusable?' †':''}</td><td>${x.where}</td><td>${x.fit}</td>`+cols.map(c=>`<td class="n">${fmt(x.cells[c[0]])}</td>`).join('')+`<td class="n">${ot&&ot.med!=null?ot.med.toFixed(1)+' · '+ot.p95.toFixed(1):'—'}</td></tr>`;
+  }
+  h+='</tbody></table>';
+  document.getElementById('table').innerHTML=h;
+  document.getElementById('prov').innerHTML=`<div>† nemotron-3-super-120b was rate-limited upstream on every attempt; its cells are not usable.</div><div>Labels are content-only; author fit is a separate dimension. agent-evals excludes 45 GAIA-route posts with known-bad labels. Always-relevant scores ${B.ops.n-22}/${B.ops.n} on agent-ops and ${B.evals.n-8}/${B.evals.n} on agent-evals.</div><div>Source: <code>RankOneLabs/scout</code> branch <code>evidence/relevance-sweeps-2026-09</code>, <code>RESULTS.md</code>, generated ${D.generated} by <code>scripts/make_charts.py</code>.</div>`;
+}
+</script>
+"""
+
+
+def main():
+    out = sys.argv[1] if len(sys.argv) > 1 else "charts.html"
+    data = build()
+    html = PAGE.replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
+    with open(out, "w") as f:
+        f.write(html)
+    print(out, len(html), "bytes;", len(data["models"]), "models;", len(data["repeats"]), "repeat groups")
+
+
+if __name__ == "__main__":
+    main()
