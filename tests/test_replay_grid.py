@@ -304,3 +304,19 @@ def test_write_expansion_writes_sweeps_manifest_and_script(tmp_path: Path) -> No
         (out / "study-agent-ops-topical-frink.yaml").read_text(encoding="utf-8")
     )
     assert reloaded["variants"][0]["model"] == "ollama/gemma4:26b"
+
+
+def test_axis_keys_with_path_separators_are_rejected(tmp_path: Path) -> None:
+    projects = {
+        "nested/project": {"task_config": "t.json"},
+        "agent-evals": {"task_config": "t2.json"},
+    }
+    with pytest.raises(rg.GridValidationError, match="replay-sweep-grid v1 validation"):
+        _expand(tmp_path, projects=projects)
+
+
+def test_validate_grid_mirrors_the_slug_constraint_at_runtime(tmp_path: Path) -> None:
+    grid = rg.load_grid(_write_grid(tmp_path))
+    grid.prompts["Bad Key"] = None
+    with pytest.raises(rg.GridValidationError, match="prompts keys must be slugs"):
+        rg.validate_grid(grid)

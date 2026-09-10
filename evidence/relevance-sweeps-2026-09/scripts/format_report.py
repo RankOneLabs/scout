@@ -156,10 +156,32 @@ def variant_key(row: Row) -> tuple[str, str]:
     return row.var, "current"
 
 
+def full_runs(rows: Iterable[Row]) -> list[Row]:
+    """Drop partial runs (fewer cases than the project's largest run): an
+    interrupted run scores a different case set and carries a different
+    baseline, so it is not comparable with the others."""
+    rows = list(rows)
+    if not rows:
+        return []
+    n_full = max(r.n for r in rows)
+    return [r for r in rows if r.n == n_full]
+
+
+def baseline_of(rows: Mapping[Key, Row]) -> Row:
+    """The one recorded baseline shared by every selected row; rejects an
+    empty pool or rows that disagree, so input order cannot pick one."""
+    baselines = {(r.bok, r.bfp, r.bfn) for r in rows.values()}
+    if not baselines:
+        raise ValueError("no pooled rows selected")
+    if len(baselines) > 1:
+        raise ValueError(f"selected rows carry different baselines: {sorted(baselines)}")
+    return next(iter(rows.values()))
+
+
 def latest(rows: Iterable[Row]) -> dict[Key, Row]:
     """One row per (project, model, prompt): fewest failures, then latest run."""
     best: dict[Key, Row] = {}
-    for r in rows:
+    for r in full_runs(rows):
         key: Key = (r.proj, *variant_key(r))
         current = best.get(key)
         if current is None or (r.fail, -r.run) < (current.fail, -current.run):
@@ -228,8 +250,8 @@ def four_cells(pools: Pools, model: str) -> list[Row | None]:
 
 
 def tables(pools: Pools) -> str:
-    b_ops = next(iter(pools.ops.values()))
-    b_ev = next(iter(pools.evals.values()))
+    b_ops = baseline_of(pools.ops)
+    b_ev = baseline_of(pools.evals)
     out: list[str] = []
     out.append("### Prompt grid (frontier / large hosted models)\n")
     out.append(
@@ -303,8 +325,8 @@ def _cell_json(row: Row | None) -> dict[str, object] | None:
 def chart_data(pools: Pools) -> dict[str, object]:
     """The JSON the chart template renders from; everything derives from the
     pooled rows."""
-    b_ops = next(iter(pools.ops.values()))
-    b_ev = next(iter(pools.evals.values()))
+    b_ops = baseline_of(pools.ops)
+    b_ev = baseline_of(pools.evals)
     baseline = {
         "ops": {"ok": b_ops.bok, "n": 51, "fp": b_ops.bfp, "fn": b_ops.bfn},
         "evals": {"ok": b_ev.bok, "n": 28, "fp": b_ev.bfp, "fn": b_ev.bfn},

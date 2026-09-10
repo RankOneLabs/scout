@@ -1,3 +1,8 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Relevance Sweeps 2026-09</title>
 <style>
 :root{
@@ -72,6 +77,8 @@ td.n{font-family:var(--font-mono)}
 @media (max-width:820px){.two{grid-template-columns:1fr}}
 @media (prefers-reduced-motion: reduce){.tip{transition:none}}
 </style>
+</head>
+<body>
 <main>
 <header>
   <div class="eyebrow">Scout · relevance grading · September 2026</div>
@@ -308,3 +315,5 @@ errors('fig3b','evals_topical',28,'agent-evals topical prompt error split');
   document.getElementById('prov').innerHTML=`<div>† nemotron-3-super-120b was rate-limited upstream on every attempt; its cells are not usable.</div><div>Labels are content-only; author fit is a separate dimension. agent-evals excludes 45 GAIA-route posts with known-bad labels. Always-relevant scores ${B.ops.n-22}/${B.ops.n} on agent-ops and ${B.evals.n-8}/${B.evals.n} on agent-evals.</div><div>Source: <code>RankOneLabs/scout</code> branch <code>evidence/relevance-sweeps-2026-09</code>, <code>RESULTS.md</code>, generated ${D.generated} by <code>scripts/make_charts.py</code>.</div>`;
 }
 </script>
+</body>
+</html>

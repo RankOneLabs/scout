@@ -38,6 +38,7 @@ from scout.resources import runtime_resource
 
 GRID_SCHEMA_PATH = runtime_resource("contracts", "replay-sweep-grid.v1.schema.json")
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_AXIS_KEY = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 MANIFEST_VERSION = 1
 
 
@@ -170,7 +171,23 @@ def load_grid(path: Path | str) -> GridDocument:
         grid = GridDocument.model_validate(raw)
     except ValidationError as exc:
         raise GridValidationError(f"grid document is malformed: {exc}") from exc
+    return validate_grid(grid)
 
+
+def validate_grid(grid: GridDocument) -> GridDocument:
+    """Semantic checks the schema cannot express; returns the grid unchanged.
+    Mirrors the schema's slug and env-key constraints so a GridDocument
+    built in code gets the same guarantees as one loaded from a file."""
+    for axis_name, keys in (
+        ("projects", grid.projects),
+        ("prompts", grid.prompts),
+        ("backends", grid.backends),
+    ):
+        bad = sorted(k for k in keys if not _AXIS_KEY.fullmatch(k))
+        if bad:
+            raise GridValidationError(
+                f"{axis_name} keys must be slugs (they become file name components): {bad}"
+            )
     unknown_backends = sorted({m.backend for m in grid.models} - set(grid.backends))
     if unknown_backends:
         raise GridValidationError(f"models reference undeclared backends: {unknown_backends}")
@@ -474,6 +491,7 @@ __all__ = [
     "cells_by_variant",
     "expand_grid",
     "load_grid",
+    "validate_grid",
     "variant_name",
     "write_expansion",
 ]
