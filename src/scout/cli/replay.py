@@ -276,7 +276,8 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
         raise SystemExit(2)
     if args.execute_paid_replay and not args.authorize_plan_sha256:
         print(
-            "error: --execute-paid-replay requires --authorize-plan-sha256", file=sys.stderr,
+            "error: --execute-paid-replay requires --authorize-plan-sha256",
+            file=sys.stderr,
         )
         raise SystemExit(2)
 
@@ -294,17 +295,29 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
         async with replay_runtime(db_path=DB_PATH) as rt:
             if not args.execute_paid_replay:
                 preview = await ee.preview_batch_replay(
-                    state=rt.state, tracer=rt.tracer, selector=selector, variants=variants,
-                    skip_policy=skip_policy, pricing_catalog=catalog, dossier_root=dossier_root,
+                    state=rt.state,
+                    tracer=rt.tracer,
+                    selector=selector,
+                    variants=variants,
+                    skip_policy=skip_policy,
+                    pricing_catalog=catalog,
+                    dossier_root=dossier_root,
                     sweep=sweep,
                 )
                 _print_batch_preview(preview)
                 return
             outcome = await ee.execute_batch_replay(
-                state=rt.state, tracer=rt.tracer, feedback=rt.feedback, name=name,
-                selector=selector, variants=variants, skip_policy=skip_policy,
-                authorize_plan_sha256=args.authorize_plan_sha256, pricing_catalog=catalog,
-                dossier_root=dossier_root, sweep=sweep,
+                state=rt.state,
+                tracer=rt.tracer,
+                feedback=rt.feedback,
+                name=name,
+                selector=selector,
+                variants=variants,
+                skip_policy=skip_policy,
+                authorize_plan_sha256=args.authorize_plan_sha256,
+                pricing_catalog=catalog,
+                dossier_root=dossier_root,
+                sweep=sweep,
             )
             _print_batch_outcome(outcome)
 
@@ -326,9 +339,13 @@ def batch_retry_feedback(args: argparse.Namespace) -> None:
     async def _run() -> None:
         async with replay_runtime(db_path=DB_PATH) as rt:
             outcome = await ee.retry_batch_replay(
-                state=rt.state, tracer=rt.tracer, feedback=rt.feedback,
-                experiment_run_id=args.experiment_run_id, phase_run_ids=phase_run_ids,
-                pricing_catalog=catalog, dossier_root=dossier_root,
+                state=rt.state,
+                tracer=rt.tracer,
+                feedback=rt.feedback,
+                experiment_run_id=args.experiment_run_id,
+                phase_run_ids=phase_run_ids,
+                pricing_catalog=catalog,
+                dossier_root=dossier_root,
             )
             _print_batch_outcome(outcome)
 
@@ -353,7 +370,10 @@ def report_feedback(args: argparse.Namespace) -> None:
                     load_pricing_catalog(catalog_path) if catalog_path else load_pricing_catalog()
                 )
                 result = await build_replay_paa_export(
-                    rt.state, rt.tracer, experiment_run_ids=args.experiment_run_id, catalog=catalog,
+                    rt.state,
+                    rt.tracer,
+                    experiment_run_ids=args.experiment_run_id,
+                    catalog=catalog,
                 )
                 if isinstance(result, Err):
                     raise rr.ReportError(str(result.error))
@@ -376,8 +396,37 @@ def report_feedback(args: argparse.Namespace) -> None:
         raise SystemExit(1) from exc
 
 
+def grid_expand_feedback(args: argparse.Namespace) -> None:
+    """Handle `scout feedback grid expand`: validate one replay-sweep-grid v1
+    document and write its replay-sweep v1 files, manifest.json and run.sh
+    into --out. Pure until the write; nothing touches the database."""
+    from scout.replay import grid as rg
+
+    grid_path = Path(args.grid_file)
+    out_dir = Path(args.out)
+    try:
+        grid = rg.load_grid(grid_path)
+        expansion = rg.expand_grid(grid, grid_path=grid_path, out_dir=out_dir)
+    except rg.GridValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if args.dry_run:
+        for sweep in expansion.sweeps:
+            print(f"{sweep.file}: {len(sweep.document['variants'])} variants")
+        print(
+            f"{len(expansion.sweeps)} sweeps, {len(expansion.cells)} cells "
+            "(dry run, nothing written)"
+        )
+        return
+    written = rg.write_expansion(expansion, out_dir)
+    for path in written:
+        print(path)
+    print(f"{len(expansion.sweeps)} sweeps, {len(expansion.cells)} cells -> {out_dir}")
+
+
 __all__ = [
     "batch_replay_feedback",
+    "grid_expand_feedback",
     "batch_retry_feedback",
     "positive_int",
     "replay_feedback",

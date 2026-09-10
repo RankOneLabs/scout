@@ -1,0 +1,83 @@
+{
+ "version": 1,
+ "as_of": "2026-09-09",
+ "source_url": "https://openrouter.ai/api/v1/models",
+ "models": {
+  "claude-haiku-4-5-20251001": {
+   "input_usd_per_million": 1.0,
+   "output_usd_per_million": 5.0
+  },
+  "openrouter/qwen/qwen3-235b-a22b-2507": {
+   "input_usd_per_million": 0.22,
+   "output_usd_per_million": 0.88
+  },
+  "openrouter/moonshotai/kimi-k2-0905": {
+   "input_usd_per_million": 0.6,
+   "output_usd_per_million": 2.5
+  },
+  "openrouter/qwen/qwen3-32b": {
+   "input_usd_per_million": 0.08,
+   "output_usd_per_million": 0.28
+  },
+  "openrouter/openai/gpt-oss-120b": {
+   "input_usd_per_million": 0.037,
+   "output_usd_per_million": 0.16999999999999998
+  },
+  "openrouter/google/gemini-2.5-flash": {
+   "input_usd_per_million": 0.3,
+   "output_usd_per_million": 2.5
+  },
+  "openrouter/anthropic/claude-haiku-4.5": {
+   "input_usd_per_million": 1.0,
+   "output_usd_per_million": 5.0
+  },
+  "openrouter/qwen/qwen3-30b-a3b-instruct-2507": {
+   "input_usd_per_million": 0.04815,
+   "output_usd_per_million": 0.19305
+  },
+  "openrouter/openai/gpt-oss-20b": {
+   "input_usd_per_million": 0.03,
+   "output_usd_per_million": 0.13
+  },
+  "openrouter/google/gemma-4-26b-a4b-it": {
+   "input_usd_per_million": 0.07,
+   "output_usd_per_million": 0.33999999999999997
+  },
+  "openrouter/google/gemma-4-31b-it": {
+   "input_usd_per_million": 0.09,
+   "output_usd_per_million": 0.33999999999999997
+  },
+  "openrouter/mistralai/mistral-small-2603": {
+   "input_usd_per_million": 0.15,
+   "output_usd_per_million": 0.6
+  },
+  "openrouter/nvidia/nemotron-3-nano-30b-a3b": {
+   "input_usd_per_million": 0.049999999999999996,
+   "output_usd_per_million": 0.19999999999999998
+  },
+  "openrouter/meta-llama/llama-3.3-70b-instruct": {
+   "input_usd_per_million": 0.09999999999999999,
+   "output_usd_per_million": 0.32
+  },
+  "openrouter/z-ai/glm-4.5-air": {
+   "input_usd_per_million": 0.13,
+   "output_usd_per_million": 0.85
+  },
+  "openrouter/z-ai/glm-4.7-flash": {
+   "input_usd_per_million": 0.060500000000000005,
+   "output_usd_per_million": 0.39999999999999997
+  },
+  "openrouter/qwen/qwen3-next-80b-a3b-instruct": {
+   "input_usd_per_million": 0.09,
+   "output_usd_per_million": 1.1
+  },
+  "openrouter/nvidia/nemotron-3-super-120b-a12b": {
+   "input_usd_per_million": 0.08499999999999999,
+   "output_usd_per_million": 0.39999999999999997
+  },
+  "openrouter/meta-llama/llama-4-scout": {
+   "input_usd_per_million": 0.09999999999999999,
+   "output_usd_per_million": 0.3
+  }
+ }
+}

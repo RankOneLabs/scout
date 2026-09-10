@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scout.internal/contracts/replay-sweep-grid.v1.schema.json",
+  "title": "Scout replay sweep grid v1",
+  "description": "One document describing a whole study: projects x prompts x backends, with the models each backend serves. `scout feedback grid expand` turns it into the replay-sweep v1 files and the run script that batch-replay consumes, plus a manifest that records every cell's attributes (model, backend, quant, reasoning, prompt, project, repeat) so results can be pooled by attribute instead of by name.",
+  "type": "object",
+  "required": [
+    "version",
+    "name",
+    "projects",
+    "prompts",
+    "backends",
+    "models"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "projects": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "task_config"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "task_config": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Relevance task config path, as passed to batch-replay --task-config (resolved by the runner, not the expander)."
+          },
+          "dossier_root": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "prompts": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Named candidate system prompts. null reuses each baseline case's recorded prompt. `file` is one file for every project; `files` maps project name to file. Paths are relative to the grid document.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "required": [
+              "file"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "files"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "files": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "backends": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "pricing_catalog"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "pricing_catalog": {
+            "type": "string",
+            "minLength": 1
+          },
+          "identity_config": {
+            "type": "string",
+            "minLength": 1,
+            "description": "JSON file exported as SCOUT_MODEL_IDENTITY_CONFIG by the run script."
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Extra environment for every batch-replay of this backend (e.g. OLLAMA_HOST). Keys must be POSIX variable names.",
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "backend",
+          "model"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9.-]*$",
+            "description": "Stable model identity shared across backends (e.g. gemma-4-26b-a4b)."
+          },
+          "backend": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Routable model string for batch-replay (openrouter/..., ollama/...)."
+          },
+          "quant": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Weight format when not the provider default (Q4_K_M, Q8_0, fp8)."
+          },
+          "reasoning": {
+            "type": "boolean",
+            "description": "Recorded in the manifest and the variant name. Not yet enforced by batch-replay: one backend environment serves every variant of a sweep, so all explicit values within a backend must agree (checked at load)."
+          }
+        }
+      }
+    },
+    "only": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/selector"
+      },
+      "description": "Keep only cells matching at least one selector."
+    },
+    "skip": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/selector"
+      },
+      "description": "Drop cells matching any selector; applied after `only`."
+    },
+    "repeats": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Expand every cell this many times (-r2, -r3 ... suffixes) for run-to-run variance."
+    }
+  },
+  "$defs": {
+    "selector": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

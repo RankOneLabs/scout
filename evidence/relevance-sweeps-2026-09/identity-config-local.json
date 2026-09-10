@@ -1,0 +1,77 @@
+{
+ "policy": {
+  "minimum_families": 1
+ },
+ "identities": [
+  {
+   "model": "openrouter/google/gemma-4-26b-a4b-it",
+   "developer": "google",
+   "family": "gemma"
+  },
+  {
+   "model": "openrouter/google/gemma-4-31b-it",
+   "developer": "google",
+   "family": "gemma"
+  },
+  {
+   "model": "openrouter/mistralai/mistral-small-2603",
+   "developer": "mistralai",
+   "family": "mistral-small"
+  },
+  {
+   "model": "openrouter/nvidia/nemotron-3-nano-30b-a3b",
+   "developer": "nvidia",
+   "family": "nemotron"
+  },
+  {
+   "model": "openrouter/nvidia/nemotron-3-super-120b-a12b",
+   "developer": "nvidia",
+   "family": "nemotron"
+  },
+  {
+   "model": "openrouter/meta-llama/llama-3.3-70b-instruct",
+   "developer": "meta-llama",
+   "family": "llama"
+  },
+  {
+   "model": "openrouter/meta-llama/llama-4-scout",
+   "developer": "meta-llama",
+   "family": "llama"
+  },
+  {
+   "model": "openrouter/z-ai/glm-4.5-air",
+   "developer": "z-ai",
+   "family": "glm"
+  },
+  {
+   "model": "openrouter/z-ai/glm-4.7-flash",
+   "developer": "z-ai",
+   "family": "glm"
+  },
+  {
+   "model": "ollama/qwen3:30b-a3b-instruct-2507-q4_K_M",
+   "developer": "qwen",
+   "family": "qwen"
+  },
+  {
+   "model": "ollama/llama3.3:70b-instruct-q8_0",
+   "developer": "meta-llama",
+   "family": "llama"
+  },
+  {
+   "model": "ollama/gemma4:26b",
+   "developer": "google",
+   "family": "gemma"
+  },
+  {
+   "model": "ollama/gemma4:31b",
+   "developer": "google",
+   "family": "gemma"
+  },
+  {
+   "model": "ollama/llama3.3:70b-instruct-q4_K_M",
+   "developer": "meta-llama",
+   "family": "llama"
+  }
+ ]
+}

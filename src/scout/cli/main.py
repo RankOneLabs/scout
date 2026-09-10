@@ -29,6 +29,7 @@ logger = logging.getLogger("scout.cli")
 # instead of writing into the real repo's evidence/paa directory.
 PAA_EVIDENCE_ROOT = DEFAULT_EVIDENCE_ROOT
 
+
 def setup_logging(debug: bool = False) -> None:
     """Configure logging with appropriate level and format."""
     level = logging.DEBUG if debug else logging.INFO
@@ -300,20 +301,25 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     replay_p.add_argument(
-        "--phase-run-id", required=True, type=positive_int,
+        "--phase-run-id",
+        required=True,
+        type=positive_int,
         help="evaluation_phase_runs id to resolve the trusted baseline from",
     )
     replay_p.add_argument("--name", required=True, help="Name for the new experiment")
     replay_p.add_argument(
-        "--model", default=None,
+        "--model",
+        default=None,
         help="Candidate model override (defaults to the baseline's resolved model)",
     )
     replay_p.add_argument(
-        "--prompt-file", default=None,
+        "--prompt-file",
+        default=None,
         help="UTF-8 text file replacing only the candidate's AgentConfig.system_prompt",
     )
     replay_p.add_argument(
-        "--execute-paid-replay", action="store_true",
+        "--execute-paid-replay",
+        action="store_true",
         help="Authorize execution: without this flag, replay only previews read-only",
     )
 
@@ -326,23 +332,33 @@ def parse_args() -> argparse.Namespace:
     )
     batch_selector_group = batch_replay_p.add_argument_group("selector (exactly one required)")
     batch_selector_group.add_argument(
-        "--phase-run-id", type=positive_int, nargs="+", default=None,
+        "--phase-run-id",
+        type=positive_int,
+        nargs="+",
+        default=None,
         help="One or more explicit evaluation_phase_runs ids",
     )
     batch_selector_group.add_argument(
-        "--scan-id", type=positive_int, default=None,
+        "--scan-id",
+        type=positive_int,
+        default=None,
         help="Every complete reply_draft phase run in this scan",
     )
     batch_selector_group.add_argument(
-        "--from", dest="from_utc", default=None,
+        "--from",
+        dest="from_utc",
+        default=None,
         help="Start of the UTC [from, to) window (requires --to)",
     )
     batch_selector_group.add_argument(
-        "--to", dest="to_utc", default=None,
+        "--to",
+        dest="to_utc",
+        default=None,
         help="End of the UTC [from, to) window (requires --from)",
     )
     batch_selector_group.add_argument(
-        "--graded-with-corrections", action="store_true",
+        "--graded-with-corrections",
+        action="store_true",
         help="Every complete reply_draft phase run with a recorded human correction",
     )
     batch_selector_group.add_argument(
@@ -352,45 +368,56 @@ def parse_args() -> argparse.Namespace:
     )
     batch_replay_p.add_argument("--name", required=True, help="Name for the new experiment run(s)")
     batch_replay_p.add_argument(
-        "--model", default=None,
+        "--model",
+        default=None,
         help="Candidate model override applied to every case (plain batch only, not --sweep-file)",
     )
     batch_replay_p.add_argument(
-        "--prompt-file", default=None,
+        "--prompt-file",
+        default=None,
         help=(
             "UTF-8 text file replacing every case's candidate system_prompt "
             "(plain batch only, not --sweep-file)"
         ),
     )
     batch_replay_p.add_argument(
-        "--sweep-file", default=None,
+        "--sweep-file",
+        default=None,
         help="Path to a canonical YAML or JSON replay-sweep v1 document",
     )
     batch_replay_p.add_argument(
-        "--skip-unscored", action="store_true",
+        "--skip-unscored",
+        action="store_true",
         help="Exclude unscored cases (no resolvable correction oracle) rather than refusing",
     )
     batch_replay_p.add_argument(
-        "--skip-no-op", action="store_true",
+        "--skip-no-op",
+        action="store_true",
         help="Exclude no-op pairs (candidate identical to baseline) rather than refusing",
     )
     batch_replay_p.add_argument(
-        "--skip-unpriceable", action="store_true",
+        "--skip-unpriceable",
+        action="store_true",
         help="Exclude unpriceable pairs (missing usage or pricing) rather than refusing",
     )
     batch_replay_p.add_argument(
-        "--pricing-catalog", default=None,
+        "--pricing-catalog",
+        default=None,
         help="Path to a replay-pricing v1 catalog (defaults to contracts/replay-pricing.v1.json)",
     )
     batch_replay_p.add_argument(
-        "--dossier-root", default=None, help="Override the dossier git checkout root",
+        "--dossier-root",
+        default=None,
+        help="Override the dossier git checkout root",
     )
     batch_replay_p.add_argument(
-        "--authorize-plan-sha256", default=None,
+        "--authorize-plan-sha256",
+        default=None,
         help="The canonical plan SHA-256 printed by preview -- required for --execute-paid-replay",
     )
     batch_replay_p.add_argument(
-        "--execute-paid-replay", action="store_true",
+        "--execute-paid-replay",
+        action="store_true",
         help="Authorize execution: without this flag, batch-replay only previews read-only",
     )
 
@@ -400,19 +427,27 @@ def parse_args() -> argparse.Namespace:
         "under one existing batch/sweep experiment_runs parent",
     )
     batch_retry_p.add_argument(
-        "--experiment-run-id", type=positive_int, required=True,
+        "--experiment-run-id",
+        type=positive_int,
+        required=True,
         help="The batch/sweep experiment_runs parent id to retry failed cases under",
     )
     batch_retry_p.add_argument(
-        "--phase-run-id", type=positive_int, nargs="*", default=None,
+        "--phase-run-id",
+        type=positive_int,
+        nargs="*",
+        default=None,
         help="Restrict the retry to these phase_run_ids (default: every failed latest attempt)",
     )
     batch_retry_p.add_argument(
-        "--pricing-catalog", default=None,
+        "--pricing-catalog",
+        default=None,
         help="Path to a replay-pricing v1 catalog (defaults to contracts/replay-pricing.v1.json)",
     )
     batch_retry_p.add_argument(
-        "--dossier-root", default=None, help="Override the dossier git checkout root",
+        "--dossier-root",
+        default=None,
+        help="Override the dossier git checkout root",
     )
 
     report_p = feedback_sub.add_parser(
@@ -421,19 +456,44 @@ def parse_args() -> argparse.Namespace:
         "experiment_runs parent ids",
     )
     report_p.add_argument(
-        "--experiment-run-id", type=positive_int, nargs="+", required=True,
+        "--experiment-run-id",
+        type=positive_int,
+        nargs="+",
+        required=True,
         help="One or more experiment_runs parent ids (a sweep's variants share one report)",
     )
     report_p.add_argument(
-        "--format", choices=["markdown", "json", "paa-json"], default="markdown",
+        "--format",
+        choices=["markdown", "json", "paa-json"],
+        default="markdown",
         help="Output format (default: markdown)",
     )
     report_p.add_argument(
-        "--out", default=None, help="Write the report to this file instead of stdout",
+        "--out",
+        default=None,
+        help="Write the report to this file instead of stdout",
     )
     report_p.add_argument(
-        "--pricing-catalog", default=None,
+        "--pricing-catalog",
+        default=None,
         help="Catalog used to price candidate usage in --format paa-json; estimates, not invoices",
+    )
+
+    grid_p = feedback_sub.add_parser(
+        "grid",
+        help="Expand a replay-sweep-grid v1 study document into the sweep files, "
+        "manifest.json and run.sh that batch-replay consumes",
+    )
+    grid_sub = grid_p.add_subparsers(dest="grid_command", required=True)
+    grid_expand_p = grid_sub.add_parser("expand", help="Validate the grid and write its expansion")
+    grid_expand_p.add_argument("grid_file", help="Path to the grid document (YAML or JSON)")
+    grid_expand_p.add_argument(
+        "--out", required=True, help="Directory to write sweeps, manifest.json and run.sh into"
+    )
+    grid_expand_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and list the sweeps without writing",
     )
 
     return parser.parse_args()
@@ -558,7 +618,10 @@ def paa_show(args: argparse.Namespace) -> None:
     """Handle `scout paa show`: the declaration and resolved current position."""
     with StateManager(db_path=DB_PATH) as state:
         result = paa_service.show(
-            ScoutEventStore(state), _paa_config(), task=args.task, scope=args.scope,
+            ScoutEventStore(state),
+            _paa_config(),
+            task=args.task,
+            scope=args.scope,
         )
     _print_paa_json(result)
 
@@ -567,7 +630,9 @@ def paa_list(args: argparse.Namespace) -> None:
     """Handle `scout paa list`: every motion derived from event history."""
     with StateManager(db_path=DB_PATH) as state:
         motions = paa_service.list_motions(
-            ScoutEventStore(state), status=args.status, task=args.task,
+            ScoutEventStore(state),
+            status=args.status,
+            task=args.task,
         )
     _print_paa_json({"motions": [m.to_json_dict() for m in motions]})
 
@@ -825,7 +890,10 @@ def main() -> None:
             elif args.paa_command == "list":
                 paa_list(args)
         except (
-            paa_service.PaaServiceError, PaaDeclarationError, EvidenceError, OSError,
+            paa_service.PaaServiceError,
+            PaaDeclarationError,
+            EvidenceError,
+            OSError,
         ) as exc:
             print(f"paa {args.paa_command} error: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
@@ -834,6 +902,7 @@ def main() -> None:
         from scout.cli.replay import (
             batch_replay_feedback,
             batch_retry_feedback,
+            grid_expand_feedback,
             replay_feedback,
             report_feedback,
         )
@@ -846,6 +915,8 @@ def main() -> None:
             batch_retry_feedback(args)
         elif args.feedback_command == "report":
             report_feedback(args)
+        elif args.feedback_command == "grid":
+            grid_expand_feedback(args)
         return
     if args.stats:
         show_stats()
