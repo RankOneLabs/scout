@@ -1664,6 +1664,62 @@ def _resolve_relevance_output(root: Span) -> RelevancePhaseOutput:
     return output
 
 
+async def _verify_relevance_decision(
+    state: StateManager,
+    tracer: TracingLogger,
+    relevance: RelevanceCaseSource,
+    output: RelevancePhaseOutput,
+) -> None:
+    """Distinguish the relevance phase from a later, verified critic rejection.
+
+    The scanning pipeline stores relevant=False when the critic rejects a
+    draft, even if topical triage passed. Preserve that stored decision and
+    its human target; score the historical relevance model from its own trace.
+    A surface-status annotation alone cannot authorize a mismatched baseline.
+    """
+    evaluation = relevance.source.evaluation
+    if evaluation is not None and output.relevant == bool(evaluation.relevant):
+        return
+    message = "Relevance output differs from frozen evaluation decision"
+    if (
+        evaluation is None
+        or not output.relevant
+        or evaluation.relevant != 0
+        or evaluation.surface_status != "critic_rejected"
+    ):
+        raise SelectorResolutionError(message)
+    critics = [phase for phase in relevance.source.phase_runs if phase.phase == "critic"]
+    if len(critics) != 1:
+        raise SelectorResolutionError(f"{message}: expected one frozen critic phase")
+    critic = critics[0]
+    if (
+        critic.status != "complete"
+        or critic.evaluation_id != evaluation.id
+        or critic.post_id != evaluation.post_id
+        or critic.scan_id != evaluation.scan_id
+        or state.get_phase_run(critic.id) != dataclasses.asdict(critic)
+    ):
+        raise SelectorResolutionError(f"{message}: critic phase identity mismatch")
+    with state.db.read_transaction():
+        snapshot = state.conn.execute(
+            "SELECT p.phase, s.scan_id FROM feedback_snapshot_phases p "
+            "JOIN feedback_snapshots s ON s.id=p.snapshot_id WHERE p.id=?",
+            (critic.snapshot_phase_id,),
+        ).fetchone()
+    if snapshot is None or snapshot["phase"] != "critic" or snapshot["scan_id"] != critic.scan_id:
+        raise SelectorResolutionError(f"{message}: critic snapshot association mismatch")
+    baseline = await resolve_baseline(state, tracer, critic.id)
+    side = _side_evidence(baseline.root_span)
+    if not side.complete or _sha256_utf8(_canonical_json(side.value)) != side.sha256:
+        raise SelectorResolutionError(f"{message}: incomplete or corrupt critic output")
+    try:
+        critique = CritiquePhaseOutput.model_validate(side.value, strict=True)
+    except ValidationError as exc:
+        raise SelectorResolutionError(f"{message}: invalid critic output") from exc
+    if critique.verdict != "reject" or critique.feedback != evaluation.failure_reason:
+        raise SelectorResolutionError(f"{message}: critic rejection does not match evaluation")
+
+
 async def _resolve_batch_case(
     state: StateManager,
     tracer: TracingLogger,
@@ -1687,12 +1743,7 @@ async def _resolve_batch_case(
         if phase_run != dataclasses.asdict(relevance.phase_run):
             raise SelectorResolutionError("Live phase identity differs from the frozen corpus")
         output = _resolve_relevance_output(baseline.root_span)
-        if relevance.source.evaluation is None or output.relevant != bool(
-            relevance.source.evaluation.relevant
-        ):
-            raise SelectorResolutionError(
-                "Relevance output differs from frozen evaluation decision"
-            )
+        await _verify_relevance_decision(state, tracer, relevance, output)
     else:
         try:
             oracle = resolve_reply_correction_oracle(state, phase_run, dossier_root=dossier_root)
