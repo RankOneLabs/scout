@@ -1,0 +1,1212 @@
+{
+  "format": "scout.heldout-comparison/v1",
+  "snapshot_digest": "881df34dafbcaac6531d9c0b1526123a2f117640c0833de732afcf9ebbe814cb",
+  "partition_digest": "4c38d622bef8a5ecca591083d835c7ad13290cc1d1764209bf20e70f610f28ae",
+  "plan_sha256": "c0c4812ba8ed3995885626219f9ad3b9e213fdeb512c0b5eaa3ff45c09690eda",
+  "original_cases": 40,
+  "retained_cases": 40,
+  "human_relevant": 13,
+  "human_not_relevant": 27,
+  "majority_class_accuracy": 0.675,
+  "models": [
+    {
+      "variant": "gemini-2.5-flash-reference",
+      "accuracy": 0.4833333333333334,
+      "precision": 0.367816091954023,
+      "recall": 0.8205128205128205,
+      "intervals_95": {
+        "accuracy": {
+          "low": 0.35,
+          "high": 0.6333333333333333,
+          "defined_resamples": 10000
+        },
+        "precision": {
+          "low": 0.20224719101123595,
+          "high": 0.5416666666666666,
+          "defined_resamples": 10000
+        },
+        "recall": {
+          "low": 0.611111111111111,
+          "high": 1.0,
+          "defined_resamples": 10000
+        }
+      },
+      "successful_cases": 40,
+      "common_cases": 40,
+      "successful_draws": 120,
+      "unstable_cases": 5,
+      "strata": {
+        "0": {
+          "accuracy": 0.4,
+          "precision": 0.275,
+          "recall": 0.611111111111111
+        },
+        "1": {
+          "accuracy": 0.5666666666666667,
+          "precision": 0.4468085106382979,
+          "recall": 1.0
+        }
+      },
+      "accuracy_difference_vs_reference": 0.0,
+      "paired_difference_interval_95": {
+        "low": 0.0,
+        "high": 0.0,
+        "defined_resamples": 10000
+      }
+    },
+    {
+      "variant": "gemma-4-26b-a4b",
+      "accuracy": 0.55,
+      "precision": 0.4074074074074074,
+      "recall": 0.8461538461538461,
+      "intervals_95": {
+        "accuracy": {
+          "low": 0.4083333333333334,
+          "high": 0.7,
+          "defined_resamples": 10000
+        },
+        "precision": {
+          "low": 0.23076923076923078,
+          "high": 0.5915631949592289,
+          "defined_resamples": 10000
+        },
+        "recall": {
+          "low": 0.6363636363636364,
+          "high": 1.0,
+          "defined_resamples": 10000
+        }
+      },
+      "successful_cases": 40,
+      "common_cases": 40,
+      "successful_draws": 120,
+      "unstable_cases": 5,
+      "strata": {
+        "0": {
+          "accuracy": 0.5333333333333334,
+          "precision": 0.35294117647058826,
+          "recall": 0.6666666666666666
+        },
+        "1": {
+          "accuracy": 0.5666666666666667,
+          "precision": 0.4468085106382979,
+          "recall": 1.0
+        }
+      },
+      "accuracy_difference_vs_reference": 0.06666666666666665,
+      "paired_difference_interval_95": {
+        "low": -0.016666666666666663,
+        "high": 0.15000000000000002,
+        "defined_resamples": 10000
+      }
+    },
+    {
+      "variant": "qwen3-30b-a3b-2507",
+      "accuracy": 0.525,
+      "precision": 0.38750000000000007,
+      "recall": 0.7948717948717949,
+      "intervals_95": {
+        "accuracy": {
+          "low": 0.3916666666666666,
+          "high": 0.6666666666666666,
+          "defined_resamples": 10000
+        },
+        "precision": {
+          "low": 0.21347940074906366,
+          "high": 0.568201410658307,
+          "defined_resamples": 10000
+        },
+        "recall": {
+          "low": 0.6153846153846154,
+          "high": 0.9629629629629629,
+          "defined_resamples": 10000
+        }
+      },
+      "successful_cases": 40,
+      "common_cases": 40,
+      "successful_draws": 120,
+      "unstable_cases": 8,
+      "strata": {
+        "0": {
+          "accuracy": 0.5333333333333334,
+          "precision": 0.3333333333333333,
+          "recall": 0.5555555555555555
+        },
+        "1": {
+          "accuracy": 0.5166666666666667,
+          "precision": 0.42000000000000004,
+          "recall": 1.0
+        }
+      },
+      "accuracy_difference_vs_reference": 0.04166666666666663,
+      "paired_difference_interval_95": {
+        "low": -0.08333333333333326,
+        "high": 0.16666666666666652,
+        "defined_resamples": 10000
+      }
+    }
+  ],
+  "verification": {
+    "database": "/app/data/campaigns/heldout-agent-ops-2026-09-11/run/state.db",
+    "runs": [
+      {
+        "variant": "gemini-2.5-flash-reference",
+        "run_id": 120,
+        "status": "complete",
+        "attempts": 120,
+        "status_counts": {
+          "complete": 120
+        },
+        "llm_calls": 121,
+        "retries": 0,
+        "exact_plan_membership": true,
+        "known_cost_usd": 0.0573764,
+        "unknown_cost_attempts": 1,
+        "feedback_verified_attempts": 120,
+        "errors": [],
+        "agent_latency_ms": {
+          "count": 120,
+          "median": 1273.9515000000001,
+          "p95": 1896.7509499999992
+        },
+        "llm_latency_ms": {
+          "count": 121,
+          "median": 1178.671,
+          "p95": 1739.152
+        }
+      },
+      {
+        "variant": "qwen3-30b-a3b-2507",
+        "run_id": 121,
+        "status": "complete",
+        "attempts": 120,
+        "status_counts": {
+          "complete": 120
+        },
+        "llm_calls": 120,
+        "retries": 0,
+        "exact_plan_membership": true,
+        "known_cost_usd": 0.01016562705,
+        "unknown_cost_attempts": 0,
+        "feedback_verified_attempts": 120,
+        "errors": [],
+        "agent_latency_ms": {
+          "count": 120,
+          "median": 2406.339,
+          "p95": 4185.971799999999
+        },
+        "llm_latency_ms": {
+          "count": 120,
+          "median": 2304.232,
+          "p95": 4104.349199999999
+        }
+      },
+      {
+        "variant": "gemma-4-26b-a4b",
+        "run_id": 122,
+        "status": "complete",
+        "attempts": 120,
+        "status_counts": {
+          "complete": 120
+        },
+        "llm_calls": 120,
+        "retries": 0,
+        "exact_plan_membership": true,
+        "known_cost_usd": 0.01111726,
+        "unknown_cost_attempts": 0,
+        "feedback_verified_attempts": 120,
+        "errors": [],
+        "agent_latency_ms": {
+          "count": 120,
+          "median": 2174.2535,
+          "p95": 4940.48385
+        },
+        "llm_latency_ms": {
+          "count": 120,
+          "median": 2085.328,
+          "p95": 4845.610899999999
+        }
+      }
+    ]
+  },
+  "bootstrap": {
+    "seed": 20260911,
+    "resamples": 10000,
+    "unit": "related group / case",
+    "stratified_by": "final_stored_evaluation_decision",
+    "confidence_level": 0.95,
+    "method": "paired percentile",
+    "computed": true,
+    "rng": "numpy.default_rng / PCG64",
+    "quantile": "linear",
+    "paired_models_and_repeats": true
+  },
+  "historical_relevance_model": {
+    "accuracy": 0.475,
+    "precision": 0.3571428571428571,
+    "recall": 0.7692307692307693
+  },
+  "sampling_strata_note": "The 20/20 sampling strata are final stored evaluation decisions. Eight negative-stratum cases have positive relevance traces and verified later critic rejections.",
+  "scope": "Equal-case diagnostic cohort, not production prevalence. Marginal 95% intervals; no hypothesis tests or familywise winner claims.",
+  "case_results": [
+    {
+      "case_id": 5,
+      "evaluation_id": 48080,
+      "group_id": "ec49d42b23a5f7acbe641127e33e3107c0216ccaf95be6bcab8d9162c171164e",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 33,
+      "evaluation_id": 48101,
+      "group_id": "861684064a09aa8d5062e81c01a842c0b15d9519cae4a5d7305a17b86cad3ea6",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 34,
+      "evaluation_id": 48117,
+      "group_id": "d16c78c8e7856c0aab3b0e64cf1447f45551e45af7749e22d11f0c40814e3f72",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          true,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 37,
+      "evaluation_id": 48120,
+      "group_id": "a4921f68ce2337c995ff953d33d874589aa4edd3473403b34ed637db1ae0916e",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 36,
+      "evaluation_id": 48230,
+      "group_id": "3bb625957d0ad99acfee479b433ee1a840b055069df7930bef2a4c96079a2a44",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 6,
+      "evaluation_id": 48238,
+      "group_id": "7722d29356045b0dbb28cbc7b3ceddb27158524c9b2e6c5d935a925c0e95e146",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 12,
+      "evaluation_id": 48245,
+      "group_id": "3ada523fdeabda84c222604d3dd865c69154bd65c7388d2825a5e73d006b86b6",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 40,
+      "evaluation_id": 48254,
+      "group_id": "a71c1cae28142c074a7563ecf362b4c758d94a411c920a42de9e5b178bcf67c5",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 32,
+      "evaluation_id": 48370,
+      "group_id": "45edf54c3833bf5f327685c7c1ad203532fade942fa905205e1972dfeee10beb",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 4,
+      "evaluation_id": 48371,
+      "group_id": "bdc53f75fbfe2cd6cbf54b4314df3774bfaef8af938a0af321a045e93b7cf44a",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 2,
+      "evaluation_id": 48558,
+      "group_id": "5077c0a3808bcd7f53b699d825ed36e021230a6784a83cc7348d47e53065b0e4",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 26,
+      "evaluation_id": 48560,
+      "group_id": "2642e90d9887e1a2eab1ac0c890cc6e7249d544a6fad7f210aac008670a91ee8",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 14,
+      "evaluation_id": 48607,
+      "group_id": "a4dfc40a1deb8796017b75f355608ff41dd91cffdca0887985fbafa65d521b70",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 8,
+      "evaluation_id": 48679,
+      "group_id": "780c404a6a3b7507df78a1dd4a757022cc2ee9388a35e7f9427268a4e48b15ec",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 13,
+      "evaluation_id": 48680,
+      "group_id": "9632ba43bf90ca9d72d35a02b045ab82efa1346f778f5d1b23031100a92bdcb0",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          true,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 1,
+      "evaluation_id": 48716,
+      "group_id": "712fd848dab81b92a6798acd971d5e12a9ae292613fc7c715a11be4305c6d213",
+      "sampling_stratum": 0,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 30,
+      "evaluation_id": 48761,
+      "group_id": "74ae315908545ae6128a73a3b37ea55e5c0821a9a9c927a825ae01385a3ce3da",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 7,
+      "evaluation_id": 48858,
+      "group_id": "a5432494616bf9f8cb8a6edaa436a7df8d352138e96d4fd8b0e23d1a65255c5c",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 16,
+      "evaluation_id": 48867,
+      "group_id": "f053e890acb2f21b28d967550fd2e49eb8ab84f3058465265067fc55e6f5c105",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 18,
+      "evaluation_id": 48903,
+      "group_id": "7f1be3225afd685de532a63b8f747de93f39ca1d69f10e669321b8e9e9049d34",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 24,
+      "evaluation_id": 48988,
+      "group_id": "648c8224b0537e939a765c493ff2e12f52b996b86cec1194c5497a13ad9b54e8",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 25,
+      "evaluation_id": 48989,
+      "group_id": "64f74616172779d5324a336a9b91500e43968570a3f23fb7a3145ad46c4e1880",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          false,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 21,
+      "evaluation_id": 48990,
+      "group_id": "e66cb0141a76ef6ee0d335795247031e6ff1420a3b5baaede1f874dafce9d3e8",
+      "sampling_stratum": 0,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 28,
+      "evaluation_id": 48991,
+      "group_id": "7b077721d9667c10484b24b67897d6022dd2d60fd8ef3f07482a6a33be06089d",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 39,
+      "evaluation_id": 48992,
+      "group_id": "850d56cf31e608844a776cb3ef5600bbedc8625d4fbb260f0d7c2ba2772a63d9",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 15,
+      "evaluation_id": 48998,
+      "group_id": "94e26f63e959487b501e55654f9186911e3155780e0b7f2c2f1576bbc53ca3e3",
+      "sampling_stratum": 1,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          false,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 3,
+      "evaluation_id": 49002,
+      "group_id": "70ef059e99aee83759406a08289e84f03b1907323d586877c4f499a3a8e64683",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 19,
+      "evaluation_id": 49004,
+      "group_id": "21277d8c3c6e6697e7d58be274bbd9dd62545452ffb5f536ce177e2dcb21e0f1",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 11,
+      "evaluation_id": 49010,
+      "group_id": "b6253aa65aee8019d207120d6e54221fca2694baa9e9dbb000a4f6d436b77603",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 23,
+      "evaluation_id": 49012,
+      "group_id": "d12995940ef5b3f6a412deb653415dfc4a5528d2ac4f81a2f100919e1740cd47",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          false,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 35,
+      "evaluation_id": 49021,
+      "group_id": "2c045933f4ce3941ce2ade6dafe1af34759db7528e7be75bbd230cdf544c5415",
+      "sampling_stratum": 0,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 9,
+      "evaluation_id": 49028,
+      "group_id": "081d9f57a6e109db4c88c1eaccdd09f4de1422cc78c285b0360b0abdd5fa0b36",
+      "sampling_stratum": 0,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 22,
+      "evaluation_id": 49029,
+      "group_id": "9204b0f635fa08cd0c945e5075cebc55e84772643741f761f26da0c3a3cd4716",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 27,
+      "evaluation_id": 49033,
+      "group_id": "092652533adaefcc5d2573b150feb3896da9fc53e86accf64d70bb43bb0300ea",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 17,
+      "evaluation_id": 49035,
+      "group_id": "8c1334360079eaec3c39af300324af7ef8d32942fbefdf6f3d565f687ad73f04",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 20,
+      "evaluation_id": 49037,
+      "group_id": "d1db1c7171e32d9b70c45f28a6047c877d63f3ab367a257506150cbb9390b6dd",
+      "sampling_stratum": 0,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 29,
+      "evaluation_id": 49041,
+      "group_id": "071b110b0a2fe8d8420d70cfde881aca9766f4cbe5fed3e7a9e7aa3093db85b3",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          false,
+          false,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          false,
+          false
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 31,
+      "evaluation_id": 49042,
+      "group_id": "f5d31b62f29e1fbe1e5943ed21e27687af76fcd40eb0d8f6a324122913ee4478",
+      "sampling_stratum": 0,
+      "human_relevant": false,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          false,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "case_id": 10,
+      "evaluation_id": 49043,
+      "group_id": "b1a85623e2a7687543d9988b8546b5ea289cab33fbee6d6403d864d8dfcd2cf7",
+      "sampling_stratum": 1,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          true
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "case_id": 38,
+      "evaluation_id": 49045,
+      "group_id": "56aad8120ce39a64cfdb379625c0a930bd35f85d1446e55f122519cfa387f672",
+      "sampling_stratum": 0,
+      "human_relevant": true,
+      "predictions": {
+        "gemini-2.5-flash-reference": [
+          true,
+          true,
+          false
+        ],
+        "gemma-4-26b-a4b": [
+          true,
+          true,
+          true
+        ],
+        "qwen3-30b-a3b-2507": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  ]
+}
