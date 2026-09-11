@@ -119,6 +119,16 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     skipped = skippedIds.size;
     planned = config.phase_run_ids.length;
     if (planned !== caseIds.size + skipped) fail("plan population is incomplete");
+    // Execution runs a case's repeats back to back, so a run cut short can
+    // leave a case with only its earlier repeats; the summary must not
+    // then read as a complete run with fewer observations than authorized.
+    const repeats = config.repeats ?? 1;
+    const chainsByCase = new Map<number, number>();
+    for (const key of byChain.keys()) {
+      const caseId = Number(key.slice(0, key.indexOf(":")));
+      chainsByCase.set(caseId, (chainsByCase.get(caseId) ?? 0) + 1);
+    }
+    for (const count of chainsByCase.values()) if (count !== repeats) fail("repeat population is incomplete");
   }
 
   const statusCounts: Record<ExperimentStatus, number> = { queued: 0, running: 0, complete: 0, failed: 0 };

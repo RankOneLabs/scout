@@ -42,6 +42,24 @@ describe("aggregateExperimentRun", () => {
     expect(() => aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, 1, 4, 0.1, 2)] })).toThrow(/lineage root/);
   });
 
+  it("reports planned repeats at case level and rejects a case missing a repeat", () => {
+    const config = {
+      version: 4 as const, phase: "reply_draft" as const, variant_name: "default", model_override: "candidate",
+      system_prompt_override: null, system_prompt_override_sha256: null, repeats: 2, grader_attached: true,
+      sweep: null, plan_sha256: "p", phase_run_ids: [11], dropped_duplicate_phase_run_ids: [], skipped_pairs: [],
+    };
+    const base = { id: 7, name: "run", status: "complete" as const, created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config };
+    const result = aggregateExperimentRun({ ...base, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, null, 4, 0.1, 2)] });
+    // Both counts are in cases; the chains and repeats sit beside them.
+    expect(result.planned_case_count).toBe(1);
+    expect(result.current_case_count).toBe(1);
+    expect(result.current_chain_count).toBe(2);
+    expect(result.repeat_count).toBe(2);
+    expect(result.correction_distance.case_count).toBe(1);
+    // A run cut short after repeat 1 must not read as a complete run.
+    expect(() => aggregateExperimentRun({ ...base, attempts: [attempt(1, 1, null, 2, 0.1)] })).toThrow(/repeat population/);
+  });
+
   it("rejects broken lineage", () => {
     expect(() => aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: { version: 2, phase: "reply_draft", model: "candidate", system_prompt: "p", system_prompt_sha256: "h", grader_attached: true }, attempts: [attempt(2, 2, null, -1, 0.2)] })).toThrow(/lineage root/);
   });

@@ -430,7 +430,45 @@ class TestBuildBatchReport:
         assert report["correction_coverage"]["failed_attempts"] == 1
         assert len(report["exclusions"]) == 1
         assert report["exclusions"][0]["phase_run_id"] == hi
+        assert report["exclusions"][0]["repeat_index"] == 1
         assert report["exclusions"][0]["reason"] == ee._STAGE_MESSAGES["candidate_execution"]
+        markdown = rr.render_markdown(report)
+        assert f"- phase_run_id `{hi}` variant `default` repeat 1 (failed)" in markdown
+
+    async def test_all_skipped_variant_reports_planned_repeats(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        _patch_resolve_dossier(monkeypatch)
+        unscored, _ = await _seed_reply_draft_correction(
+            state, tracer, feedback, model="claude-opus-4-20250514", link_reply_revision=False,
+        )
+        candidate_client = _FakeLLMClient([], model="claude-sonnet-4-20250514")
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate_client})
+        variants = (
+            ee.BatchVariant(ee.DEFAULT_BATCH_VARIANT_NAME, "claude-sonnet-4-20250514", None),
+        )
+        selector = ee.BatchSelector.by_phase_run_ids([unscored])
+        skip_policy = ee.SkipPolicy(skip_unscored=True)
+        catalog = _pricing_catalog_for_tests()
+        plan = await ee.build_batch_plan(
+            state=state, tracer=tracer, selector=selector, variants=variants,
+            skip_policy=skip_policy, pricing_catalog=catalog, dossier_root=Path("/unused"),
+            repeats=3,
+        )
+        outcome = await ee.execute_batch_replay(
+            state=state, tracer=tracer, feedback=feedback, name="all-skipped",
+            selector=selector, variants=variants, skip_policy=skip_policy,
+            authorize_plan_sha256=plan.plan_sha256, pricing_catalog=catalog,
+            dossier_root=Path("/unused"), repeats=3,
+        )
+        run_id = outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME]
+        report = rr.build_batch_report(state, experiment_run_ids=[run_id])
+        variant = report["segments"][0]["variants"][0]
+        assert variant["scored_case_count"] == 0
+        assert variant["unscored_count"] == 1
+        # No attempt ever ran, so the plan is the only witness to the repeat count.
+        assert variant["repeat_count"] == 3
+        assert report["exclusions"][0]["repeat_index"] is None
 
     def test_unknown_experiment_run_id_raises(self, state) -> None:
         with pytest.raises(rr.ReportError, match="no experiment_runs row"):

@@ -453,6 +453,9 @@ class SkippedPair:
     segment_key: str
     classification: str
     reason: str | None
+    # The parent's planned repeats, so a variant whose every pair was
+    # skipped still reports the repeat count its plan authorized.
+    repeat_count: int
 
 
 def _collect_attempted_cases(
@@ -519,7 +522,7 @@ def _collect_skipped_pairs(parents: list[dict[str, Any]]) -> list[SkippedPair]:
                 SkippedPair(
                     phase_run_id=raw["phase_run_id"], variant_name=variant_name,
                     segment_key=segment_key, classification=raw["classification"],
-                    reason=raw["reason"],
+                    reason=raw["reason"], repeat_count=parent.get("repeats", 1),
                 )
             )
     return skipped
@@ -686,7 +689,11 @@ def _build_segments(
                     failed_case_count=len({c.phase_run_id for c in failed}),
                     scored_attempt_count=len(scored),
                     failed_attempt_count=len(failed),
-                    repeat_count=max((c.repeat_count for c in variant_cases), default=1),
+                    repeat_count=max(
+                        [c.repeat_count for c in variant_cases]
+                        + [s.repeat_count for s in variant_skipped],
+                        default=1,
+                    ),
                     within_case_range_mean=sum(ranges) / len(ranges) if ranges else None,
                     unscored_count=skip_counts.get("unscored", 0),
                     no_op_count=skip_counts.get("no_op", 0),
@@ -762,17 +769,24 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
     exclusions = [
         {
             "phase_run_id": pair.phase_run_id, "variant": pair.variant_name, "kind": "skipped",
-            "classification": pair.classification, "reason": pair.reason,
+            "repeat_index": None, "classification": pair.classification, "reason": pair.reason,
         }
         for pair in skipped
     ] + [
         {
             "phase_run_id": case.phase_run_id, "variant": case.variant_name, "kind": "failed",
-            "classification": None, "reason": case.error_detail,
+            "repeat_index": case.repeat_index, "classification": None,
+            "reason": case.error_detail,
         }
         for case in failed_cases
     ]
-    exclusions.sort(key=lambda item: (item["phase_run_id"], item["variant"], item["kind"]))
+    # A skipped pair never ran, so it has no repeat; a failed attempt names
+    # its repeat because each repeat of one case fails on its own.
+    exclusions.sort(
+        key=lambda item: (
+            item["phase_run_id"], item["variant"], item["kind"], item["repeat_index"] or 0,
+        )
+    )
 
     return {
         "version": REPORT_SCHEMA_VERSION,
@@ -1015,9 +1029,11 @@ def render_markdown(report: dict[str, Any]) -> str:
             detail = (
                 exclusion["classification"] if exclusion["kind"] == "skipped" else exclusion["kind"]
             )
+            repeat = exclusion.get("repeat_index")
+            repeat_label = f" repeat {repeat}" if repeat is not None else ""
             lines.append(
-                f"- phase_run_id `{exclusion['phase_run_id']}` variant `{exclusion['variant']}` "
-                f"({detail}): {exclusion['reason']}"
+                f"- phase_run_id `{exclusion['phase_run_id']}` variant `{exclusion['variant']}`"
+                f"{repeat_label} ({detail}): {exclusion['reason']}"
             )
         lines.append("")
 

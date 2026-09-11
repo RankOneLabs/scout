@@ -544,10 +544,12 @@ still counts toward the report's total actual spend (above).
 - No web mutation route, queue, or worker — CLI only, exactly like
   single-phase replay.
 - No cross-segment ranking or overall "winner" claim, ever.
-- No schema changes: a batch/sweep `experiment_runs` parent's shared
+- No new tables: a batch/sweep `experiment_runs` parent's shared
   override *policy*, authorized plan identity, resolved population, and
   this variant's skipped-pair evidence all live in `candidate_config`,
   and each case's fully resolved candidate identity, correction pin, and
   estimate live in that case's own `baseline_evidence` — both reuse the
   existing `experiment_runs`/`evaluation_experiments` tables single-phase
-  replay already writes to.
+  replay already writes to. The one column repeats added,
+  `evaluation_experiments.repeat_index`, arrives with schema migration 41,
+  which `StateManager` applies when it opens an existing database.
