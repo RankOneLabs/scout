@@ -1,0 +1,108 @@
+[
+  {
+    "id": 116,
+    "name": "production-smoke-2026-09-11-agent-ops-topical-openrouter:qwen3-30b-a3b-2507-nothink-openrouter",
+    "status": "complete",
+    "phase": "relevance",
+    "grader_attached": true,
+    "created_at": "2026-09-11T18:34:40.606504+00:00",
+    "completed_at": "2026-09-11T18:34:46.862388+00:00",
+    "planned_case_count": 3,
+    "attempted_case_count": 3,
+    "skipped_case_count": 0,
+    "current_case_count": 3,
+    "current_chain_count": 3,
+    "repeat_count": 1,
+    "retry_count": 0,
+    "status_counts": {
+      "queued": 0,
+      "running": 0,
+      "complete": 3,
+      "failed": 0
+    },
+    "total_llm_call_count": 3,
+    "total_cost": 0.0002475801,
+    "verdict": "no_measurable_difference",
+    "correction_distance": {
+      "available": false,
+      "case_count": 0,
+      "baseline_mean": null,
+      "candidate_mean": null,
+      "mean_delta": null
+    },
+    "relevance_accuracy": {
+      "available": true,
+      "case_count": 3,
+      "baseline_mean": 1,
+      "candidate_mean": 1,
+      "mean_delta": 0
+    },
+    "cost": {
+      "available": true,
+      "case_count": 3,
+      "baseline_mean": 0.00043786666666666667,
+      "candidate_mean": 8.25267e-05,
+      "mean_delta": -0.00035533996666666667
+    },
+    "latency": {
+      "available": true,
+      "case_count": 3,
+      "baseline_mean": 5990.631333333334,
+      "candidate_mean": 2054.0553333333332,
+      "mean_delta": -3936.5760000000005
+    }
+  },
+  {
+    "id": 117,
+    "name": "production-smoke-2026-09-11-agent-ops-topical-openrouter:gemma-4-26b-a4b-nothink-openrouter",
+    "status": "complete",
+    "phase": "relevance",
+    "grader_attached": true,
+    "created_at": "2026-09-11T18:34:40.608732+00:00",
+    "completed_at": "2026-09-11T18:34:50.970860+00:00",
+    "planned_case_count": 3,
+    "attempted_case_count": 3,
+    "skipped_case_count": 0,
+    "current_case_count": 3,
+    "current_chain_count": 3,
+    "repeat_count": 1,
+    "retry_count": 0,
+    "status_counts": {
+      "queued": 0,
+      "running": 0,
+      "complete": 3,
+      "failed": 0
+    },
+    "total_llm_call_count": 3,
+    "total_cost": 0.00033975,
+    "verdict": "no_measurable_difference",
+    "correction_distance": {
+      "available": false,
+      "case_count": 0,
+      "baseline_mean": null,
+      "candidate_mean": null,
+      "mean_delta": null
+    },
+    "relevance_accuracy": {
+      "available": true,
+      "case_count": 3,
+      "baseline_mean": 1,
+      "candidate_mean": 1,
+      "mean_delta": 0
+    },
+    "cost": {
+      "available": true,
+      "case_count": 3,
+      "baseline_mean": 0.00043786666666666667,
+      "candidate_mean": 0.00011325,
+      "mean_delta": -0.00032461666666666665
+    },
+    "latency": {
+      "available": true,
+      "case_count": 3,
+      "baseline_mean": 5990.631333333334,
+      "candidate_mean": 1343.993333333333,
+      "mean_delta": -4646.638000000001
+    }
+  }
+]

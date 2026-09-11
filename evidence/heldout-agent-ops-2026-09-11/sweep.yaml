@@ -1,0 +1,14 @@
+version: 1
+name: heldout-agent-ops-2026-09-11
+axis: model
+prompt_file: prompt.md
+variants:
+  - name: gemini-2.5-flash-reference
+    model: openrouter/google/gemini-2.5-flash
+    reasoning: false
+  - name: qwen3-30b-a3b-2507
+    model: openrouter/qwen/qwen3-30b-a3b-instruct-2507
+    reasoning: false
+  - name: gemma-4-26b-a4b
+    model: openrouter/google/gemma-4-26b-a4b-it
+    reasoning: false

@@ -1,0 +1,18 @@
+{
+  "RESULTS.md": "2e9b99ef75798c2d7fa00c19d764a2a9d8bed9e88ace48ac9e97fba21aab4d6b",
+  "api-verification.json": "f9ae2e3f3bbf58673e016fae8fc45a97c6e1f01acbec3f9dd3dfafe57ab37bf2",
+  "draft-provider-deployed.json": "cdf96bada7e4f7d3a2647b930131e38579bb19a1e98c37bf74c00bae8a9307fa",
+  "draft-provider-probe.json": "a1209022cdd984a51586095ca9467eb183cc31ebcbb27ca345fc918f802d2571",
+  "environment.json": "496fe10bae6dbe2636791c82149cf41286bb3ef3032da7c514023ffb395836e2",
+  "execution.txt": "2c606eef6e369f57823ed2c40e08dc8c233b915d096e2f0778e937c7a865f6d7",
+  "preview.txt": "0bbb39e8ed5a4501f97a5636f692830478b1be540305f77ea670d342d189727d",
+  "production-smoke-2026-09-11-agent-ops-topical-openrouter.outcome.json": "37a6c049ab3bcb9609079c62f61a6ce90b90d64edbbfd8e0da79ef3a7515b50c",
+  "reports/index.md": "2d26aca2707f99d92d819b85407606d2ec59d602f8d143234a0b9ae812124ec0",
+  "reports/production-smoke-2026-09-11-agent-ops-topical-openrouter.json": "3e28fb546e6f08f2186564b2a6446284b4b7962e8486ebc2d9aadc8504a86d21",
+  "reports/production-smoke-2026-09-11-agent-ops-topical-openrouter.md": "61fb5c907b83d44b21fb117a8cf6ef82956835146d73ed71365efad6cca23d33",
+  "selection.json": "1dfbeca6e94e9aa61043b8f8b6d5b60cfef4ef7afbeab40e4da314a967bfd3ff",
+  "study-manifest.json": "444de92bce9a24f366773e6390dfb192ebce17946a411e37808dfc92a8329f9a",
+  "study.yaml": "3ac5ee4ba451b39fa49e8c78e9f3c2a7275b20d3288c2953463c39163245f744",
+  "task.json": "07c136d1787ec094d156fa0be0d839e34b946b98e5736269b98bc3e09d0e6590",
+  "verification.json": "a493d8b093daa5f626376b2f2df14e24de0bf7ac3d1ac9ff18776611fc8f0144"
+}

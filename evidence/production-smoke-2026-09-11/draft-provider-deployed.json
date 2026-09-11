@@ -1,0 +1,26 @@
+{
+  "purpose": "validate installed production drafting schema; synthetic input, no publishing",
+  "deployment_commit": "d20bf214873ee62d4b8928438505fd4ad4508f5c",
+  "tool_sha256": "fedf8a8fbcf3d1f88a59eb438a03b7ea37507182af75c3c1d5a4f9a89f792a27",
+  "model": "openrouter/openai/gpt-5-mini",
+  "returned_model": "openai/gpt-5-mini",
+  "provider_calls": 1,
+  "status": "complete",
+  "usage": {
+    "input_tokens": 289,
+    "output_tokens": 1349,
+    "cost": 0.00277025
+  },
+  "output": {
+    "posture": "ask",
+    "segments": [
+      {
+        "type": "question",
+        "text": "What failed?"
+      }
+    ],
+    "claims": [],
+    "resources_used": [],
+    "abstain_reason": null
+  }
+}

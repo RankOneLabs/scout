@@ -1,0 +1,7 @@
+# production-smoke-2026-09-11
+
+Status: **complete**
+
+Reports use retained targets and all attempt costs.
+
+- [production-smoke-2026-09-11-agent-ops-topical-openrouter](production-smoke-2026-09-11-agent-ops-topical-openrouter.md): **complete**

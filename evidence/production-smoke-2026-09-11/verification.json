@@ -1,0 +1,34 @@
+{
+  "database": "willie:/app/data/scout.db",
+  "runs": [
+    {
+      "run_id": 116,
+      "variant": "qwen3-30b-a3b-2507-nothink-openrouter",
+      "status": "complete",
+      "attempts": 3,
+      "calls": 3,
+      "retries": 0,
+      "cost_usd": 0.0002475801,
+      "exact_plan_membership": true,
+      "reasoning_override": false,
+      "trace_call_count_verified": true
+    },
+    {
+      "run_id": 117,
+      "variant": "gemma-4-26b-a4b-nothink-openrouter",
+      "status": "complete",
+      "attempts": 3,
+      "calls": 3,
+      "retries": 0,
+      "cost_usd": 0.00033975,
+      "exact_plan_membership": true,
+      "reasoning_override": false,
+      "trace_call_count_verified": true
+    }
+  ],
+  "heldout_preparation": {
+    "verified_baselines": 40,
+    "human_labels_present": 0,
+    "candidate_attempts": 0
+  }
+}

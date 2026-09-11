@@ -1,0 +1,20 @@
+task: relevance; snapshot=8eb5699bdeb389bad224ec081d869f2a793085d581b8a199e86ed75975143a00; partition=all
+population: 3 case(s)
+variants: ['qwen3-30b-a3b-2507-nothink-openrouter', 'gemma-4-26b-a4b-nothink-openrouter']
+  variant 'qwen3-30b-a3b-2507-nothink-openrouter': reasoning off
+  variant 'gemma-4-26b-a4b-nothink-openrouter': reasoning off
+repeats per scored pair: 1
+planned attempts: 6
+scored: 6
+unscored: 0
+no-op: 0
+unpriceable: 0
+selected: 6
+skipped: 0
+price catalog: version=1 as_of=2026-09-09 hash=fac2e6048efc33bbbf571798cd9fdac56de6263eb2f5d09c44fbaa4c6e573045 source=https://openrouter.ai/api/v1/models
+estimated USD (openrouter/google/gemma-4-26b-a4b-it): 0.000248
+estimated USD (openrouter/qwen/qwen3-30b-a3b-instruct-2507): 0.000161
+estimated USD (total): 0.000409
+max LLM calls per case: 4
+aggregate max LLM calls: 24
+canonical plan sha256: 47ebbc44e3e08bf735d5ea7cb7685f6e2e07823b48d2e7c53e6185f671dc66d7

@@ -1,0 +1,148 @@
+2026-09-11 18:34:42 [ERROR] jig.core.grading: feedback persistence failed after successful grading (non-fatal)
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/jig/core/grading.py", line 94, in grade_and_record
+    feedback_result_id = await feedback.store_result(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 205, in store_result
+    embedding = await self._embed(input_text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 196, in _embed
+    return await ollama_embed(text, self._embed_model, self._ollama_host)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/_embed.py", line 32, in ollama_embed
+    response = await client.embed(model=model, input=text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 1048, in embed
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 792, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 738, in _request_raw
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from None
+ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download
+2026-09-11 18:34:45 [ERROR] jig.core.grading: feedback persistence failed after successful grading (non-fatal)
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/jig/core/grading.py", line 94, in grade_and_record
+    feedback_result_id = await feedback.store_result(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 205, in store_result
+    embedding = await self._embed(input_text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 196, in _embed
+    return await ollama_embed(text, self._embed_model, self._ollama_host)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/_embed.py", line 32, in ollama_embed
+    response = await client.embed(model=model, input=text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 1048, in embed
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 792, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 738, in _request_raw
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from None
+ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download
+2026-09-11 18:34:46 [ERROR] jig.core.grading: feedback persistence failed after successful grading (non-fatal)
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/jig/core/grading.py", line 94, in grade_and_record
+    feedback_result_id = await feedback.store_result(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 205, in store_result
+    embedding = await self._embed(input_text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 196, in _embed
+    return await ollama_embed(text, self._embed_model, self._ollama_host)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/_embed.py", line 32, in ollama_embed
+    response = await client.embed(model=model, input=text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 1048, in embed
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 792, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 738, in _request_raw
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from None
+ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download
+2026-09-11 18:34:48 [ERROR] jig.core.grading: feedback persistence failed after successful grading (non-fatal)
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/jig/core/grading.py", line 94, in grade_and_record
+    feedback_result_id = await feedback.store_result(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 205, in store_result
+    embedding = await self._embed(input_text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 196, in _embed
+    return await ollama_embed(text, self._embed_model, self._ollama_host)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/_embed.py", line 32, in ollama_embed
+    response = await client.embed(model=model, input=text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 1048, in embed
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 792, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 738, in _request_raw
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from None
+ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download
+2026-09-11 18:34:49 [ERROR] jig.core.grading: feedback persistence failed after successful grading (non-fatal)
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/jig/core/grading.py", line 94, in grade_and_record
+    feedback_result_id = await feedback.store_result(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 205, in store_result
+    embedding = await self._embed(input_text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 196, in _embed
+    return await ollama_embed(text, self._embed_model, self._ollama_host)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/_embed.py", line 32, in ollama_embed
+    response = await client.embed(model=model, input=text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 1048, in embed
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 792, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 738, in _request_raw
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from None
+ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download
+2026-09-11 18:34:50 [ERROR] jig.core.grading: feedback persistence failed after successful grading (non-fatal)
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/jig/core/grading.py", line 94, in grade_and_record
+    feedback_result_id = await feedback.store_result(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 205, in store_result
+    embedding = await self._embed(input_text)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/feedback/loop.py", line 196, in _embed
+    return await ollama_embed(text, self._embed_model, self._ollama_host)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/jig/_embed.py", line 32, in ollama_embed
+    response = await client.embed(model=model, input=text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 1048, in embed
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 792, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/ollama/_client.py", line 738, in _request_raw
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from None
+ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download
+experiment_run[gemma-4-26b-a4b-nothink-openrouter] = 117
+experiment_run[qwen3-30b-a3b-2507-nothink-openrouter] = 116
+attempts complete: 6
+attempts failed: 0
+  phase_run_id=1779 variant='qwen3-30b-a3b-2507-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1789 variant='qwen3-30b-a3b-2507-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1795 variant='qwen3-30b-a3b-2507-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1779 variant='gemma-4-26b-a4b-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1789 variant='gemma-4-26b-a4b-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1795 variant='gemma-4-26b-a4b-nothink-openrouter' repeat=1 status=complete
