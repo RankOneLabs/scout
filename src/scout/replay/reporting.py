@@ -82,8 +82,8 @@ from scout.storage.evaluations import Experiment
 from scout.storage.experiment_plan import expected_experiment_pairs
 from scout.storage.state import StateManager
 
-REPORT_SCHEMA_VERSION = 6
-RELEVANCE_REPORT_SCHEMA_VERSION = 5
+REPORT_SCHEMA_VERSION = 7
+RELEVANCE_REPORT_SCHEMA_VERSION = 6
 BOOTSTRAP_METHOD = "paired_bootstrap_percentile"
 BOOTSTRAP_VERSION = 1
 BOOTSTRAP_RESAMPLES = 10_000
@@ -189,22 +189,26 @@ class RelevanceReportCase:
     actual_usd: float | None
 
 
-def _relevance_confusion(scores: list[RelevanceScore], *, candidate: bool) -> dict[str, int]:
-    counts = {"true_positive": 0, "true_negative": 0, "false_positive": 0, "false_negative": 0}
+def _relevance_confusion(scores: list[RelevanceScore], *, candidate: bool) -> dict[str, float]:
+    """Each case contributes total weight one, divided across successful repeats."""
+    repeats = Counter(score.target.evaluation_id for score in scores)
+    counts = dict.fromkeys(
+        ("true_positive", "true_negative", "false_positive", "false_negative"), 0.0,
+    )
     for score in scores:
         prediction = score.candidate_relevant if candidate else score.baseline_relevant
         key = ("true" if prediction == score.target.is_relevant else "false") + (
             "_positive" if prediction else "_negative"
         )
-        counts[key] += 1
+        counts[key] += 1 / repeats[score.target.evaluation_id]
     return counts
 
 
-def _ratio(numerator: int, denominator: int) -> float | None:
+def _ratio(numerator: float, denominator: float) -> float | None:
     return None if denominator == 0 else numerator / denominator
 
 
-def _precision(confusion: dict[str, int]) -> float | None:
+def _precision(confusion: dict[str, float]) -> float | None:
     """Share of predicted-relevant cases that were relevant; None when
     nothing was predicted relevant."""
     return _ratio(
@@ -212,7 +216,7 @@ def _precision(confusion: dict[str, int]) -> float | None:
     )
 
 
-def _recall(confusion: dict[str, int]) -> float | None:
+def _recall(confusion: dict[str, float]) -> float | None:
     """Share of relevant cases that were predicted relevant; None when no
     case was relevant."""
     return _ratio(
@@ -297,7 +301,9 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
         {"variant": parent["variant_name"], **pair}
         for parent in parents for pair in parent["skipped_pairs"]
     ]
-    if not cases and not skipped_pairs:
+    if not cases and not skipped_pairs and not any(
+        state.list_experiment_attempts(parent["experiment_run_id"]) for parent in parents
+    ):
         raise ReportError(
             "no reportable evidence (attempts or skipped pairs) under the given experiment_run_ids"
         )
@@ -323,8 +329,8 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
         summaries = []
         common_scores: list[RelevanceScore] = []
         for variant, values in by_variant.items():
-            # Every completed repeat is one observation; the common set and
-            # the reference are still counted in cases.
+            # Average successful repeats within each case before comparing
+            # cases; missing draws must not reweight the baseline population.
             scores = [
                 case.score
                 for case in values
@@ -341,6 +347,14 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
             candidate_precision = _precision(candidate_confusion)
             baseline_recall = _recall(baseline_confusion)
             candidate_recall = _recall(candidate_confusion)
+            baseline_accuracy = _ratio(
+                baseline_confusion["true_positive"] + baseline_confusion["true_negative"],
+                len(by_case),
+            )
+            candidate_accuracy = _ratio(
+                candidate_confusion["true_positive"] + candidate_confusion["true_negative"],
+                len(by_case),
+            )
             summaries.append(
                 {
                     "variant": variant,
@@ -353,15 +367,9 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
                     "unstable_case_count": sum(1 for labels in by_case.values() if len(labels) > 1),
                     "baseline_confusion": baseline_confusion,
                     "candidate_confusion": candidate_confusion,
-                    "baseline_accuracy": _ratio(
-                        sum(score.baseline_correct for score in scores), len(scores)
-                    ),
-                    "candidate_accuracy": _ratio(
-                        sum(score.candidate_correct for score in scores), len(scores)
-                    ),
-                    "accuracy_delta": _ratio(
-                        sum(score.accuracy_delta for score in scores), len(scores)
-                    ),
+                    "baseline_accuracy": baseline_accuracy,
+                    "candidate_accuracy": candidate_accuracy,
+                    "accuracy_delta": _delta(candidate_accuracy, baseline_accuracy),
                     "baseline_precision": baseline_precision,
                     "candidate_precision": candidate_precision,
                     "precision_delta": _delta(candidate_precision, baseline_precision),
@@ -382,6 +390,7 @@ def _build_relevance_report(state: StateManager, parents: list[dict[str, Any]]) 
         )
     return {
         "version": RELEVANCE_REPORT_SCHEMA_VERSION,
+        "repeat_weighting": "equal_case_mean_of_successful_repeats",
         "task": task.model_dump(mode="json"),
         "experiment_run_ids": sorted(parent["experiment_run_id"] for parent in parents),
         "plan_sha256": parents[0]["plan_sha256"],
@@ -738,6 +747,49 @@ def _build_segments(
 
 
 def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]) -> dict[str, Any]:
+    """Build scores and completion evidence from one consistent database snapshot."""
+    with state.db.read_transaction():
+        report = _build_batch_report(state, experiment_run_ids=experiment_run_ids)
+        runs = []
+        for run_id in experiment_run_ids:
+            run = state.get_experiment_run(run_id)
+            assert run is not None
+            expected = expected_experiment_pairs(json.loads(run["candidate_config"]))
+            assert expected is not None
+            latest = latest_attempts_by_case([
+                Experiment(**row) for row in state.list_experiment_attempts(run_id)
+            ])
+            counts = Counter(attempt.status for attempt in latest.values())
+            runs.append({
+                "experiment_run_id": run_id, "status": run["status"],
+                "planned_chain_count": len(expected), "created_chain_count": len(latest),
+                "missing_chain_count": len(expected - latest.keys()),
+                "status_counts": dict(counts),
+            })
+        report["runs"] = runs
+        report["cost"]["unknown_cost_attempt_count"] = sum(
+            attempt["status"] != "queued" and attempt["candidate_cost"] is None
+            and attempt["candidate_llm_call_count"] != 0
+            for run_id in experiment_run_ids for attempt in state.list_experiment_attempts(run_id)
+        )
+        report["cost"]["actual_usd_is_complete"] = (
+            report["cost"]["unknown_cost_attempt_count"] == 0
+        )
+        report["provisional"] = any(run["status"] in ("queued", "running") for run in runs)
+        report["status"] = (
+            "in_progress" if report["provisional"] else
+            "complete" if all(run["status"] == "complete" for run in runs) else "partial"
+        )
+        if report["provisional"]:
+            for segment in report["segments"]:
+                if "ranking" in segment:
+                    segment["ranking"] = []
+        return report
+
+
+def _build_batch_report(
+    state: StateManager, *, experiment_run_ids: Sequence[int],
+) -> dict[str, Any]:
     """Build the canonical batch/sweep report document for the given
     experiment_runs parent id(s) — a plain batch's one parent, or every
     variant parent sharing one sweep. Raises ReportError for an unknown
@@ -768,7 +820,9 @@ def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]
 
     cases = _collect_attempted_cases(state, parents)
     skipped = _collect_skipped_pairs(parents)
-    if not cases and not skipped:
+    if not cases and not skipped and not any(
+        state.list_experiment_attempts(parent["experiment_run_id"]) for parent in parents
+    ):
         raise ReportError(
             "no reportable evidence (attempts or skipped pairs) under the given experiment_run_ids"
         )
@@ -1006,6 +1060,24 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
 
 def render_markdown(report: dict[str, Any]) -> str:
     """Render Markdown exclusively from an already-built report document."""
+    rendered = _render_markdown(report)
+    if "status" not in report:
+        return rendered
+    label = "PROVISIONAL — execution is incomplete" if report["provisional"] else report["status"]
+    coverage = "\n".join(
+        f"- Run {run['experiment_run_id']}: {run['created_chain_count']}/"
+        f"{run['planned_chain_count']} planned chains created; {run['status_counts']}"
+        for run in report["runs"]
+    )
+    if not report["cost"]["actual_usd_is_complete"]:
+        coverage += (
+            f"\n- Cost is a known subtotal; {report['cost']['unknown_cost_attempt_count']} "
+            "attempts have unknown cost."
+        )
+    return rendered.replace("\n", f"\n\nStatus: **{label}**\n\n{coverage}\n", 1)
+
+
+def _render_markdown(report: dict[str, Any]) -> str:
     if "task" in report:  # relevance reports carry their task document; batch reports never do
         return _render_relevance_markdown(report)
     coverage = report["correction_coverage"]

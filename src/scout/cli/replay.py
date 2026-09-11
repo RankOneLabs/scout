@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -295,6 +296,10 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
     offline candidate replay against a selector-resolved population of
     trusted reply_draft baselines."""
     name = args.name
+    outcome_file = getattr(args, "outcome_file", None)
+    if outcome_file and Path(outcome_file).exists():
+        print("error: outcome file already exists; use a new campaign directory", file=sys.stderr)
+        raise SystemExit(2)
     if not name or not name.strip():
         print("error: --name must not be blank", file=sys.stderr)
         raise SystemExit(2)
@@ -346,6 +351,15 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
                 repeats=args.repeats,
             )
             _print_batch_outcome(outcome)
+            if outcome_file:
+                Path(outcome_file).write_text(json.dumps({
+                    "version": 1,
+                    "experiment_run_ids": outcome.experiment_run_ids,
+                    "complete": sum(a.status == "complete" for a in outcome.attempts),
+                    "failed": sum(a.status != "complete" for a in outcome.attempts),
+                }, indent=2) + "\n", encoding="utf-8")
+            if any(attempt.status != "complete" for attempt in outcome.attempts):
+                raise SystemExit(1)
 
     try:
         asyncio.run(_run())
@@ -372,8 +386,11 @@ def batch_retry_feedback(args: argparse.Namespace) -> None:
                 phase_run_ids=phase_run_ids,
                 pricing_catalog=catalog,
                 dossier_root=dossier_root,
+                recover_interrupted=getattr(args, "recover_interrupted", False),
             )
             _print_batch_outcome(outcome)
+            if any(attempt.status != "complete" for attempt in outcome.attempts):
+                raise SystemExit(1)
 
     try:
         asyncio.run(_run())
@@ -420,6 +437,21 @@ def report_feedback(args: argparse.Namespace) -> None:
     except (rr.ReportError, PricingCatalogError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+
+
+def grid_report_feedback(args: argparse.Namespace) -> None:
+    from scout.replay.study_reporting import export_study_reports
+    from scout.storage.state import StateManager
+
+    try:
+        with StateManager(db_path=DB_PATH, allow_create=False) as state:
+            complete = export_study_reports(state, Path(args.manifest_file), Path(args.out))
+    except (OSError, ValueError, rr.ReportError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if not complete:
+        print("Study is incomplete; see the report index", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def grid_expand_feedback(args: argparse.Namespace) -> None:

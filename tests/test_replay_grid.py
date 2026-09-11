@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,11 +17,8 @@ from scout.replay.experiments import validate_sweep_document
 @pytest.fixture(autouse=True)
 def _routable_models(monkeypatch: pytest.MonkeyPatch) -> None:
     """validate_sweep_document proves every model routable via from_model,
-    which constructs a client; give it a key and a stand-in ollama module."""
+    which constructs a client but never sends a request; give it a dummy key."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    import jig.llm.ollama as jig_ollama
-
-    monkeypatch.setattr(jig_ollama, "OllamaAsyncClient", lambda host=None: object())
 
 
 def test_unroutable_model_is_a_grid_validation_error(
@@ -215,6 +214,31 @@ def test_run_script_carries_backend_env_identity_and_replay_args(tmp_path: Path)
     assert "--dossier-root /srv/content-agn" in script
     assert "--authorize-plan-sha256" in script and "--execute-paid-replay" in script
     assert script.count("PLAN ") == len(exp.sweeps)
+
+
+@pytest.mark.parametrize("failed_stage", ["execute", "report"])
+def test_generated_runner_exits_nonzero_when_execution_or_reporting_fails(
+    tmp_path: Path, failed_stage: str,
+) -> None:
+    exp = _expand(tmp_path, only=[{"project": "agent-ops", "prompt": "current"}])
+    out = tmp_path / "out"
+    rg.write_expansion(exp, out)
+    shim = tmp_path / "scout-shim"
+    shim.write_text(
+        "#!/bin/bash\n"
+        'if [[ "$*" == *"grid report"* ]]; then [[ "$FAIL_STAGE" != report ]]; exit $?; fi\n'
+        'if [[ "$*" == *"--execute-paid-replay"* ]]; then '
+        '[[ "$FAIL_STAGE" != execute ]]; exit $?; fi\n'
+        f'echo "canonical plan sha256: {"a" * 64}"\n',
+    )
+    shim.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(out / "run.sh")], capture_output=True, text=True,
+        env={**os.environ, "SCOUT": str(shim), "FAIL_STAGE": failed_stage},
+    )
+    assert result.returncode == 1
+    assert "INCOMPLETE" in result.stdout
+    assert "ALLDONE" not in result.stdout
 
 
 def test_run_script_exits_nonzero_when_any_sweep_fails(tmp_path: Path) -> None:

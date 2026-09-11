@@ -325,6 +325,7 @@ def _run_script(grid: GridDocument, sweeps: Sequence[GridSweep], *, grid_dir_fro
         args = [
             "feedback",
             "batch-replay",
+            "--skip-no-op",
             "--name",
             shlex.quote(sweep.name),
             "--task-config",
@@ -342,7 +343,8 @@ def _run_script(grid: GridDocument, sweeps: Sequence[GridSweep], *, grid_dir_fro
             f'echo "PLAN {name} $(date -u +%FT%TZ)"',
             f'sha=$({cmd} 2>/dev/null | grep "canonical plan sha256" | grep -oE "[0-9a-f]{{64}}")',
             f'if [ -z "$sha" ]; then echo "NO SHA {name}"; failed=1; else',
-            f'  {cmd} --authorize-plan-sha256 "$sha" --execute-paid-replay',
+            f'  {cmd} --authorize-plan-sha256 "$sha" --execute-paid-replay '
+            f'--outcome-file "$HERE/"{shlex.quote(sweep.name + ".outcome.json")}',
             "  status=$?",
             f'  echo "EXIT {name}=$status $(date -u +%FT%TZ)"',
             '  [ "$status" -eq 0 ] || failed=1',
@@ -350,6 +352,7 @@ def _run_script(grid: GridDocument, sweeps: Sequence[GridSweep], *, grid_dir_fro
             "",
         ]
     lines += [
+        '"$SCOUT" feedback grid report "$HERE/manifest.json" --out "$HERE/reports" || failed=1',
         'if [ "$failed" -ne 0 ]; then echo "INCOMPLETE"; exit 1; fi',
         'echo "ALLDONE"',
     ]
