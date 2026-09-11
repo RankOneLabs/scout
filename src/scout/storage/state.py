@@ -65,7 +65,7 @@ from scout.storage.migrations import (
 from scout.storage.posts import PostStore
 from scout.storage.registry import RegistryStore
 from scout.storage.scans import ScanStatus as ScanStatus
-from scout.storage.scans import ScanStore
+from scout.storage.scans import ScanStore, StoredAuthorClassification
 from scout.storage.schema import LATEST_SCHEMA_VERSION as LATEST_SCHEMA_VERSION
 from scout.storage.schema import SCHEMA as SCHEMA
 from scout.storage.unit_of_work import UnitOfWork
@@ -380,6 +380,28 @@ class StateManager:
 
     def is_author_blocked(self, *, platform: str, author_id: str) -> bool:
         return self._scans.is_author_blocked(platform=platform, author_id=author_id)
+
+    def record_author_classification(
+        self,
+        *,
+        platform: str,
+        author_id: str,
+        author_class: str,
+        rule_version: int,
+        matched_text: str | None,
+    ) -> bool:
+        return self._scans.record_author_classification(
+            platform=platform,
+            author_id=author_id,
+            author_class=author_class,
+            rule_version=rule_version,
+            matched_text=matched_text,
+        )
+
+    def get_author_classification(
+        self, *, platform: str, author_id: str
+    ) -> StoredAuthorClassification | None:
+        return self._scans.get_author_classification(platform=platform, author_id=author_id)
 
     def get_scan_stats(self) -> ScanStats:
         """Get aggregate stats across all scans.

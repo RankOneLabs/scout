@@ -3054,6 +3054,14 @@ def _migrate_to_41(conn: sqlite3.Connection) -> None:
     conn.execute(EVALUATION_EXPERIMENTS_LIFECYCLE_TRIGGER)
 
 
+def _migrate_to_42(conn: sqlite3.Connection) -> None:
+    """Author classifications: the annotate node's author-keyed table."""
+    from scout.storage.schema import AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS
+
+    for statement in AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3095,4 +3103,5 @@ MIGRATIONS: dict[int, Migration] = {
     39: _migrate_to_39,
     40: _migrate_to_40,
     41: _migrate_to_41,
+    42: _migrate_to_42,
 }

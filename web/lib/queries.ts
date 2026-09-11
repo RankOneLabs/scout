@@ -1,5 +1,6 @@
 import { getDb } from "./db";
 import {
+  type AuthorClass,
   type ScanDetail,
   type ScanDetailWithCounts,
   type ScanFetchFailure,
@@ -1010,7 +1011,20 @@ function getReviewEvaluations({
     resolved_evaluate_prompt: string | null;
     resolved_respond_prompt: string | null;
     resolved_critique_prompt: string | null;
+    author_class: AuthorClass | null;
+    author_rule_version: number | null;
+    author_matched_text: string | null;
+    author_classified_at: string | null;
   }
+
+  const authorClassificationSelect = tableNames.has("author_classifications")
+    ? `ac.author_class AS author_class, ac.rule_version AS author_rule_version,
+        ac.matched_text AS author_matched_text, ac.classified_at AS author_classified_at`
+    : `NULL AS author_class, NULL AS author_rule_version,
+        NULL AS author_matched_text, NULL AS author_classified_at`;
+  const authorClassificationJoin = tableNames.has("author_classifications")
+    ? "LEFT JOIN author_classifications ac ON ac.platform = p.platform AND ac.author_id = p.author_id"
+    : "";
 
   const queryParams: Array<string | number> = [...params];
   const limitClause = limit === undefined ? "" : "LIMIT ?";
@@ -1047,9 +1061,11 @@ function getReviewEvaluations({
         pk.critique_prompt AS matched_critique_prompt,
         pe.body AS resolved_evaluate_prompt,
         pr.body AS resolved_respond_prompt,
-        pc.body AS resolved_critique_prompt
+        pc.body AS resolved_critique_prompt,
+        ${authorClassificationSelect}
       FROM evaluations e
       JOIN posts p ON p.id = e.post_id
+      ${authorClassificationJoin}
       LEFT JOIN draft_comments d ON d.evaluation_id = e.id
       ${critiqueJoin}
       LEFT JOIN project_keywords pk ON pk.id = e.keyword_route_id
@@ -1128,6 +1144,12 @@ function getReviewEvaluations({
         author_name: row.post_author_name, author_id: row.post_author_id,
         content: row.post_content, url: row.post_url, created_at: row.post_created_at,
         scan_id: row.scan_id, ...parent,
+        author_classification: row.author_class === null ? null : {
+          author_class: row.author_class,
+          rule_version: row.author_rule_version!,
+          matched_text: row.author_matched_text,
+          classified_at: row.author_classified_at!,
+        },
       },
       draft: row.draft_id === null ? null : {
         id: row.draft_id, post_id: row.post_id, evaluation_id: row.id,

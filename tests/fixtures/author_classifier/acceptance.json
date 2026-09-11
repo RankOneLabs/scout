@@ -1,0 +1,1379 @@
+{
+ "description": "Acceptance set for the author classifier. `blocked` is every active blocked_authors row on 2026-09-11 except the operator's own account and one individual, which a name-and-handle rule is not meant to learn; `good` is every unblocked author with at least one human-graded relevant post. Names and handles are every value observed across that author's stored posts; platform ids are omitted because the rule never sees them.",
+ "source": "willie scout.db: posts, blocked_authors, grades (read 2026-09-11)",
+ "blocked": [
+  {
+   "platform": "bluesky",
+   "names": [
+    "Нейролента"
+   ],
+   "handles": [
+    "nairolenta.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Rulestack"
+   ],
+   "handles": [
+    "ai-shop.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "SnipVote"
+   ],
+   "handles": [
+    "snipvote.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Automation Wire",
+    "Sipirtu"
+   ],
+   "handles": [
+    "automationwire.bsky.social",
+    "sipirtu.bsky.social",
+    "sipirtu.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AWS News Feed on 🦋"
+   ],
+   "handles": [
+    "awsrecentnews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Grafana"
+   ],
+   "handles": [
+    "grafana.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "RouterBase"
+   ],
+   "handles": [
+    "routerbase.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "OpsMatters"
+   ],
+   "handles": [
+    "opsmatters.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AI & ML News"
+   ],
+   "handles": [
+    "ai-news.at.thenote.app"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AgentWallex"
+   ],
+   "handles": [
+    "agentwallex.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AWS Builders Center on 🦋"
+   ],
+   "handles": [
+    "communityaws.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "aichina.news"
+   ],
+   "handles": [
+    "aichina.news"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "HackerNews Compilator"
+   ],
+   "handles": [
+    "hnbot.gsuscs.xyz"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Alpha X Agent"
+   ],
+   "handles": [
+    "alphaxagent.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "NEWS FUSION"
+   ],
+   "handles": [
+    "newsfusion.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "arXiv cs.SE Software Engineering"
+   ],
+   "handles": [
+    "csse-bot.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "CRYPTO FAN"
+   ],
+   "handles": [
+    "crypto-fan.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "HackerNoon"
+   ],
+   "handles": [
+    "hackernoon.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "The New Stack"
+   ],
+   "handles": [
+    "thenewstack.io"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Software Engineering Daily"
+   ],
+   "handles": [
+    "softwaredaily.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Extly News"
+   ],
+   "handles": [
+    "extlynews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "ByMachine"
+   ],
+   "handles": [
+    "bymachine.news"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "The AWS News Feed"
+   ],
+   "handles": [
+    "aws-news.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Hacker & Security News"
+   ],
+   "handles": [
+    "hacker.at.thenote.app"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Azure Weekly"
+   ],
+   "handles": [
+    "azureweekly.endj.in",
+    "azureweekly.info"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "ultrathink.art"
+   ],
+   "handles": [
+    "ultrathink-art.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "OpenAI {bot}"
+   ],
+   "handles": [
+    "openaibot.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "OpenAI :bot:"
+   ],
+   "handles": [
+    "openai.zpravobot.news.ap.brid.gy"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Askew"
+   ],
+   "handles": [
+    "askew-ai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "getpacket.ai"
+   ],
+   "handles": [
+    "getpacketai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Mickai"
+   ],
+   "handles": [
+    "mickai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Vinkius"
+   ],
+   "handles": [
+    "vinkius-mcp-ai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Shadowfetch Apps"
+   ],
+   "handles": [
+    "shadowfetchapps.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "modul-ds"
+   ],
+   "handles": [
+    "modul-ds.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AI Ed Tools"
+   ],
+   "handles": [
+    "ai-ed-tools.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Laravel News"
+   ],
+   "handles": [
+    "laravelnews.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "InfoQ"
+   ],
+   "handles": [
+    "infoq.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "askfred.be"
+   ],
+   "handles": [
+    "askfred.be"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Agentic AI Foundation"
+   ],
+   "handles": [
+    "aaif.io"
+   ]
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "askew-ai"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "Concept4Hub Bot"
+   ],
+   "handles": []
+  }
+ ],
+ "good": [
+  {
+   "platform": "bluesky",
+   "names": [
+    "Progressive robot"
+   ],
+   "handles": [
+    "progressiverobot.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "aistorynews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Gene Conroy-Jones"
+   ],
+   "handles": [
+    "foursignalsdev.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "David Moniz"
+   ],
+   "handles": [
+    "davidmoniz.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "shuvo"
+   ],
+   "handles": [
+    "isuvo.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Pneumetron"
+   ],
+   "handles": [
+    "pneumetron.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AgentLuxAI"
+   ],
+   "handles": [
+    "agentluxai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Sensemaker"
+   ],
+   "handles": [
+    "sensemaker.computer"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "dev2next.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "contrite42.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Alex Wise"
+   ],
+   "handles": [
+    "engineer.sitereliability.best"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Sam Rivera"
+   ],
+   "handles": [
+    "sam-rivera.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Geeks in the Woods"
+   ],
+   "handles": [
+    "geeksinthewoods.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Z.H. He"
+   ],
+   "handles": [
+    "zhhewrites.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Wes Miller"
+   ],
+   "handles": [
+    "getwired.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Mana Flare 🍁"
+   ],
+   "handles": [
+    "manaflare-mtg.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Bobdbuilder"
+   ],
+   "handles": [
+    "bobdbuilder1.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "fenju.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "kar-t-25.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "ScrambleMeBot ✨",
+    "ScrambleMeBot 🤖"
+   ],
+   "handles": [
+    "agent.osintnet.uk"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "NotBob"
+   ],
+   "handles": [
+    "reallynotbob.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Bibo W."
+   ],
+   "handles": [
+    "bibo72.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Automation"
+   ],
+   "handles": [
+    "autoflow.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Premarcu",
+    "premarcu.bsky.social"
+   ],
+   "handles": [
+    "premarcu.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Midori Photo Art."
+   ],
+   "handles": [
+    "yosuke5408.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "xLorenz's proyect"
+   ],
+   "handles": [
+    "xlorenzhermes.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Desplega Labs"
+   ],
+   "handles": [
+    "desplegalabs.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Robert Ta"
+   ],
+   "handles": [
+    "therobertta.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Aaron (Youshen) Lim"
+   ],
+   "handles": [
+    "youshenlim.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Vlad"
+   ],
+   "handles": [
+    "beyondthecode.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Alexis Kirke"
+   ],
+   "handles": [
+    "alexiskirke.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Gordon"
+   ],
+   "handles": [
+    "gordon.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Paul Crinigan"
+   ],
+   "handles": [
+    "paul-crinigan.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Miles Arden",
+    "Reid Marlow"
+   ],
+   "handles": [
+    "komoai.net",
+    "reidmarlow.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Liz Baker (she/her)"
+   ],
+   "handles": [
+    "liz-baker.dev"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Erik Fiala"
+   ],
+   "handles": [
+    "erikfiala.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Mike Hadlow"
+   ],
+   "handles": [
+    "mikehadlow.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Build to Launch"
+   ],
+   "handles": [
+    "build2launch-ai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Rasmus Aagaard"
+   ],
+   "handles": [
+    "rasgaard.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Nayuta Spiral Works ",
+    " AI Simulation Lab"
+   ],
+   "handles": [
+    "nayutaaei.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "aitechconnect.in"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "pickuma.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Gen AI News 🅰︎ℹ︎"
+   ],
+   "handles": [
+    "genainews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Sadie"
+   ],
+   "handles": [
+    "siliconsadie.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Ross Nesbitt"
+   ],
+   "handles": [
+    "arc-codex.com",
+    "hapenez.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Will Killian"
+   ],
+   "handles": [
+    "willkill07.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "luiscorev2.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "The Durability Curve"
+   ],
+   "handles": [
+    "thedurabilitycurve.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Arize AI"
+   ],
+   "handles": [
+    "arize.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Epic Vibecoder"
+   ],
+   "handles": [
+    "epicvibecoder.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Daniela Petruzalek"
+   ],
+   "handles": [
+    "danicat83.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Business Intelligence Briefly"
+   ],
+   "handles": [
+    "bizintelbriefly.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "HN"
+   ],
+   "handles": [
+    "hnws.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Eyal Estrin ☁️"
+   ],
+   "handles": [
+    "eyalestrin.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "ZK Ultra"
+   ],
+   "handles": [
+    "zku.cryptoanarchy.network"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Tom Smith"
+   ],
+   "handles": [
+    "ctsmithiii.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "lanceseamans.bsky.social"
+   ],
+   "handles": [
+    "lanceseamans.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "bymayachen.bsky.social"
+   ],
+   "handles": [
+    "bymayachen.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "arize-phoenix"
+   ],
+   "handles": [
+    "arize-phoenix.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Qubble Labs"
+   ],
+   "handles": [
+    "qubblelabs.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Climate, Ecology, War & More - Dr Glen Barry BigEarthData.ai"
+   ],
+   "handles": [
+    "bigearthdata.ai"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Carlos Sanchez"
+   ],
+   "handles": [
+    "csanchez.org"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Hamilton Greene"
+   ],
+   "handles": [
+    "sirhamy.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Kol Tregaskes"
+   ],
+   "handles": [
+    "koltregaskes.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    " Cartisien"
+   ],
+   "handles": [
+    "cartisien.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "input"
+   ],
+   "handles": [
+    "feed.igeek.gamer-geek-news.com.ap.brid.gy"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Amken Tech"
+   ],
+   "handles": [
+    "amkentech.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Mig.Explains"
+   ],
+   "handles": [
+    "migexplains.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Aamer Mehaisi"
+   ],
+   "handles": [
+    "o96a.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Mockbird"
+   ],
+   "handles": [
+    "mockbirdapp.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "乔氪智造_qiaokezhizao"
+   ],
+   "handles": [
+    "qiaokezhizao.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "evios"
+   ],
+   "handles": [
+    "johnios.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AI Firehose"
+   ],
+   "handles": [
+    "ai-firehose.column.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Jindřich Libovický"
+   ],
+   "handles": [
+    "jlibovicky.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Undercode Testing"
+   ],
+   "handles": [
+    "undercode.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Hlido"
+   ],
+   "handles": [
+    "hlido.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Alejandro Saucedo ",
+    " KubeCon 2025 Europe AI Keynote"
+   ],
+   "handles": [
+    "axsaucedo.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Asedio"
+   ],
+   "handles": [
+    "asedioai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "primefold.bsky.social"
+   ],
+   "handles": [
+    "primefold.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Dan Sylveste"
+   ],
+   "handles": [
+    "constantinejn.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "hikikomorphism"
+   ],
+   "handles": [
+    "hikikomorphism.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "PUTMAN Logic"
+   ],
+   "handles": [
+    "putmanmodel.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Soliloquest"
+   ],
+   "handles": [
+    "soliloquest.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "sergiocuellar.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Agent Island"
+   ],
+   "handles": [
+    "agentisland.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Kevin Payne"
+   ],
+   "handles": [
+    "kevintpayne.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Recce - Trust, Verify, Ship"
+   ],
+   "handles": [
+    "datarecce.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Evan Reed"
+   ],
+   "handles": [
+    "tianweiai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "The guy at the end of Bruno’s leash"
+   ],
+   "handles": [
+    "davidgs.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "helloember999.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "stoicsoft.bsky.social"
+   ],
+   "handles": [
+    "stoicsoft.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Aethon"
+   ],
+   "handles": [
+    "aethonai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "INS AI Solutions"
+   ],
+   "handles": [
+    "ins-aisolutions.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Glenn Thimmes"
+   ],
+   "handles": [
+    "glennthimmes.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Aether Ai"
+   ],
+   "handles": [
+    "trynoguard.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "bizz ",
+    " AI software solutions"
+   ],
+   "handles": [
+    "bizzaidev.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Rishi NG"
+   ],
+   "handles": [
+    "wtfuzz.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Hermes @ Goke"
+   ],
+   "handles": [
+    "hermes.gokepelemo.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "TIMxAI"
+   ],
+   "handles": [
+    "timxai.ai"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Masa Matsuoka"
+   ],
+   "handles": [
+    "bobmatnyc.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "in motu digital"
+   ],
+   "handles": [
+    "inmotudigital.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "SEIKOURI Inc."
+   ],
+   "handles": [
+    "seikouri.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "AgentMeter"
+   ],
+   "handles": [
+    "agentmeter.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [],
+   "handles": [
+    "genticnews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Nik Kale"
+   ],
+   "handles": [
+    "nik-kale.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Warp"
+   ],
+   "handles": [
+    "warp.dev"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Towards Data Science"
+   ],
+   "handles": [
+    "towardsdatascience.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "Dr. Ganapathi Pulipaka"
+   ],
+   "handles": [
+    "gp-pulipaka.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "names": [
+    "IvyAgents AI"
+   ],
+   "handles": [
+    "ivyagentsai.bsky.social"
+   ]
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "Bien (❖,❖)"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "Aaron Elijah Mars"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "Best Solution (Bestsoln)"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "Midas the CEO"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "names": [
+    "Plumbgodpaxeer"
+   ],
+   "handles": []
+  }
+ ]
+}

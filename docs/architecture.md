@@ -51,6 +51,10 @@ If you can't draw the data flow as a DAG where each node is a pure-ish transform
 
 `evaluations.abstain_reason` is a deprecated compatibility column from an earlier terminal-reason shape. The active contract is `evaluations.failure_reason`, populated uniformly for every non-surfaced outcome (including `abstained`, where it holds `StructuredDraftOutput.abstain_reason`). `abstain_reason` is read by no code path and written by none going forward; it remains only for historical rows already classified by migration 17.
 
+## Example: classify_author as an annotating node
+
+Relevance labels judge content only; whether the *account* is worth engaging is a separate dimension that the manual blocklist expresses. `scanning.author_class.classify_author` is the first automatic signal on that dimension: a pure transform from display name and handle to an `AuthorClassification` (`aggregator` or `unknown`, the rule version, and the text that matched), keyed on a lexicon of feed, bot and news terms. The scan runner's `_annotate_author` node runs it for every persisted post, blocked authors included, and upserts one row per author into `author_classifications` (schema v42). It annotates, never gates: an unblocked aggregator still flows into evaluation, a storage failure is logged and evaluation continues, and the review UI shows the class beside the block button so a reviewer can act on it. `tests/fixtures/author_classifier/acceptance.json` pins the rule against the blocklist and the human-graded relevant authors; a rule change bumps `AUTHOR_CLASS_RULE_VERSION` and re-scores that fixture.
+
 ## PAA task declarations as a typed evaluator-identity boundary
 
 Scout takes the PAA contract and its reference control plane from
