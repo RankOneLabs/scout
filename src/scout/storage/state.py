@@ -465,12 +465,14 @@ class StateManager:
         phase_run_id: int,
         baseline_evidence: str,
         supersedes_experiment_id: int | None = None,
+        repeat_index: int = 1,
     ) -> int:
         return self._evaluations.insert_experiment_attempt(
             experiment_run_id=experiment_run_id,
             phase_run_id=phase_run_id,
             baseline_evidence=baseline_evidence,
             supersedes_experiment_id=supersedes_experiment_id,
+            repeat_index=repeat_index,
         )
 
     def get_experiment(self, experiment_id: int) -> dict[str, Any] | None:

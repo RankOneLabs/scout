@@ -43,11 +43,12 @@ def state():
 
 
 async def _run_single_variant_batch(
-    state, tracer, feedback, monkeypatch, *, case_count: int = 2,
+    state, tracer, feedback, monkeypatch, *, case_count: int = 2, repeats: int = 1,
 ) -> tuple[int, list[int]]:
     """Seed `case_count` reply_draft cases (all sharing one baseline model/
     prompt segment) and execute one batch replay against them with a
-    single candidate variant. Returns (experiment_run_id, phase_run_ids)."""
+    single candidate variant, `repeats` attempts per case. Returns
+    (experiment_run_id, phase_run_ids)."""
     _patch_resolve_dossier(monkeypatch)
     phase_run_ids = []
     for _ in range(case_count):
@@ -56,7 +57,7 @@ async def _run_single_variant_batch(
         )
         phase_run_ids.append(phase_run_id)
     candidate_client = _FakeLLMClient(
-        [_submit_response(_GRADED_CANDIDATE_PAYLOAD) for _ in range(case_count)],
+        [_submit_response(_GRADED_CANDIDATE_PAYLOAD) for _ in range(case_count * repeats)],
         model="claude-sonnet-4-20250514",
     )
     _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate_client})
@@ -66,12 +67,13 @@ async def _run_single_variant_batch(
     plan = await ee.build_batch_plan(
         state=state, tracer=tracer, selector=selector, variants=variants,
         skip_policy=ee.SkipPolicy(), pricing_catalog=catalog, dossier_root=Path("/unused"),
+        repeats=repeats,
     )
     outcome = await ee.execute_batch_replay(
         state=state, tracer=tracer, feedback=feedback, name="report-fixture",
         selector=selector, variants=variants, skip_policy=ee.SkipPolicy(),
         authorize_plan_sha256=plan.plan_sha256, pricing_catalog=catalog,
-        dossier_root=Path("/unused"),
+        dossier_root=Path("/unused"), repeats=repeats,
     )
     return outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME], phase_run_ids
 
@@ -315,6 +317,29 @@ class TestBuildBatchReport:
         assert segment["interval_family_size"] == 0
         assert all(v["interval_available"] is False for v in segment["variants"])
 
+    async def test_repeats_pair_one_delta_per_case(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        run_id, phase_run_ids = await _run_single_variant_batch(
+            state, tracer, feedback, monkeypatch, case_count=2, repeats=3,
+        )
+        report = rr.build_batch_report(state, experiment_run_ids=[run_id])
+        assert report["correction_coverage"]["attempted"] == 6
+        segment = report["segments"][0]
+        variant = segment["variants"][0]
+        assert variant["repeat_count"] == 3
+        assert variant["scored_case_count"] == 2
+        assert variant["scored_attempt_count"] == 6
+        # The bootstrap resamples cases: two paired deltas, not six.
+        assert variant["common_case_count"] == 2
+        # Identical scripted replies: every repeat lands on the same distance.
+        assert variant["within_case_range_mean"] == 0.0
+        rows = {(case["phase_run_id"], case["repeat_index"]) for case in segment["cases"]}
+        assert rows == {(pid, r) for pid in phase_run_ids for r in (1, 2, 3)}
+        markdown = rr.render_markdown(report)
+        assert "| repeat |" in markdown
+        assert "within-case range" in markdown
+
     async def test_abstaining_variant_is_counted_not_distanced(
         self, state, tracer, feedback, monkeypatch
     ) -> None:
@@ -405,7 +430,45 @@ class TestBuildBatchReport:
         assert report["correction_coverage"]["failed_attempts"] == 1
         assert len(report["exclusions"]) == 1
         assert report["exclusions"][0]["phase_run_id"] == hi
+        assert report["exclusions"][0]["repeat_index"] == 1
         assert report["exclusions"][0]["reason"] == ee._STAGE_MESSAGES["candidate_execution"]
+        markdown = rr.render_markdown(report)
+        assert f"- phase_run_id `{hi}` variant `default` repeat 1 (failed)" in markdown
+
+    async def test_all_skipped_variant_reports_planned_repeats(
+        self, state, tracer, feedback, monkeypatch
+    ) -> None:
+        _patch_resolve_dossier(monkeypatch)
+        unscored, _ = await _seed_reply_draft_correction(
+            state, tracer, feedback, model="claude-opus-4-20250514", link_reply_revision=False,
+        )
+        candidate_client = _FakeLLMClient([], model="claude-sonnet-4-20250514")
+        _stub_from_model(monkeypatch, {"claude-sonnet-4-20250514": candidate_client})
+        variants = (
+            ee.BatchVariant(ee.DEFAULT_BATCH_VARIANT_NAME, "claude-sonnet-4-20250514", None),
+        )
+        selector = ee.BatchSelector.by_phase_run_ids([unscored])
+        skip_policy = ee.SkipPolicy(skip_unscored=True)
+        catalog = _pricing_catalog_for_tests()
+        plan = await ee.build_batch_plan(
+            state=state, tracer=tracer, selector=selector, variants=variants,
+            skip_policy=skip_policy, pricing_catalog=catalog, dossier_root=Path("/unused"),
+            repeats=3,
+        )
+        outcome = await ee.execute_batch_replay(
+            state=state, tracer=tracer, feedback=feedback, name="all-skipped",
+            selector=selector, variants=variants, skip_policy=skip_policy,
+            authorize_plan_sha256=plan.plan_sha256, pricing_catalog=catalog,
+            dossier_root=Path("/unused"), repeats=3,
+        )
+        run_id = outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME]
+        report = rr.build_batch_report(state, experiment_run_ids=[run_id])
+        variant = report["segments"][0]["variants"][0]
+        assert variant["scored_case_count"] == 0
+        assert variant["unscored_count"] == 1
+        # No attempt ever ran, so the plan is the only witness to the repeat count.
+        assert variant["repeat_count"] == 3
+        assert report["exclusions"][0]["repeat_index"] is None
 
     def test_unknown_experiment_run_id_raises(self, state) -> None:
         with pytest.raises(rr.ReportError, match="no experiment_runs row"):
@@ -701,7 +764,8 @@ def _summary(
     return rr.VariantSegmentSummary(
         variant_name=name, scored_case_count=0, failed_case_count=0, unscored_count=0,
         no_op_count=0, unpriceable_count=0, baseline_abstain_count=0,
-        candidate_abstain_count=0, common_case_count=0, mean_delta=mean,
+        candidate_abstain_count=0, common_case_count=0, mean_delta=mean, repeat_count=1,
+        scored_attempt_count=0, failed_attempt_count=0, within_case_range_mean=None,
         interval_available=ci is not None, interval_seed=None,
         ci_lower=None if ci is None else ci[0], ci_upper=None if ci is None else ci[1],
         interval_excludes_zero=rr._interval_excludes_zero(

@@ -69,6 +69,9 @@ export interface ExperimentListRow {
   run_status: ExperimentRunStatus;
   phase: FeedbackPhase;
   attempt_number: number;
+  // Which planned repeat of the (run, case) pair this attempt serves; retry
+  // chains run within one repeat. Rows written before repeats read 1.
+  repeat_index: number;
   supersedes_experiment_id: number | null;
   grader_attached: boolean;
   baseline_phase_run_id: number;
@@ -126,6 +129,10 @@ export interface ExperimentRunSummary {
   attempted_case_count: number;
   skipped_case_count: number;
   current_case_count: number;
+  // Every count above is in cases. A case with N planned repeats has N
+  // retry chains; these two say how many chains and repeats that is.
+  current_chain_count: number;
+  repeat_count: number;
   retry_count: number;
   status_counts: Record<ExperimentStatus, number>;
   total_llm_call_count: number;
@@ -139,6 +146,7 @@ export interface ExperimentRunSummary {
 
 export interface ExperimentRunCaseSummary {
   phase_run_id: number;
+  repeat_index: number;
   current: ExperimentListRow;
   history: ExperimentListRow[];
 }
@@ -186,6 +194,8 @@ export interface CandidateConfigV4 {
   system_prompt_override: string | null;
   system_prompt_override_sha256: string | null;
   reasoning_override?: boolean | null;
+  // Planned attempts per scored pair; absent on parents written before repeats.
+  repeats?: number;
   grader_attached: boolean;
   sweep: { name: string; axis: "model" | "prompt"; version: 1 } | null;
   plan_sha256: string;
@@ -460,6 +470,7 @@ export interface ExperimentDetailResponse {
   id: number;
   experiment_run: ExperimentRunDetail;
   attempt_number: number;
+  repeat_index: number;
   supersedes_experiment_id: number | null;
   status: ExperimentStatus;
   error_detail: string | null;

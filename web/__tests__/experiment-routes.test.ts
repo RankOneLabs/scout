@@ -85,7 +85,7 @@ beforeAll(() => {
     );
     CREATE TABLE evaluation_experiments (
       id INTEGER PRIMARY KEY, experiment_run_id INTEGER NOT NULL, phase_run_id INTEGER NOT NULL,
-      attempt_number INTEGER NOT NULL, supersedes_experiment_id INTEGER, status TEXT NOT NULL,
+      attempt_number INTEGER NOT NULL, repeat_index INTEGER NOT NULL DEFAULT 1, supersedes_experiment_id INTEGER, status TEXT NOT NULL,
       baseline_evidence TEXT NOT NULL, candidate_trace_id TEXT UNIQUE,
       candidate_llm_call_count INTEGER, candidate_cost REAL, error_detail TEXT,
       created_at TEXT NOT NULL, completed_at TEXT

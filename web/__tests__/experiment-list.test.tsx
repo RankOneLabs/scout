@@ -26,6 +26,8 @@ function makePage(): ExperimentRunListResponse {
         attempted_case_count: 1,
         skipped_case_count: 0,
         current_case_count: 1,
+        current_chain_count: 1,
+        repeat_count: 1,
         retry_count: 0,
         status_counts: { queued: 0, running: 0, complete: 1, failed: 0 },
         total_llm_call_count: 3,

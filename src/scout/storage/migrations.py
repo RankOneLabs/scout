@@ -2704,8 +2704,17 @@ def _migrate_to_36(conn: sqlite3.Connection) -> None:
     # reading v1-only columns that no longer exist.
     old_cols = {r["name"] for r in conn.execute("PRAGMA table_info(evaluation_experiments_v35)")}
     if "candidate_config" not in old_cols:
+        # Named columns, not SELECT *: a fixture bootstrapped from a newer
+        # SCHEMA may carry columns later migrations add (v41 repeat_index),
+        # and this table is the v36 shape.
+        v36_columns = (
+            "id, experiment_run_id, phase_run_id, attempt_number, "
+            "supersedes_experiment_id, status, baseline_evidence, candidate_trace_id, "
+            "candidate_llm_call_count, candidate_cost, error_detail, created_at, completed_at"
+        )
         conn.execute(
-            "INSERT INTO evaluation_experiments SELECT * FROM evaluation_experiments_v35"
+            f"INSERT INTO evaluation_experiments ({v36_columns}) "
+            f"SELECT {v36_columns} FROM evaluation_experiments_v35"
         )
         legacy_rows: list[sqlite3.Row] = []
     else:
@@ -3025,6 +3034,26 @@ def _migrate_to_40(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_41(conn: sqlite3.Connection) -> None:
+    """Per-case repeats in batch replay: evaluation_experiments.repeat_index.
+
+    Every existing attempt served repeat 1, which is the column default,
+    so no row is rewritten. attempt_number stays unique per (run, case)
+    across repeats; the lifecycle trigger is re-created so repeat_index
+    is as immutable as the other identity columns.
+    """
+    from scout.storage.schema import EVALUATION_EXPERIMENTS_LIFECYCLE_TRIGGER
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(evaluation_experiments)")}
+    if "repeat_index" not in cols:
+        conn.execute(
+            "ALTER TABLE evaluation_experiments ADD COLUMN repeat_index INTEGER NOT NULL "
+            "DEFAULT 1 CHECK(repeat_index >= 1)"
+        )
+    conn.execute("DROP TRIGGER IF EXISTS evaluation_experiments_lifecycle")
+    conn.execute(EVALUATION_EXPERIMENTS_LIFECYCLE_TRIGGER)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3065,4 +3094,5 @@ MIGRATIONS: dict[int, Migration] = {
     38: _migrate_to_38,
     39: _migrate_to_39,
     40: _migrate_to_40,
+    41: _migrate_to_41,
 }

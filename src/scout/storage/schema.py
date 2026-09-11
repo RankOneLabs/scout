@@ -9,7 +9,7 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 40
+LATEST_SCHEMA_VERSION = 41
 
 REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS review_dispositions (
@@ -75,6 +75,35 @@ ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
         WHEN EXISTS (SELECT 1 FROM analysis_lineage WHERE digest = NEW.digest)
         BEGIN SELECT RAISE(ABORT, 'analysis_lineage is immutable'); END""",
 )
+
+# The evaluation_experiments lifecycle trigger is shared with migration 41,
+# which re-creates it after adding repeat_index.
+EVALUATION_EXPERIMENTS_LIFECYCLE_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS evaluation_experiments_lifecycle
+BEFORE UPDATE ON evaluation_experiments
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'evaluation_experiments attempts only allow queued->running->complete/failed CAS updates'
+    )
+    WHERE OLD.status IN ('complete', 'failed')
+       OR NEW.experiment_run_id IS NOT OLD.experiment_run_id
+       OR NEW.phase_run_id IS NOT OLD.phase_run_id
+       OR NEW.attempt_number IS NOT OLD.attempt_number
+       OR NEW.repeat_index IS NOT OLD.repeat_index
+       OR NEW.supersedes_experiment_id IS NOT OLD.supersedes_experiment_id
+       OR NEW.baseline_evidence IS NOT OLD.baseline_evidence
+       OR NEW.created_at IS NOT OLD.created_at
+       OR (OLD.candidate_trace_id IS NOT NULL
+           AND NEW.candidate_trace_id IS NOT OLD.candidate_trace_id)
+       OR (OLD.candidate_llm_call_count IS NOT NULL
+           AND NEW.candidate_llm_call_count IS NOT OLD.candidate_llm_call_count)
+       OR (OLD.candidate_cost IS NOT NULL AND NEW.candidate_cost IS NOT OLD.candidate_cost)
+       OR NOT (
+            (OLD.status = 'queued' AND NEW.status = 'running')
+         OR (OLD.status = 'running' AND NEW.status IN ('running', 'complete', 'failed'))
+       );
+END;"""
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS scans (
@@ -814,6 +843,11 @@ CREATE TABLE IF NOT EXISTS evaluation_experiments (
     error_detail             TEXT CHECK(error_detail IS NULL OR length(error_detail) <= 2000),
     created_at               TEXT NOT NULL,
     completed_at             TEXT,
+    -- v41 (last, matching ALTER TABLE ADD COLUMN on migrated databases):
+    -- which planned repeat of the (run, case) pair this attempt serves.
+    -- Retry chains (supersedes_experiment_id) run within one repeat;
+    -- attempt_number stays unique per (run, case) across every repeat.
+    repeat_index             INTEGER NOT NULL DEFAULT 1 CHECK(repeat_index >= 1),
     UNIQUE(experiment_run_id, phase_run_id, attempt_number),
     FOREIGN KEY (experiment_run_id) REFERENCES experiment_runs(id),
     FOREIGN KEY (phase_run_id) REFERENCES evaluation_phase_runs(id),
@@ -845,30 +879,7 @@ BEGIN
     );
 END;
 
-CREATE TRIGGER IF NOT EXISTS evaluation_experiments_lifecycle
-BEFORE UPDATE ON evaluation_experiments
-BEGIN
-    SELECT RAISE(
-        ABORT,
-        'evaluation_experiments attempts only allow queued->running->complete/failed CAS updates'
-    )
-    WHERE OLD.status IN ('complete', 'failed')
-       OR NEW.experiment_run_id IS NOT OLD.experiment_run_id
-       OR NEW.phase_run_id IS NOT OLD.phase_run_id
-       OR NEW.attempt_number IS NOT OLD.attempt_number
-       OR NEW.supersedes_experiment_id IS NOT OLD.supersedes_experiment_id
-       OR NEW.baseline_evidence IS NOT OLD.baseline_evidence
-       OR NEW.created_at IS NOT OLD.created_at
-       OR (OLD.candidate_trace_id IS NOT NULL
-           AND NEW.candidate_trace_id IS NOT OLD.candidate_trace_id)
-       OR (OLD.candidate_llm_call_count IS NOT NULL
-           AND NEW.candidate_llm_call_count IS NOT OLD.candidate_llm_call_count)
-       OR (OLD.candidate_cost IS NOT NULL AND NEW.candidate_cost IS NOT OLD.candidate_cost)
-       OR NOT (
-            (OLD.status = 'queued' AND NEW.status = 'running')
-         OR (OLD.status = 'running' AND NEW.status IN ('running', 'complete', 'failed'))
-       );
-END;
+{EVALUATION_EXPERIMENTS_LIFECYCLE_TRIGGER}
 
 CREATE TRIGGER IF NOT EXISTS evaluation_experiments_no_delete
 BEFORE DELETE ON evaluation_experiments

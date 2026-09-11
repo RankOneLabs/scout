@@ -30,6 +30,7 @@ from scout.grading.snapshots import (
 )
 from scout.grading.wire import encode_wire_v1
 from scout.result import Err, Ok
+from scout.storage.schema import LATEST_SCHEMA_VERSION
 from scout.storage.state import StateManager
 
 
@@ -472,7 +473,7 @@ def test_v38_upgrade_protects_existing_revision_without_rewriting_it(state: Stat
         state.conn.execute("DROP TRIGGER grade_revisions_no_replace")
         state.conn.execute("PRAGMA user_version = 38")
     with StateManager(state.db_path) as upgraded:
-        assert upgraded.conn.execute("PRAGMA user_version").fetchone()[0] == 40
+        assert upgraded.conn.execute("PRAGMA user_version").fetchone()[0] == LATEST_SCHEMA_VERSION
         assert tuple(upgraded.conn.execute("SELECT * FROM grade_revisions").fetchone()) == before
         assert (
             upgraded.conn.execute(
