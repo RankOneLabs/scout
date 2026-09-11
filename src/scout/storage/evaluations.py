@@ -37,6 +37,7 @@ from scout.grading.feedback import (
     resolve_feedback_policy_config,
     select_phase_examples,
 )
+from scout.storage.experiment_plan import expected_experiment_pairs
 from scout.storage.unit_of_work import UnitOfWork
 from scout.verifier import GateViolation
 
@@ -451,6 +452,8 @@ class EvaluationStore:
         """
         now = datetime.now(UTC).isoformat()
         with self._uow.begin_immediate():
+            if self._planned_pairs(experiment_run_id) != frozenset():
+                raise ExperimentCASError("only an empty authorized plan can complete without attempts")
             cursor = self._conn.execute(
                 "UPDATE experiment_runs SET status = 'complete', completed_at = ? "
                 "WHERE id = ? AND status = 'queued' AND NOT EXISTS ("
@@ -506,7 +509,9 @@ class EvaluationStore:
         terminal = {"complete", "failed"}
         if all(s == "queued" for s in statuses):
             new_status = "queued"
-        elif len(statuses) < self._planned_chain_count(experiment_run_id):
+        elif (expected := self._planned_pairs(experiment_run_id)) is not None and set(
+            latest_status_by_case
+        ) != expected:
             # Execution inserts one chain at a time, so a plan with chains
             # still to come is in flight even when every inserted chain has
             # already gone terminal; terminalizing here would make a run
@@ -529,32 +534,19 @@ class EvaluationStore:
             (new_status, completed_at, experiment_run_id),
         )
 
-    def _planned_chain_count(self, experiment_run_id: int) -> int:
-        """Chains the run's plan authorizes: (planned cases - skipped) x repeats.
-
-        Runs without a plan in their candidate_config (legacy v2 shapes,
-        ad-hoc test configs) return 0, so the projection falls back to
-        reading only the chains that exist.
-        """
+    def _planned_pairs(self, experiment_run_id: int) -> frozenset[tuple[int, int]] | None:
         row = self._conn.execute(
             "SELECT candidate_config FROM experiment_runs WHERE id = ?", (experiment_run_id,)
         ).fetchone()
         if row is None:
-            return 0
+            raise ExperimentCASError(f"no experiment_runs row with id={experiment_run_id}")
         try:
             config = json.loads(row["candidate_config"])
-        except (TypeError, ValueError):
-            return 0
-        if not isinstance(config, dict):
-            return 0
-        planned = config.get("phase_run_ids")
-        if not isinstance(planned, list):
-            return 0
-        skipped = config.get("skipped_pairs")
-        skipped_count = len(skipped) if isinstance(skipped, list) else 0
-        repeats = config.get("repeats")
-        repeat_count = repeats if isinstance(repeats, int) and repeats >= 1 else 1
-        return max(len(planned) - skipped_count, 0) * repeat_count
+            if not isinstance(config, dict):
+                raise ValueError("candidate_config must be an object")
+            return expected_experiment_pairs(config)
+        except (TypeError, ValueError) as exc:
+            raise ExperimentCASError(f"invalid experiment plan: {exc}") from exc
 
     def insert_experiment_attempt(
         self,
@@ -605,6 +597,12 @@ class EvaluationStore:
             ).fetchone()
             if run_row is None:
                 raise ExperimentCASError(f"no experiment_runs row with id={experiment_run_id}")
+            expected = self._planned_pairs(experiment_run_id)
+            if expected is not None and (phase_run_id, repeat_index) not in expected:
+                raise ExperimentCASError(
+                    f"phase_run_id={phase_run_id} repeat_index={repeat_index} is outside "
+                    f"experiment_run {experiment_run_id}'s plan"
+                )
             latest = self._conn.execute(
                 "SELECT id, attempt_number, status FROM evaluation_experiments "
                 "WHERE experiment_run_id = ? AND phase_run_id = ? AND repeat_index = ? "

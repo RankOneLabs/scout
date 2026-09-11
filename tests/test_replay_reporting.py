@@ -78,6 +78,23 @@ async def _run_single_variant_batch(
     return outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME], phase_run_ids
 
 
+@pytest.mark.parametrize("malformation", ["repeat", "case", "missing"])
+async def test_report_rejects_historical_out_of_plan_or_incomplete_terminal_rows(
+    state, tracer, feedback, monkeypatch, malformation,
+) -> None:
+    run_id, _ = await _run_single_variant_batch(state, tracer, feedback, monkeypatch)
+    rows = state.list_experiment_attempts(run_id)
+    if malformation == "repeat":
+        rows[0] = {**rows[0], "repeat_index": 2}
+    elif malformation == "case":
+        rows[0] = {**rows[0], "phase_run_id": 999999}
+    else:
+        rows = rows[:1]
+    monkeypatch.setattr(state, "list_experiment_attempts", lambda _: rows)
+    with pytest.raises(rr.ReportError, match="out-of-plan|incomplete terminal"):
+        rr.build_batch_report(state, experiment_run_ids=[run_id])
+
+
 async def _run_two_variant_sweep(
     state, tracer, feedback, monkeypatch, *, case_count: int = 3,
 ) -> tuple[dict[str, int], list[int]]:
