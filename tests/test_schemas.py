@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
+from jig.core.runner import _build_submit_output_tool
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from scout.config import Message
@@ -12,11 +15,53 @@ from scout.scanning.schemas import (
     FARCASTER_POST_MAX_BYTES,
     CritiquePhaseOutput,
     DeclarativeSegment,
+    QuestionSegment,
     ReplyCandidate,
+    ResourceSegment,
     StructuredDraftOutput,
     unpack_candidate,
     validate_farcaster_byte_length,
 )
+
+
+@pytest.mark.parametrize("output", [StructuredDraftOutput, CritiquePhaseOutput, ReplyCandidate])
+def test_draft_tool_union_uses_supported_strict_schema(output: type) -> None:
+    """Exercise Jig's actual tool builder, including nested draft definitions."""
+    tool = _build_submit_output_tool(output)
+    encoded = json.dumps(tool.parameters)
+    assert tool.strict is True
+    assert '"oneOf"' not in encoded
+    assert '"discriminator"' not in encoded
+    Draft202012Validator.check_schema(tool.parameters)
+
+
+def test_provider_union_preserves_segment_tags_and_validation() -> None:
+    payload = {
+        "posture": "answer",
+        "segments": [
+            {"type": "declarative", "fact_id": "fact-1", "text": "A fact."},
+            {"type": "resource", "resource_id": "resource-1"},
+            {"type": "question", "text": "What failed?"},
+        ],
+        "claims": ["A fact."],
+        "resources_used": ["resource-1"],
+        "abstain_reason": None,
+    }
+    validator = Draft202012Validator(_build_submit_output_tool(StructuredDraftOutput).parameters)
+    validator.validate(payload)
+    draft = StructuredDraftOutput.model_validate(payload)
+    assert [type(segment) for segment in draft.segments] == [
+        DeclarativeSegment, ResourceSegment, QuestionSegment,
+    ]
+    for invalid in (
+        {"type": "resource", "text": "Missing resource ID"},
+        {"type": "unknown", "text": "Unsupported tag"},
+        {"text": "Missing tag"},
+    ):
+        malformed = {**payload, "segments": [invalid]}
+        assert not validator.is_valid(malformed)
+        with pytest.raises(ValidationError):
+            StructuredDraftOutput.model_validate(malformed)
 
 
 def _make_message() -> Message:
