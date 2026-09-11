@@ -12,11 +12,19 @@ from scout.storage.state import StateManager
 
 
 class StudyCell(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
     sweep_name: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]*$")
     variant: str
     model: str
     reasoning: bool | None = None
+    # Accepted grid annotations; these are not verified execution provenance.
+    sweep_file: str | None = None
+    project: str | None = None
+    prompt: str | None = None
+    backend: str | None = None
+    model_id: str | None = None
+    quant: str | None = None
+    repeat: int | None = Field(default=None, ge=1)
 
 
 class StudyManifest(BaseModel):
@@ -70,7 +78,13 @@ def export_study_reports(state: StateManager, manifest_path: Path, out_dir: Path
         report = build_batch_report(
             state, experiment_run_ids=list(outcome.experiment_run_ids.values()),
         )
-        report["study_cells"] = [cell.model_dump() for cell in cells]
+        # Publish only fields matched to immutable run configuration above.
+        # Project/prompt/backend/quant labels remain annotations in the input
+        # manifest; they cannot override the report's retained score targets.
+        report["study_cells"] = [
+            cell.model_dump(include={"sweep_name", "variant", "model", "reasoning"})
+            for cell in sorted(cells, key=lambda cell: cell.variant)
+        ]
         (out_dir / f"{sweep}.json").write_text(render_json(report), encoding="utf-8")
         (out_dir / f"{sweep}.md").write_text(render_markdown(report), encoding="utf-8")
         index.append(f"- [{sweep}]({sweep}.md): **{report['status']}**")

@@ -15,7 +15,9 @@ The runner previews and authorizes each exact plan, explicitly skips unchanged
 model/prompt pairs, and records `<sweep>.outcome.json` containing every variant's
 run ID. An existing outcome file is never overwritten. Any failed batch or missing
 sweep makes the runner exit nonzero. `reports/index.md` links every sweep report;
-the JSON contains manifest attributes, exact retained evidence and completion counts.
+the JSON contains verified execution identity, retained evidence and completion counts.
+Project/prompt/backend/quant labels remain declared annotations in the input manifest;
+the report never presents those unchecked labels as execution provenance.
 Never pick the best of repeated runs. Grid repeats remain separately reported;
 `batch-replay --repeats N` averages successful draws within each case. Cases have
 equal weight; report failure/coverage counts alongside metrics.

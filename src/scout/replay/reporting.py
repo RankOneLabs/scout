@@ -748,6 +748,7 @@ def _build_segments(
 
 def build_batch_report(state: StateManager, *, experiment_run_ids: Sequence[int]) -> dict[str, Any]:
     """Build scores and completion evidence from one consistent database snapshot."""
+    experiment_run_ids = sorted(experiment_run_ids)
     with state.db.read_transaction():
         report = _build_batch_report(state, experiment_run_ids=experiment_run_ids)
         runs = []

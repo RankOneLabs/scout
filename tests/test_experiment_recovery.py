@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,18 @@ import scout.replay.reporting as rr
 from scout.storage.state import StateManager
 from tests.test_evaluation_experiments import _pricing_catalog_for_tests
 from tests.test_replay_reporting import _run_single_variant_batch
+
+
+async def test_recovery_reports_malformed_stored_plan_as_domain_error(tmp_path) -> None:
+    with StateManager(db_path=":memory:") as state:
+        run = state.create_experiment_run(name="malformed", candidate_config=json.dumps({
+            "version": ee.BATCH_CANDIDATE_CONFIG_VERSION, "phase_run_ids": [1], "repeats": 0,
+        }))
+        with pytest.raises(ee.RetryResolutionError, match="invalid stored plan"):
+            await ee.retry_batch_replay(
+                state=state, tracer=None, feedback=None, experiment_run_id=run,
+                recover_interrupted=True,
+            )
 
 
 @pytest.mark.parametrize("interrupted_status", ["queued", "running"])

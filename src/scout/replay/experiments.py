@@ -2552,7 +2552,12 @@ async def retry_batch_replay(
         [Experiment(**row) for row in state.list_experiment_attempts(experiment_run_id)]
     )
     if recover_interrupted:
-        expected = expected_experiment_pairs(config)
+        try:
+            expected = expected_experiment_pairs(config)
+        except ValueError as exc:
+            raise RetryResolutionError(
+                f"experiment_run {experiment_run_id} has an invalid stored plan: {exc}"
+            ) from exc
         if expected is None or set(latest_by_case) != expected:
             raise RetryResolutionError(
                 "Interrupted run lacks its complete pinned attempt population; "

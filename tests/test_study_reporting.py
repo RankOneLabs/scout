@@ -6,9 +6,16 @@ import pytest
 from jig import SQLiteFeedbackLoop, SQLiteTracer
 
 from scout.replay.reporting import ReportError
-from scout.replay.study_reporting import export_study_reports
+from scout.replay.study_reporting import StudyCell, export_study_reports
 from scout.storage.state import StateManager
 from tests.test_replay_reporting import _run_two_variant_sweep
+
+
+def test_study_cell_rejects_undeclared_provenance_fields() -> None:
+    with pytest.raises(ValueError, match="Extra inputs"):
+        StudyCell.model_validate({
+            "sweep_name": "study", "variant": "a", "model": "model", "verified_prompt": "fake",
+        })
 
 
 @pytest.mark.parametrize("outcome_kind", ["complete", "missing", "wrong_model", "missing_variant"])
@@ -45,7 +52,8 @@ async def test_manifest_export_uses_explicit_runs_and_reports_every_declared_swe
         if complete:
             report = json.loads((tmp_path / "reports/ab-tune.json").read_text())
             assert report["experiment_run_ids"] == sorted(runs.values())
-            assert {cell["project"] for cell in report["study_cells"]} == {"test-project"}
+            assert all("project" not in cell and "prompt" not in cell
+                       for cell in report["study_cells"])
             assert "ab-tune.md" in index
         else:
             assert "missing outcome" in index

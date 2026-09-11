@@ -95,6 +95,14 @@ async def test_report_rejects_historical_out_of_plan_or_incomplete_terminal_rows
         rr.build_batch_report(state, experiment_run_ids=[run_id])
 
 
+async def test_report_is_independent_of_run_id_order(state, tracer, feedback, monkeypatch) -> None:
+    runs, _ = await _run_two_variant_sweep(state, tracer, feedback, monkeypatch)
+    ids = list(runs.values())
+    assert rr.render_json(rr.build_batch_report(state, experiment_run_ids=ids)) == rr.render_json(
+        rr.build_batch_report(state, experiment_run_ids=list(reversed(ids))),
+    )
+
+
 async def _run_two_variant_sweep(
     state, tracer, feedback, monkeypatch, *, case_count: int = 3,
 ) -> tuple[dict[str, int], list[int]]:
