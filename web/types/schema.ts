@@ -43,6 +43,16 @@ export interface SourceParent {
   url: string;
 }
 
+export type AuthorClass = "aggregator" | "unknown";
+
+/** Advisory read of the account, from the scan runner's annotate node. */
+export interface AuthorClassification {
+  author_class: AuthorClass;
+  rule_version: number;
+  matched_text: string | null;
+  classified_at: string;
+}
+
 export interface Post {
   id: number;
   platform: string;
@@ -57,6 +67,7 @@ export interface Post {
   scan_id: number | null;
   parent_lookup_status: ParentLookupStatus;
   parent: SourceParent | null;
+  author_classification?: AuthorClassification | null;
 }
 
 export interface Evaluation {

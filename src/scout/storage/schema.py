@@ -9,7 +9,7 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 41
+LATEST_SCHEMA_VERSION = 42
 
 REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS review_dispositions (
@@ -41,6 +41,25 @@ GRADE_REVISION_NO_REPLACE = """CREATE TRIGGER IF NOT EXISTS grade_revisions_no_r
     WHEN EXISTS (SELECT 1 FROM grade_revisions
         WHERE id = NEW.id OR (grade_id = NEW.grade_id AND revision = NEW.revision))
     BEGIN SELECT RAISE(ABORT, 'grade_revisions is immutable'); END"""
+
+# Author classification (v42). One row per author, written by the scan
+# runner's annotate node from the display name and handle of each post it
+# persists. It never gates evaluation; the review UI shows it beside the
+# block button. rule_version distinguishes a rule change from a rerun.
+AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS author_classifications (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        platform      TEXT NOT NULL,
+        author_id     TEXT NOT NULL,
+        author_class  TEXT NOT NULL CHECK(author_class IN ('aggregator', 'unknown')),
+        rule_version  INTEGER NOT NULL CHECK(rule_version >= 1),
+        matched_text  TEXT,
+        classified_at TEXT NOT NULL,
+        UNIQUE(platform, author_id)
+    )""",
+    """CREATE INDEX IF NOT EXISTS author_classifications_class_idx
+        ON author_classifications(author_class, platform, author_id)""",
+)
 
 # Shared by bootstrap and the additive v38 migration. Each statement executes
 # individually during migration so executescript cannot commit the outer UoW.
@@ -995,6 +1014,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(ARTIFACT_SCHEMA_STATEMENTS)};
 {GRADE_REVISION_NO_REPLACE};
 {';'.join(REVIEW_SCHEMA_STATEMENTS)};
+{';'.join(AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

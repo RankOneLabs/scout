@@ -67,6 +67,7 @@ from scout.grading.service import format_grading_signals
 from scout.grading.snapshots import CorpusSelection, build_snapshot_bundle, read_grade_population
 from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
 from scout.result import Err, Ok
+from scout.scanning.author_class import AUTHOR_CLASS_RULE_VERSION
 from scout.scanning.prefilter import RoutedMessage
 from scout.scanning.schemas import (
     DeclarativeSegment,
@@ -969,6 +970,58 @@ async def test_blocked_author_is_persisted_but_never_sent_to_pipeline(
         "SELECT COUNT(*) FROM evaluations WHERE post_id = ?", (post_row["id"],)
     ).fetchone()[0]
     assert evaluation_count == 0
+
+
+@pytest.mark.asyncio
+async def test_author_is_annotated_before_the_block_check(
+    monkeypatch: pytest.MonkeyPatch,
+    in_memory_state: StateManager,
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    msg = replace(
+        _message("annotated-poster", now),
+        author_name="Some Feed",
+        url="https://bsky.app/profile/daily-links.bsky.social/post/abc",
+    )
+    scan_id = in_memory_state.start_scan()
+    in_memory_state.block_author(platform=msg.platform, author_id=msg.author_id)
+    run_mock = AsyncMock()
+
+    monkeypatch.setattr(scan_runner, "run_pipeline", run_mock)
+    monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
+    monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
+
+    routed = [RoutedMessage(message=msg, keyword_route=None)]
+    await scan_runner.score_messages(
+        routed,
+        [msg],
+        {"evaluate": "e", "respond": "r", "critique": "c"},
+        {},
+        {},
+        "model",
+        "model",
+        "model",
+        Mock(),
+        Mock(),
+        in_memory_state,
+        scan_id,
+        str(tmp_path / "digest.md"),
+        feedback_snapshot=in_memory_state.record_feedback_snapshot(scan_id, mode="shadow"),
+    )
+
+    assert run_mock.await_count == 0
+    stored = in_memory_state.get_author_classification(
+        platform=msg.platform, author_id=msg.author_id
+    )
+    assert stored is not None
+    assert (stored.author_class, stored.rule_version, stored.matched_text) == (
+        "aggregator",
+        AUTHOR_CLASS_RULE_VERSION,
+        "Feed",
+    )
 
 
 @pytest.mark.asyncio

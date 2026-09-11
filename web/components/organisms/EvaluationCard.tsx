@@ -9,6 +9,7 @@ import { ScoreBar } from "@/components/atoms/ScoreBar";
 import { ExternalLink } from "@/components/atoms/ExternalLink";
 import { GradeControls } from "@/components/molecules/GradeControls";
 import { MatchedRouteSummary } from "@/components/molecules/MatchedRouteSummary";
+import { AuthorClassBadge } from "@/components/molecules/AuthorClassBadge";
 import { BlockAuthorButton } from "@/components/molecules/BlockAuthorButton";
 import { truncateContent, formatTimestamp } from "@/lib/transforms";
 
@@ -48,11 +49,14 @@ export function EvaluationCard({ evaluation, onGradeUpdate }: {
       <div className="rounded-md border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 p-3">
         <div className="mb-1 flex items-center justify-between gap-3">
           <h4 className="text-xs font-medium uppercase text-gray-600 dark:text-gray-500">Original post</h4>
-          <BlockAuthorButton
-            platform={evaluation.post.platform}
-            authorId={evaluation.post.author_id}
-            authorName={evaluation.post.author_name}
-          />
+          <div className="flex items-center gap-3">
+            <AuthorClassBadge classification={evaluation.post.author_classification} />
+            <BlockAuthorButton
+              platform={evaluation.post.platform}
+              authorId={evaluation.post.author_id}
+              authorName={evaluation.post.author_name}
+            />
+          </div>
         </div>
         <p className="text-sm text-gray-600 dark:text-gray-400">{evaluation.post.content ? truncateContent(evaluation.post.content, 300) : "—"}</p>
         {evaluation.post.url && <div className="mt-2"><ExternalLink href={evaluation.post.url}>View original</ExternalLink></div>}

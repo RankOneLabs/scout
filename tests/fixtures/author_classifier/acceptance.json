@@ -1,0 +1,1553 @@
+{
+ "description": "Acceptance set for the author classifier. `blocked` is every active blocked_authors row on 2026-09-11; `good` is every unblocked author with at least one human-graded relevant post. Names and handles are every value observed across that author's stored posts.",
+ "source": "willie scout.db: posts, blocked_authors, grades (read 2026-09-11)",
+ "blocked": [
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4bn7dc5bvgwlio54om62evf6",
+   "names": [
+    "Нейролента"
+   ],
+   "handles": [
+    "nairolenta.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4hdan5ln3lqedekb52b22hcu",
+   "names": [
+    "Rulestack"
+   ],
+   "handles": [
+    "ai-shop.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:5fdh6vfo5igutq5idepj5cyi",
+   "names": [
+    "SnipVote"
+   ],
+   "handles": [
+    "snipvote.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:67o3vyje5wbsvdzufzpauikr",
+   "names": [
+    "Automation Wire",
+    "Sipirtu"
+   ],
+   "handles": [
+    "automationwire.bsky.social",
+    "sipirtu.bsky.social",
+    "sipirtu.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:67solp4fz2zeedsxvaxoexjj",
+   "names": [
+    "AWS News Feed on 🦋"
+   ],
+   "handles": [
+    "awsrecentnews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:6w7vti5uy5odbit5aqw3qrfg",
+   "names": [
+    "Grafana"
+   ],
+   "handles": [
+    "grafana.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:7pgslelujivpzgpnhx73c4cc",
+   "names": [
+    "RouterBase"
+   ],
+   "handles": [
+    "routerbase.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:7s4o3tuufxok4rzusbmcquc7",
+   "names": [
+    "OpsMatters"
+   ],
+   "handles": [
+    "opsmatters.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:acy4bywuzyjw2lro2veqmnfi",
+   "names": [
+    "AI & ML News"
+   ],
+   "handles": [
+    "ai-news.at.thenote.app"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:bf4vs7wdloi7ax2ryhknkjb4",
+   "names": [
+    "AgentWallex"
+   ],
+   "handles": [
+    "agentwallex.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:d3wzodyupaatb52obfwqbjpk",
+   "names": [
+    "AWS Builders Center on 🦋"
+   ],
+   "handles": [
+    "communityaws.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:daexpe52ebb4bwh3ybzyvmkz",
+   "names": [
+    "aichina.news"
+   ],
+   "handles": [
+    "aichina.news"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:h5maykrmsb3yz4y5qcdlulvk",
+   "names": [
+    "HackerNews Compilator"
+   ],
+   "handles": [
+    "hnbot.gsuscs.xyz"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:hpndhfpspxyasfbqtak6yrow",
+   "names": [
+    "Alpha X Agent"
+   ],
+   "handles": [
+    "alphaxagent.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:j36u6b24g7qgxzaprql7xybx",
+   "names": [
+    "NEWS FUSION"
+   ],
+   "handles": [
+    "newsfusion.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:joj2wp43ajdu7st22gmpglyl",
+   "names": [
+    "arXiv cs.SE Software Engineering"
+   ],
+   "handles": [
+    "csse-bot.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:k5iah5gbk4zamgxr4fr7s2np",
+   "names": [
+    "CRYPTO FAN"
+   ],
+   "handles": [
+    "crypto-fan.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:kbzotn4ippvrqllcitxglgm2",
+   "names": [
+    "HackerNoon"
+   ],
+   "handles": [
+    "hackernoon.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:kfaqksbyr3zwzvzj3wpbpvac",
+   "names": [
+    "The New Stack"
+   ],
+   "handles": [
+    "thenewstack.io"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:kyjo4uenpbed6f7bb4mxuapj",
+   "names": [
+    "Software Engineering Daily"
+   ],
+   "handles": [
+    "softwaredaily.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:lw7nkwmfquxtmmohqgn7mvmi",
+   "names": [
+    "Extly News"
+   ],
+   "handles": [
+    "extlynews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:n7k5tsmzxhpakh7zszobeglo",
+   "names": [
+    "ByMachine"
+   ],
+   "handles": [
+    "bymachine.news"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:nw6p3d24ytsnonusaazomao7",
+   "names": [
+    "The AWS News Feed"
+   ],
+   "handles": [
+    "aws-news.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:pcievrygrnjjg5ni7mjfgctb",
+   "names": [
+    "Hacker & Security News"
+   ],
+   "handles": [
+    "hacker.at.thenote.app"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:qifcssw4ymmiekaemsqjisud",
+   "names": [
+    "Azure Weekly"
+   ],
+   "handles": [
+    "azureweekly.endj.in",
+    "azureweekly.info"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:rkmhvhrql3etake2ubbo6tjb",
+   "names": [
+    "ultrathink.art"
+   ],
+   "handles": [
+    "ultrathink-art.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:rkng7y623gvkvhh27pjlepsz",
+   "names": [
+    "Leonardo Ganni Luciano-Pena"
+   ],
+   "handles": [
+    "leo-atreides.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:skanrjlrmqoz3tz2or3yhgw2",
+   "names": [
+    "OpenAI {bot}"
+   ],
+   "handles": [
+    "openaibot.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ujlnietjgyap3qc4hbn7lkbq",
+   "names": [
+    "OpenAI :bot:"
+   ],
+   "handles": [
+    "openai.zpravobot.news.ap.brid.gy"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ulwop5bwghrqdeltvdl4ihvm",
+   "names": [
+    "Askew"
+   ],
+   "handles": [
+    "askew-ai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:unejftsz3cgbjugdvrhzxzzx",
+   "names": [
+    "getpacket.ai"
+   ],
+   "handles": [
+    "getpacketai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:v45qfiuww7hypch45c2zxrhg",
+   "names": [
+    "Mickai"
+   ],
+   "handles": [
+    "mickai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:wl4yqrcbtaaykjpslissa4in",
+   "names": [
+    "Vinkius"
+   ],
+   "handles": [
+    "vinkius-mcp-ai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:wm5cngsgun6hma7foszcpogb",
+   "names": [
+    "Shadowfetch Apps"
+   ],
+   "handles": [
+    "shadowfetchapps.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:womq2hhxrurp3aiivvrfpft2",
+   "names": [
+    "modul-ds"
+   ],
+   "handles": [
+    "modul-ds.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:z7e37gitua5i7vdn2ljpqiog",
+   "names": [
+    "AI Ed Tools"
+   ],
+   "handles": [
+    "ai-ed-tools.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zbtmfb6kki4bb7ijn3kooptx",
+   "names": [
+    "Laravel News"
+   ],
+   "handles": [
+    "laravelnews.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zlixt2hlsvb3v3vznp32tsnz",
+   "names": [
+    "InfoQ"
+   ],
+   "handles": [
+    "infoq.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zugrq46reu5aoeyd2wlb7bv7",
+   "names": [
+    "askfred.be"
+   ],
+   "handles": [
+    "askfred.be"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zxvvxtf6kc4lgt56ozjklo5b",
+   "names": [
+    "Agentic AI Foundation"
+   ],
+   "handles": [
+    "aaif.io"
+   ]
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "2253793",
+   "names": [
+    "Steve ",
+    " Rank One Labs"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "3117427",
+   "names": [
+    "askew-ai"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "3341256",
+   "names": [
+    "Concept4Hub Bot"
+   ],
+   "handles": []
+  }
+ ],
+ "good": [
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:2iizxyn36ozfomjkzonhkwdz",
+   "names": [
+    "Progressive robot"
+   ],
+   "handles": [
+    "progressiverobot.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:2mmdgkpha4xuzppdqixd7q6g",
+   "names": [],
+   "handles": [
+    "aistorynews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:446o4dvplp6vhhjayeapiuxt",
+   "names": [
+    "Gene Conroy-Jones"
+   ],
+   "handles": [
+    "foursignalsdev.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:47aed2hpf7tbfx6sucq4mt4i",
+   "names": [
+    "David Moniz"
+   ],
+   "handles": [
+    "davidmoniz.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:47hkref6tgcnbl66n644inu2",
+   "names": [
+    "shuvo"
+   ],
+   "handles": [
+    "isuvo.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4bbfeqw4u7wia2ln7nme775g",
+   "names": [
+    "Pneumetron"
+   ],
+   "handles": [
+    "pneumetron.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4dfcno6rt2shynzeecjrkedr",
+   "names": [
+    "AgentLuxAI"
+   ],
+   "handles": [
+    "agentluxai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4j7exarb62djxycrgdfhuulr",
+   "names": [
+    "Sensemaker"
+   ],
+   "handles": [
+    "sensemaker.computer"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4kui4izicfh33r6jflaq4uqz",
+   "names": [],
+   "handles": [
+    "dev2next.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4p7gjnrjjywcape4rxf7rb37",
+   "names": [],
+   "handles": [
+    "contrite42.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4vglj6tet54rvwbjq4ag7jtx",
+   "names": [
+    "Alex Wise"
+   ],
+   "handles": [
+    "engineer.sitereliability.best"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4wevdwtzbojh2mtchasvf7ro",
+   "names": [
+    "Sam Rivera"
+   ],
+   "handles": [
+    "sam-rivera.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:4x5fq5s3yfs6g5fnb3d5skks",
+   "names": [
+    "Geeks in the Woods"
+   ],
+   "handles": [
+    "geeksinthewoods.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:52ebsnsga2gwzpsx4mkze6cy",
+   "names": [
+    "Z.H. He"
+   ],
+   "handles": [
+    "zhhewrites.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:5he4ea6sl6v7qfmyry4djrkp",
+   "names": [
+    "Wes Miller"
+   ],
+   "handles": [
+    "getwired.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:5j2caf32hkewii6yrxdy22ld",
+   "names": [
+    "Mana Flare 🍁"
+   ],
+   "handles": [
+    "manaflare-mtg.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:5qcewywsdkkhdo5fotj7rg6c",
+   "names": [
+    "Bobdbuilder"
+   ],
+   "handles": [
+    "bobdbuilder1.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:5wz3cqoojh5gn35wp3by5lx7",
+   "names": [],
+   "handles": [
+    "fenju.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:6e65lb6gauonxzpelkcnnlm4",
+   "names": [],
+   "handles": [
+    "kar-t-25.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:6l6mjqfe7xe5g4kioepsyqd6",
+   "names": [
+    "ScrambleMeBot ✨",
+    "ScrambleMeBot 🤖"
+   ],
+   "handles": [
+    "agent.osintnet.uk"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:6mpsgkcra5bwetlidi6yhead",
+   "names": [
+    "NotBob"
+   ],
+   "handles": [
+    "reallynotbob.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:acud5qhfsksym2crohjisvbb",
+   "names": [
+    "Bibo W."
+   ],
+   "handles": [
+    "bibo72.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ait3ewyppkd4ubgkldb6pvn3",
+   "names": [
+    "Automation"
+   ],
+   "handles": [
+    "autoflow.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:aj2qubx3vzpluxjkn4zzdech",
+   "names": [
+    "Premarcu",
+    "premarcu.bsky.social"
+   ],
+   "handles": [
+    "premarcu.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:as37v25uxomf6p6zpzemg5pm",
+   "names": [
+    "Midori Photo Art."
+   ],
+   "handles": [
+    "yosuke5408.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:bulngzzy3rdxjxvqoqidi74r",
+   "names": [
+    "xLorenz's proyect"
+   ],
+   "handles": [
+    "xlorenzhermes.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ccxn7wztntwyktqcdznbd5dw",
+   "names": [
+    "Desplega Labs"
+   ],
+   "handles": [
+    "desplegalabs.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:cob7y5ebkweanqtxxmkzg22n",
+   "names": [
+    "Robert Ta"
+   ],
+   "handles": [
+    "therobertta.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:cxbkmnuhy6pjnjfxheyze4em",
+   "names": [
+    "Aaron (Youshen) Lim"
+   ],
+   "handles": [
+    "youshenlim.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:cxeoay4fze3plflx7hf52rst",
+   "names": [
+    "Vlad"
+   ],
+   "handles": [
+    "beyondthecode.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:d3p4jzrm5dpz2gdhzd5sxwwa",
+   "names": [
+    "Alexis Kirke"
+   ],
+   "handles": [
+    "alexiskirke.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:dflgxbqvn3f7udrfgfx222eu",
+   "names": [
+    "Gordon"
+   ],
+   "handles": [
+    "gordon.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:dldjlnyixo5drrqrfo27fcff",
+   "names": [
+    "Paul Crinigan"
+   ],
+   "handles": [
+    "paul-crinigan.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:dr5bipr4jw3bpzczq7pu23ke",
+   "names": [
+    "Miles Arden",
+    "Reid Marlow"
+   ],
+   "handles": [
+    "komoai.net",
+    "reidmarlow.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:dsdyga27xrm5fuwk3h5pt46n",
+   "names": [
+    "Liz Baker (she/her)"
+   ],
+   "handles": [
+    "liz-baker.dev"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ei3io7df2zhmcoipn47arnpw",
+   "names": [
+    "Erik Fiala"
+   ],
+   "handles": [
+    "erikfiala.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ept4l4zcjaajxvi5gtb6wnhr",
+   "names": [
+    "Mike Hadlow"
+   ],
+   "handles": [
+    "mikehadlow.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:exvxgs5pof3jycocvvia27u3",
+   "names": [
+    "Build to Launch"
+   ],
+   "handles": [
+    "build2launch-ai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ezto7zsm7rjxoclcecclkq3l",
+   "names": [
+    "Rasmus Aagaard"
+   ],
+   "handles": [
+    "rasgaard.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:fax7qymnxikrtvsrmofckaab",
+   "names": [
+    "Nayuta Spiral Works ",
+    " AI Simulation Lab"
+   ],
+   "handles": [
+    "nayutaaei.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:fks7s3klyrhs7ykd7cugscdh",
+   "names": [],
+   "handles": [
+    "aitechconnect.in"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:fkvmnnmyomwnafiiuaqkm6gz",
+   "names": [],
+   "handles": [
+    "pickuma.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ftsp5fvzndvdufudjlrng4j3",
+   "names": [
+    "Gen AI News 🅰︎ℹ︎"
+   ],
+   "handles": [
+    "genainews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:hpoad6hf424ev6awpf3v7vdf",
+   "names": [
+    "Sadie"
+   ],
+   "handles": [
+    "siliconsadie.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:i2y34utl5i7yo34ymxxksmwo",
+   "names": [
+    "Ross Nesbitt"
+   ],
+   "handles": [
+    "arc-codex.com",
+    "hapenez.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:i7br3zjysu4tkpht53zznw7v",
+   "names": [
+    "Will Killian"
+   ],
+   "handles": [
+    "willkill07.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:idqbpe5feort5negg7yim6nd",
+   "names": [],
+   "handles": [
+    "luiscorev2.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ij6lrbwrhyfchlyjue4grfff",
+   "names": [
+    "The Durability Curve"
+   ],
+   "handles": [
+    "thedurabilitycurve.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jbw2vgm7dd5m57czhrurlxq5",
+   "names": [
+    "Arize AI"
+   ],
+   "handles": [
+    "arize.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jdfgwzcje6ks5sgrzedaougc",
+   "names": [
+    "Epic Vibecoder"
+   ],
+   "handles": [
+    "epicvibecoder.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jhbcrcveuscoqnga34ni2tuy",
+   "names": [
+    "Daniela Petruzalek"
+   ],
+   "handles": [
+    "danicat83.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jlf6u3amiq5qgpwtiyedp7os",
+   "names": [
+    "Business Intelligence Briefly"
+   ],
+   "handles": [
+    "bizintelbriefly.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jmuhjrotgvcquoaqtpcuxjii",
+   "names": [
+    "HN"
+   ],
+   "handles": [
+    "hnws.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jrfrxm7ahfafxt7nooovdmix",
+   "names": [
+    "Eyal Estrin ☁️"
+   ],
+   "handles": [
+    "eyalestrin.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:jwiqgmrluktumpoh2mqy47xv",
+   "names": [
+    "ZK Ultra"
+   ],
+   "handles": [
+    "zku.cryptoanarchy.network"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:kqrwnjujw2ss25afrdzefzwh",
+   "names": [
+    "Tom Smith"
+   ],
+   "handles": [
+    "ctsmithiii.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:kt4vrgklxiw4ltljzhg5pmty",
+   "names": [
+    "lanceseamans.bsky.social"
+   ],
+   "handles": [
+    "lanceseamans.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ktmb3ut4tk4oqrbwrn3yvqtm",
+   "names": [
+    "bymayachen.bsky.social"
+   ],
+   "handles": [
+    "bymayachen.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:kwku42ep3zlrtuv2kvqrtz64",
+   "names": [
+    "arize-phoenix"
+   ],
+   "handles": [
+    "arize-phoenix.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:l4r7crdmwkkzxqr3hjxnd3gy",
+   "names": [
+    "Qubble Labs"
+   ],
+   "handles": [
+    "qubblelabs.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:lc6hdhnjkgccd6ysi7e23pll",
+   "names": [
+    "Climate, Ecology, War & More - Dr Glen Barry BigEarthData.ai"
+   ],
+   "handles": [
+    "bigearthdata.ai"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ldrvmbgowteyrnhd7q34bscd",
+   "names": [
+    "Carlos Sanchez"
+   ],
+   "handles": [
+    "csanchez.org"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:llsqgeyuaquhhdjjlowdgb34",
+   "names": [
+    "Hamilton Greene"
+   ],
+   "handles": [
+    "sirhamy.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:lrbprpdpkv6prjqqtd3qumrd",
+   "names": [
+    "Kol Tregaskes"
+   ],
+   "handles": [
+    "koltregaskes.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:lv3mmng7ec7ij4bruclcb5lw",
+   "names": [
+    " Cartisien"
+   ],
+   "handles": [
+    "cartisien.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:m2yuqynl2cttvi4k5453yegh",
+   "names": [
+    "input"
+   ],
+   "handles": [
+    "feed.igeek.gamer-geek-news.com.ap.brid.gy"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:mqsmfgnlrdbbljseflhjr3y2",
+   "names": [
+    "Amken Tech"
+   ],
+   "handles": [
+    "amkentech.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:myyfcpynqmwamnd7njgwneex",
+   "names": [
+    "Mig.Explains"
+   ],
+   "handles": [
+    "migexplains.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:n4eeh2rvajgarxmsoycvq7wa",
+   "names": [
+    "Aamer Mehaisi"
+   ],
+   "handles": [
+    "o96a.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:nbmmhbra2z7my4ipcwgagd25",
+   "names": [
+    "Mockbird"
+   ],
+   "handles": [
+    "mockbirdapp.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:nbv5ao5l44ii65o2isur3lnh",
+   "names": [
+    "乔氪智造_qiaokezhizao"
+   ],
+   "handles": [
+    "qiaokezhizao.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:nphpplr7dcdi4wyjuizmz2wg",
+   "names": [
+    "evios"
+   ],
+   "handles": [
+    "johnios.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:nrfqk6t446qme4kb7aiemqig",
+   "names": [
+    "AI Firehose"
+   ],
+   "handles": [
+    "ai-firehose.column.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:oroyl7gve22hgivynkqnghbt",
+   "names": [
+    "Jindřich Libovický"
+   ],
+   "handles": [
+    "jlibovicky.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:owo2l6v35uvk3axlrkz6d2wt",
+   "names": [
+    "Undercode Testing"
+   ],
+   "handles": [
+    "undercode.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:p4ceng4572dwc7nbcz5ymkol",
+   "names": [
+    "Hlido"
+   ],
+   "handles": [
+    "hlido.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:pjgafa6dxwq5mbqqv2f64ax5",
+   "names": [
+    "Alejandro Saucedo ",
+    " KubeCon 2025 Europe AI Keynote"
+   ],
+   "handles": [
+    "axsaucedo.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:pzp3z7ioravtzycw4tpwqktl",
+   "names": [
+    "Asedio"
+   ],
+   "handles": [
+    "asedioai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:qqdckdv7xg4ri76t3j7lrlfk",
+   "names": [
+    "primefold.bsky.social"
+   ],
+   "handles": [
+    "primefold.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:qsib6eg62hucawp4yedn7665",
+   "names": [
+    "Dan Sylveste"
+   ],
+   "handles": [
+    "constantinejn.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:qvywnipfiyrd6v4qdf4x27wy",
+   "names": [
+    "hikikomorphism"
+   ],
+   "handles": [
+    "hikikomorphism.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:r5pfiwx5htfva5wdsdg2hsa2",
+   "names": [
+    "PUTMAN Logic"
+   ],
+   "handles": [
+    "putmanmodel.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ragk3aaymfustvz7sv6bmbh3",
+   "names": [
+    "Soliloquest"
+   ],
+   "handles": [
+    "soliloquest.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:rbabliwvqexlbfwmfqqhcuvj",
+   "names": [],
+   "handles": [
+    "sergiocuellar.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:rmessqzfzasnuql6shmt5udm",
+   "names": [
+    "Agent Island"
+   ],
+   "handles": [
+    "agentisland.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ruvvk6d4o6yuraflabyse6rm",
+   "names": [
+    "Kevin Payne"
+   ],
+   "handles": [
+    "kevintpayne.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:s46fp4de3ihgb32detkcfqsb",
+   "names": [
+    "Recce - Trust, Verify, Ship"
+   ],
+   "handles": [
+    "datarecce.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:sqjdvgrsik6d34u6b4kvfkrt",
+   "names": [
+    "Evan Reed"
+   ],
+   "handles": [
+    "tianweiai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:t6ga27hj5rgx3l57jgshdo2y",
+   "names": [
+    "The guy at the end of Bruno’s leash"
+   ],
+   "handles": [
+    "davidgs.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:thdk2bvranllhicun5osfjin",
+   "names": [],
+   "handles": [
+    "helloember999.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:trp4uqg7gxqgbiugyrz3dvzo",
+   "names": [
+    "stoicsoft.bsky.social"
+   ],
+   "handles": [
+    "stoicsoft.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:u6vyeziobzeclachx3jfmyh4",
+   "names": [
+    "Aethon"
+   ],
+   "handles": [
+    "aethonai.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:u7bk67r3d27r7db2zr3ubryg",
+   "names": [
+    "INS AI Solutions"
+   ],
+   "handles": [
+    "ins-aisolutions.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ur22zlgwhucsly6kfqeb5qty",
+   "names": [
+    "Glenn Thimmes"
+   ],
+   "handles": [
+    "glennthimmes.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:van7bqbf2i45wa6mb6f7fxsw",
+   "names": [
+    "Aether Ai"
+   ],
+   "handles": [
+    "trynoguard.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:vaomesvq5bfczg7wwuuphfxv",
+   "names": [
+    "bizz ",
+    " AI software solutions"
+   ],
+   "handles": [
+    "bizzaidev.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:vn54ieqvk72pglewtufbbxpd",
+   "names": [
+    "Rishi NG"
+   ],
+   "handles": [
+    "wtfuzz.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:vovacbsjyzxch6dqkrieaa5p",
+   "names": [
+    "Hermes @ Goke"
+   ],
+   "handles": [
+    "hermes.gokepelemo.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:wc247qet6fmuzynmhehrsfdl",
+   "names": [
+    "TIMxAI"
+   ],
+   "handles": [
+    "timxai.ai"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:whk3zkktrvm4a637gp4cxpsu",
+   "names": [
+    "Masa Matsuoka"
+   ],
+   "handles": [
+    "bobmatnyc.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:wkxyggadrxmnj3xc6ejyl5po",
+   "names": [
+    "in motu digital"
+   ],
+   "handles": [
+    "inmotudigital.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:xdcx7xtv2x5zui24uwsbvtjf",
+   "names": [
+    "SEIKOURI Inc."
+   ],
+   "handles": [
+    "seikouri.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:xmeey64pzulplo73fclonyo2",
+   "names": [
+    "AgentMeter"
+   ],
+   "handles": [
+    "agentmeter.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:ydqfebgkofkzvkl6k33m7bmy",
+   "names": [],
+   "handles": [
+    "genticnews.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:yybglfkd5cpsvymw7doevl7t",
+   "names": [
+    "Nik Kale"
+   ],
+   "handles": [
+    "nik-kale.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:z4lutgunglpmgcbawqnckkfm",
+   "names": [
+    "Warp"
+   ],
+   "handles": [
+    "warp.dev"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zcumilxztfgl3var46mgznnt",
+   "names": [
+    "Towards Data Science"
+   ],
+   "handles": [
+    "towardsdatascience.com"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zgcupvf5c6he2w4qufqd5xpp",
+   "names": [
+    "Dr. Ganapathi Pulipaka"
+   ],
+   "handles": [
+    "gp-pulipaka.bsky.social"
+   ]
+  },
+  {
+   "platform": "bluesky",
+   "author_id": "did:plc:zl37udfmd3t3553svtopiqgt",
+   "names": [
+    "IvyAgents AI"
+   ],
+   "handles": [
+    "ivyagentsai.bsky.social"
+   ]
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "1076715",
+   "names": [
+    "Bien (❖,❖)"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "12623",
+   "names": [
+    "Aaron Elijah Mars"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "1329735",
+   "names": [
+    "Best Solution (Bestsoln)"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "3342112",
+   "names": [
+    "Midas the CEO"
+   ],
+   "handles": []
+  },
+  {
+   "platform": "farcaster",
+   "author_id": "3342454",
+   "names": [
+    "Plumbgodpaxeer"
+   ],
+   "handles": []
+  }
+ ]
+}

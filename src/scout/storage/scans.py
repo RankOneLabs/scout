@@ -1,6 +1,7 @@
-"""Scan aggregate: scan lifecycle, per-platform fetch failures, and the
-author blocklist. Owns the `scans`, `scan_fetch_failures`, and
-`blocked_authors` tables.
+"""Scan aggregate: scan lifecycle, per-platform fetch failures, the
+author blocklist, and author classifications. Owns the `scans`,
+`scan_fetch_failures`, `blocked_authors`, and `author_classifications`
+tables.
 
 Constructed with the same `UnitOfWork` `StateManager` and every sibling
 store share — see `unit_of_work.py` for why no store opens its own
@@ -35,8 +36,21 @@ class ScanFetchFailure:
     retryable: bool
 
 
+@dataclass(frozen=True, slots=True)
+class StoredAuthorClassification:
+    """One `author_classifications` row, as returned by `get_author_classification`."""
+
+    platform: str
+    author_id: str
+    author_class: str
+    rule_version: int
+    matched_text: str | None
+    classified_at: str
+
+
 class ScanStore:
-    """Owns scan lifecycle, fetch-failure recording, and author blocking."""
+    """Owns scan lifecycle, fetch-failure recording, author blocking and
+    author classification."""
 
     def __init__(self, uow: UnitOfWork) -> None:
         self._uow = uow
@@ -301,6 +315,56 @@ class ScanStore:
             identity,
         ).fetchone()
         return row is not None
+
+    def record_author_classification(
+        self,
+        *,
+        platform: str,
+        author_id: str,
+        author_class: str,
+        rule_version: int,
+        matched_text: str | None,
+    ) -> bool:
+        """Upsert an author's class; return whether a row was inserted or changed.
+
+        A rerun of the same rule with the same outcome is a no-op, so
+        classified_at records when the current class was first decided.
+        """
+        identity = self._author_identity(platform, author_id)
+        now = datetime.now(UTC).isoformat()
+        with self._uow.begin():
+            cursor = self._conn.execute(
+                "INSERT INTO author_classifications "
+                "(platform, author_id, author_class, rule_version, matched_text, classified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(platform, author_id) DO UPDATE SET "
+                "author_class = excluded.author_class, rule_version = excluded.rule_version, "
+                "matched_text = excluded.matched_text, classified_at = excluded.classified_at "
+                "WHERE author_class IS NOT excluded.author_class "
+                "OR rule_version IS NOT excluded.rule_version",
+                (*identity, author_class, rule_version, matched_text, now),
+            )
+        return cursor.rowcount > 0
+
+    def get_author_classification(
+        self, *, platform: str, author_id: str
+    ) -> StoredAuthorClassification | None:
+        identity = self._author_identity(platform, author_id)
+        row = self._conn.execute(
+            "SELECT platform, author_id, author_class, rule_version, matched_text, classified_at "
+            "FROM author_classifications WHERE platform = ? AND author_id = ?",
+            identity,
+        ).fetchone()
+        if row is None:
+            return None
+        return StoredAuthorClassification(
+            platform=row["platform"],
+            author_id=row["author_id"],
+            author_class=row["author_class"],
+            rule_version=int(row["rule_version"]),
+            matched_text=row["matched_text"],
+            classified_at=row["classified_at"],
+        )
 
     def count_scans(self) -> int:
         """Total number of scans ever recorded — one leg of ScanStats."""

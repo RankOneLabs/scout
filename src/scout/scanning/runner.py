@@ -90,6 +90,7 @@ from scout.scanning.agent import (
     build_scout_phase_configs,
     resolve_mode_for_message,
 )
+from scout.scanning.author_class import classify_author, handle_from_url
 from scout.scanning.digest import (
     append_to_digest,
     finalize_digest,
@@ -801,6 +802,31 @@ def persist_outcome(
     )
 
 
+def _annotate_author(state: StateManager, msg: Message) -> None:
+    """Annotate node: record the author's class beside the persisted post.
+
+    Runs for every persisted post, blocked authors included, so the table
+    is a complete account of who has been seen. It never gates: a storage
+    failure is logged and the post still flows into evaluation, because
+    the class is advisory for reviewers, not an input to any model call.
+    """
+    if not msg.author_id:
+        return
+    classification = classify_author(msg.author_name, handle_from_url(msg.url))
+    try:
+        state.record_author_classification(
+            platform=msg.platform,
+            author_id=msg.author_id,
+            author_class=classification.author_class,
+            rule_version=classification.rule_version,
+            matched_text=classification.matched_text,
+        )
+    except sqlite3.Error:
+        logger.warning(
+            "author classification failed for %s:%s", msg.platform, msg.author_id, exc_info=True
+        )
+
+
 async def score_messages(
     routed_candidates: list[RoutedMessage],
     all_messages: Sequence[Message],
@@ -943,6 +969,8 @@ async def score_messages(
             )
             logger.error("save_post failed for %s", msg.platform_id, exc_info=True)
             continue
+
+        _annotate_author(state, msg)
 
         # Author blocks are checked from live SQLite state for every candidate,
         # so a block added from the web UI also stops later items in an active
