@@ -53,6 +53,8 @@ The merged fix was deployed after the experiment and its backups completed. Work
 
 The original preflight stores and failed preview remain under `run-preflight-d20`. They contain no candidate attempts for this cohort. The final stores were backed up through SQLite's backup API and passed `quick_check`; their receipt is retained. The private archive is `willie:~/backups/scout-heldout-agent-ops-2026-09-11-final.tar.gz`, SHA-256 `6ad10d41683748706ab8caef472d71ff0ba439ea5abd73168a1d5324ecc8589f`.
 
+The archived scripts document this one execution; they are not supported reusable commands. They use Python assertions, which optimized execution would disable. The analysis commitment was stored separately from the paid-execution freeze and manually hash-checked before analysis, rather than enforced by the runner. Their original bytes remain unchanged. A subsequent read-only audit independently confirmed 360 distinct feedback result IDs with embeddings and scores. These limitations and checks are recorded in provenance.
+
 The normal v3 grade-writing path requires action and failure-dimension fields. The isolated importer derives those fields mechanically to encode the human relevance judgments; they are **not additional human judgments about replies, actions, or failure causes**. The original label packet, reviewer identity and exact grade revisions remain in private provenance. These adapter grades must not be used for action-quality analysis or prompt feedback.
 
 ## Interpretation and next step
@@ -63,10 +65,10 @@ Keep the production model setting unchanged. Use a separate training corpus to m
 
 ## Review artifacts
 
-- [Comparison data](results/comparison.json): overall and stratum metrics, confidence intervals, costs, verification counts and per-case predictions without post text.
+- [Comparison data](results/comparison.json): overall and stratum metrics, confidence intervals, costs, verification counts, and finalized per-case human relevance labels and model predictions, keyed by evaluation/group ID. Readers with the source database can join these IDs back to posts.
 - [Provenance](results/provenance.json): source/code/plan identities, run IDs, cost gap, validation and deployment checks, backup locations and file hashes.
 - [Full audit archive](https://github.com/RankOneLabs/scout/tree/fcb89c68a0aa1e6a33ec0ac988f36f1ddca56833/evidence/heldout-agent-ops-2026-09-11/results): the original canonical reports, execution logs, frozen metadata and exact campaign scripts, preserved at an immutable commit. A byte-verified copy is also retained at `willie:~/backups/scout-heldout-agent-ops-2026-09-11-audit.tar.gz`, SHA-256 `3c6767c0b9223345d5ed112274684db5aa493a995282c611cf9f469d9b914424`.
-- Private local review page: `/tmp/scout-heldout-agent-ops-2026-09-11/comparison.html`. It displays the 40 posts, human labels and each model's three decisions, with disagreement filters. Raw posts, private labels and database copies are not published here.
+- Private local review page: `/tmp/scout-heldout-agent-ops-2026-09-11/comparison.html`. It displays the 40 posts, human labels and each model's three decisions, with disagreement filters. Raw post text, the original downloaded review packet and database copies are not published here; finalized per-case labels are included in the comparison data described above.
 
 Snapshot: `881df34dafbcaac6531d9c0b1526123a2f117640c0833de732afcf9ebbe814cb`  
 Partition: `4c38d622bef8a5ecca591083d835c7ad13290cc1d1764209bf20e70f610f28ae`  

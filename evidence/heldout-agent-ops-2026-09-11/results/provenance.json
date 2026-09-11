@@ -69,7 +69,15 @@
       "all_associations_match": true,
       "note": "Read-only validation prompted by PR29 review; experiment code, labels, cohort and predictions were not changed."
     },
-    "canonical_and_supplemental_metrics_agree": true
+    "canonical_and_supplemental_metrics_agree": true,
+    "distinct_feedback_audit": {
+      "checked_at": "2026-09-11T20:28:45.752160+00:00",
+      "attempt_count": 360,
+      "distinct_feedback_result_count": 360,
+      "duplicate_feedback_result_count": 0,
+      "all_results_have_embedding_and_scores": true,
+      "audit_python_optimization_level": 0
+    }
   },
   "cost": {
     "actual_usd": 0.07865928704999998,
@@ -119,7 +127,65 @@
     "embedding_host": "http://frink:11434",
     "heldout_grades_in_live_database": 0,
     "heldout_attempts_in_live_database": 0,
-    "note": "Experiment records and human labels remain in the isolated campaign stores."
+    "note": "Experiment records and human labels remain in the isolated campaign stores.",
+    "health_checks": {
+      "source": "deploy-scout.sh output",
+      "source_log_sha256": "9a22ddc06ce770e3345a3882495fd08a16604c448d6f1bf63d1aa36c4f903b33",
+      "source_log_location": "willie:~/backups/scout-heldout-agent-ops-2026-09-11-deployment.log",
+      "containers": [
+        {
+          "name": "engagement-scout",
+          "status": "running",
+          "restart_count": 0
+        },
+        {
+          "name": "engagement-scout-content-api",
+          "status": "running",
+          "restart_count": 0
+        },
+        {
+          "name": "engagement-scout-web",
+          "status": "running",
+          "restart_count": 0
+        }
+      ],
+      "endpoints": [
+        {
+          "service": "web",
+          "path": "/",
+          "method": "GET",
+          "http_status": 200
+        },
+        {
+          "service": "web",
+          "path": "/feedback/experiments",
+          "method": "GET",
+          "http_status": 200
+        },
+        {
+          "service": "web",
+          "path": "/api/feedback/experiment-runs",
+          "method": "GET",
+          "http_status": 200
+        },
+        {
+          "service": "web",
+          "path": "/api/feedback/experiments?limit=1",
+          "method": "GET",
+          "http_status": 200
+        },
+        {
+          "service": "content-api",
+          "path": "/healthz",
+          "method": "GET",
+          "http_status": 200
+        }
+      ],
+      "web_probe_origin": "http://localhost:3001",
+      "web_probe_host_header": "willie",
+      "sidecar_probe_origin": "http://127.0.0.1:8799",
+      "probe_context": "Web requests ran on willie; the sidecar request ran inside its container."
+    }
   },
   "source_backup": {
     "captured_at": "20260911T190307Z",
@@ -206,5 +272,17 @@
       "sha256": "6ad10d41683748706ab8caef472d71ff0ba439ea5abd73168a1d5324ecc8589f",
       "bytes": 141798006
     }
-  }
+  },
+  "historical_script_limitations": [
+    "The archived one-off scripts use Python assertions and are not supported reusable entry points; optimized Python would disable those checks. Their original bytes are retained rather than retroactively edited.",
+    "The analysis commitment was recorded separately before inference and its hashes were checked manually before analysis. It was not automatically validated by the paid-execution freeze gate. The retained analysis hash matches the archived script; this is an execution record, not a claim of an enforceable reusable workflow."
+  ],
+  "published_metadata_corrections": [
+    {
+      "field": "comparison.bootstrap.stratified_by",
+      "original_value": "recorded_prediction",
+      "value": "final_stored_evaluation_decision",
+      "reason": "Clarifies the source field used for the original 20/20 sampling strata; case assignments, resamples, metrics and predictions are unchanged."
+    }
+  ]
 }

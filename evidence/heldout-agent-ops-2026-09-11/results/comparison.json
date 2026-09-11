@@ -232,7 +232,7 @@
     "seed": 20260911,
     "resamples": 10000,
     "unit": "related group / case",
-    "stratified_by": "recorded_prediction",
+    "stratified_by": "final_stored_evaluation_decision",
     "confidence_level": 0.95,
     "method": "paired percentile",
     "computed": true,
