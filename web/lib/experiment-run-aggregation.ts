@@ -118,7 +118,12 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     for (const phaseRunId of caseIds) if (!plannedIds.has(phaseRunId)) fail("attempt outside plan");
     skipped = skippedIds.size;
     planned = config.phase_run_ids.length;
-    if (planned !== caseIds.size + skipped) fail("plan population is incomplete");
+    // Attempts are inserted one case at a time as execution reaches them,
+    // so a run still in flight (or killed mid-way, which leaves it in
+    // 'running' forever) legitimately covers only part of its plan. Only a
+    // run that reached a terminal status must account for every case.
+    const inFlight = input.status === "running" || input.status === "queued";
+    if (!inFlight && planned !== caseIds.size + skipped) fail("plan population is incomplete");
     // Execution runs a case's repeats back to back, so a run cut short can
     // leave a case with only its earlier repeats; the summary must not
     // then read as a complete run with fewer observations than authorized.
@@ -133,7 +138,9 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     }
     // Chains are keyed by (case, repeat), so a case with `repeats` distinct
     // indexes, none above the plan, holds exactly 1..repeats.
-    for (const indexes of repeatIndexesByCase.values()) if (indexes.size !== repeats) fail("repeat population is incomplete");
+    if (!inFlight) {
+      for (const indexes of repeatIndexesByCase.values()) if (indexes.size !== repeats) fail("repeat population is incomplete");
+    }
   }
 
   const statusCounts: Record<ExperimentStatus, number> = { queued: 0, running: 0, complete: 0, failed: 0 };
