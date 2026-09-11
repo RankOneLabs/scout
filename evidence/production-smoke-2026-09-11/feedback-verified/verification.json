@@ -1,0 +1,38 @@
+{
+  "database": "willie:/app/data/scout.db",
+  "runs": [
+    {
+      "run_id": 118,
+      "variant": "qwen3-30b-a3b-2507-nothink-openrouter",
+      "status": "complete",
+      "attempts": 3,
+      "calls": 3,
+      "retries": 0,
+      "cost_usd": 0.00025086195,
+      "exact_plan_membership": true,
+      "reasoning_override": false,
+      "trace_call_count_verified": true,
+      "feedback_results_and_scores_verified": true,
+      "embedding_host": "http://frink:11434"
+    },
+    {
+      "run_id": 119,
+      "variant": "gemma-4-26b-a4b-nothink-openrouter",
+      "status": "complete",
+      "attempts": 3,
+      "calls": 3,
+      "retries": 0,
+      "cost_usd": 0.00033375,
+      "exact_plan_membership": true,
+      "reasoning_override": false,
+      "trace_call_count_verified": true,
+      "feedback_results_and_scores_verified": true,
+      "embedding_host": "http://frink:11434"
+    }
+  ],
+  "heldout_preparation": {
+    "verified_baselines": 40,
+    "human_labels_present": 0,
+    "candidate_attempts": 0
+  }
+}

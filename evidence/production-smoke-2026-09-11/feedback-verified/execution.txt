@@ -1,0 +1,10 @@
+experiment_run[gemma-4-26b-a4b-nothink-openrouter] = 119
+experiment_run[qwen3-30b-a3b-2507-nothink-openrouter] = 118
+attempts complete: 6
+attempts failed: 0
+  phase_run_id=1779 variant='qwen3-30b-a3b-2507-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1789 variant='qwen3-30b-a3b-2507-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1795 variant='qwen3-30b-a3b-2507-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1779 variant='gemma-4-26b-a4b-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1789 variant='gemma-4-26b-a4b-nothink-openrouter' repeat=1 status=complete
+  phase_run_id=1795 variant='gemma-4-26b-a4b-nothink-openrouter' repeat=1 status=complete
