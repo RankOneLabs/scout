@@ -344,6 +344,7 @@ async def _seed_relevance_task(
     *,
     missing_negative_phase=False,
     disagree_negative=False,
+    critic_verdict=None,
 ) -> RelevanceTask:
     _patch_resolve_dossier(monkeypatch)
     monkeypatch.setattr("scout.grading.snapshots.resolve_dossier", ee.resolve_dossier)
@@ -376,6 +377,31 @@ async def _seed_relevance_task(
                 "UPDATE evaluation_phase_runs SET evaluation_id = ? WHERE id = ?",
                 (evaluation_id, phase_id),
             )
+        if relevant and critic_verdict is not None:
+            critic_trace = await _make_reply_draft_trace(
+                tracer, feedback,
+                payload={"verdict": critic_verdict, "feedback": "No useful reply."},
+                output_schema=ee.CritiquePhaseOutput,
+            )
+            critic_snapshot = state.conn.execute(
+                "SELECT p.id FROM feedback_snapshot_phases p JOIN feedback_snapshots s "
+                "ON s.id=p.snapshot_id WHERE s.scan_id=? AND p.phase='critic'",
+                (phase["scan_id"],),
+            ).fetchone()[0]
+            critic_id = state.insert_phase_run(
+                scan_id=phase["scan_id"], post_id=phase["post_id"],
+                snapshot_phase_id=critic_snapshot, phase="critic", trace_id=critic_trace,
+                model="claude-haiku-4-5-20251001", status="complete",
+            )
+            with state.db.transaction():
+                state.conn.execute(
+                    "UPDATE evaluation_phase_runs SET evaluation_id=? WHERE id=?",
+                    (evaluation_id, critic_id),
+                )
+                state.conn.execute(
+                    "UPDATE evaluations SET relevant=0, surface_status='critic_rejected', "
+                    "failure_reason='No useful reply.' WHERE id=?", (evaluation_id,),
+                )
         state.save_grade(
             GradeRecord(
                 post_id=phase["post_id"],
@@ -403,6 +429,83 @@ def _freeze_relevance_task(state, tmp_path) -> RelevanceTask:
 
 
 class TestRelevanceBatch:
+    async def test_verified_critic_rejection_preserves_human_target_and_phase_baseline(
+        self, state, tracer, feedback, monkeypatch, tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(
+            state, tracer, feedback, monkeypatch, tmp_path, critic_verdict="reject",
+        )
+        model = "claude-sonnet-4-20250514"
+        _stub_from_model(monkeypatch, {model: _FakeLLMClient(
+            [_submit_response({**RELEVANCE_PAYLOAD, "relevant": False})] * 2, model=model,
+        )})
+        selector = ee.BatchSelector.by_relevance_corpus(task)
+        variants = (ee.BatchVariant("candidate", model, None),)
+        preview = await ee.preview_batch_replay(
+            state=state, tracer=tracer, selector=selector, variants=variants,
+            skip_policy=ee.SkipPolicy(),
+        )
+        assert preview.selected_count == 2
+        outcome = await ee.execute_batch_replay(
+            state=state, tracer=tracer, feedback=feedback, selector=selector,
+            variants=variants, name="critic-rejected-relevance", skip_policy=ee.SkipPolicy(),
+            authorize_plan_sha256=preview.plan.plan_sha256,
+        )
+        report = build_batch_report(
+            state, experiment_run_ids=list(outcome.experiment_run_ids.values()),
+        )
+        summary = report["segments"][0]["variants"][0]
+        assert summary["baseline_accuracy"] == 0.5
+        assert summary["candidate_accuracy"] == 1.0
+        assert all(case["score"]["target"]["is_relevant"] is False for case in report["cases"])
+        assert state.conn.execute(
+            "SELECT relevant FROM evaluations WHERE surface_status='critic_rejected'",
+        ).fetchone()[0] == 0
+
+    @pytest.mark.parametrize(
+        "defect", ["approve", "missing", "drift", "failure_reason", "wrong_surface"],
+    )
+    async def test_critic_override_requires_matching_frozen_rejection(
+        self, state, tracer, feedback, monkeypatch, tmp_path, defect,
+    ) -> None:
+        task = await _seed_relevance_task(
+            state, tracer, feedback, monkeypatch, tmp_path,
+            critic_verdict="approve" if defect == "approve" else "reject",
+        )
+        if defect in ("missing", "drift"):
+            with state.db.transaction():
+                state.conn.execute("DROP TRIGGER evaluation_phase_runs_link_once")
+                if defect == "missing":
+                    state.conn.execute(
+                        "UPDATE evaluation_phase_runs SET evaluation_id=NULL WHERE phase='critic'",
+                    )
+                else:
+                    state.conn.execute(
+                        "UPDATE evaluation_phase_runs SET created_at='drift' WHERE phase='critic'",
+                    )
+            if defect == "missing":
+                task = _freeze_relevance_task(state, tmp_path)
+        elif defect in ("failure_reason", "wrong_surface"):
+            with state.db.transaction():
+                if defect == "failure_reason":
+                    state.conn.execute(
+                        "UPDATE evaluations SET failure_reason='Different rejection.' "
+                        "WHERE surface_status='critic_rejected'",
+                    )
+                else:
+                    state.conn.execute(
+                        "UPDATE evaluations SET surface_status='not_relevant' "
+                        "WHERE surface_status='critic_rejected'",
+                    )
+            task = _freeze_relevance_task(state, tmp_path)
+        with pytest.raises(ee.SelectorResolutionError, match="frozen evaluation decision"):
+            await ee.preview_batch_replay(
+                state=state, tracer=tracer, selector=ee.BatchSelector.by_relevance_corpus(task),
+                variants=(ee.BatchVariant("candidate", "claude-sonnet-4-20250514", None),),
+                skip_policy=ee.SkipPolicy(),
+            )
+        assert state.conn.execute("SELECT COUNT(*) FROM experiment_runs").fetchone()[0] == 0
+
     @pytest.mark.parametrize("partial_success_count", [0, 1])
     async def test_sweep_report_compares_only_common_successful_cases(
         self,
