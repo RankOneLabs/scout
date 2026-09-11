@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "discord.py>=2.3.0",
     "python-dotenv>=1.0.0",
-    "jig[anthropic,openrouter] @ git+https://github.com/rankonelabs/jig.git@55081e81cee5c6faf0c2d376ab4691f69e111b3d",
+    "jig[anthropic,ollama,openrouter] @ git+https://github.com/rankonelabs/jig.git@55081e81cee5c6faf0c2d376ab4691f69e111b3d",
     "paa-runtime==0.4.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",

@@ -401,9 +401,15 @@ def repeat_draws(pools: Pools) -> dict[Key, list[int]]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--historical-exploratory", action="store_true")
     parser.add_argument("--charts", metavar="OUT", help="write the chart page to OUT")
     parser.add_argument("--repeats", action="store_true", help="print repeat-draw scores")
     args = parser.parse_args(argv)
+    if not args.historical_exploratory:
+        parser.error(
+            "Archived exploratory tables: use scout feedback grid report for new campaigns. "
+            "Pass --historical-exploratory only to reproduce this archive."
+        )
     pools = load()
     if args.charts:
         html = render_charts(pools)

@@ -32,7 +32,7 @@ import dataclasses
 import hashlib
 import json
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -94,6 +94,7 @@ from scout.resources import runtime_resource
 from scout.result import Err
 from scout.scanning.schemas import CritiquePhaseOutput, RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.evaluations import Experiment
+from scout.storage.experiment_plan import expected_experiment_pairs
 from scout.storage.state import ExperimentCASError, StateManager
 from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
 
@@ -2302,6 +2303,7 @@ async def _execute_one_batch_attempt(
     pair: PairClassification,
     supersedes_experiment_id: int | None = None,
     repeat_index: int = 1,
+    queued_experiment_id: int | None = None,
 ) -> BatchAttemptOutcome:
     """Execute one already-classified 'scored' pair as a new attempt under
     `experiment_run_id`. A ReplayError raised anywhere in the shared
@@ -2317,13 +2319,22 @@ async def _execute_one_batch_attempt(
         baseline_grade = grade_baseline_draft(baseline_draft, oracle)
 
     baseline_evidence_json = build_batch_case_evidence(case, plan, oracle, pair.price_estimate)
-    experiment_id = state.insert_experiment_attempt(
-        experiment_run_id=experiment_run_id,
-        phase_run_id=case.phase_run_id,
-        baseline_evidence=baseline_evidence_json,
-        supersedes_experiment_id=supersedes_experiment_id,
-        repeat_index=repeat_index,
-    )
+    if queued_experiment_id is None:
+        experiment_id = state.insert_experiment_attempt(
+            experiment_run_id=experiment_run_id,
+            phase_run_id=case.phase_run_id,
+            baseline_evidence=baseline_evidence_json,
+            supersedes_experiment_id=supersedes_experiment_id,
+            repeat_index=repeat_index,
+        )
+    else:
+        queued = state.get_experiment(queued_experiment_id)
+        if queued is None or (
+            queued["experiment_run_id"], queued["phase_run_id"], queued["repeat_index"],
+            queued["status"], queued["baseline_evidence"],
+        ) != (experiment_run_id, case.phase_run_id, repeat_index, "queued", baseline_evidence_json):
+            raise RetryResolutionError("Queued attempt differs from its pinned plan")
+        experiment_id = queued_experiment_id
     state.cas_experiment_to_running(experiment_id)
 
     try:
@@ -2371,6 +2382,7 @@ async def execute_batch_replay(
     dossier_root: Path | str | None = None,
     sweep: SweepDefinition | None = None,
     repeats: int = 1,
+    on_queued: Callable[[dict[str, int]], None] | None = None,
 ) -> BatchExecutionOutcome:
     """Execute one explicitly authorized batch or sweep replay end to end.
 
@@ -2403,8 +2415,29 @@ async def execute_batch_replay(
         )
     _enforce_skip_policy(plan)
 
+    # Commit every variant and its complete pinned population together before
+    # the first provider call. Cancellation leaves a resumable queue, never
+    # missing evidence or an uncreated variant.
+    with state.db.begin_immediate():
+        experiment_run_ids, queued = _queue_batch_plan(state, plan, name=name, sweep=sweep)
+    if on_queued is not None:
+        on_queued(dict(experiment_run_ids))
+    attempts = []
+    for run_id, attempt_id, pair, repeat_index in queued:
+        attempts.append(await _execute_one_batch_attempt(
+            state=state, tracer=tracer, feedback=feedback, experiment_run_id=run_id,
+            case=plan.cases[pair.phase_run_id], pair=pair, repeat_index=repeat_index,
+            queued_experiment_id=attempt_id,
+        ))
+    return BatchExecutionOutcome(experiment_run_ids=experiment_run_ids, attempts=tuple(attempts))
+
+
+def _queue_batch_plan(
+    state: StateManager, plan: BatchPlan, *, name: str, sweep: SweepDefinition | None,
+) -> tuple[dict[str, int], list[tuple[int, int, PairClassification, int]]]:
+    """Persist the entire authorized population in the caller's transaction."""
     experiment_run_ids: dict[str, int] = {}
-    attempts: list[BatchAttemptOutcome] = []
+    queued: list[tuple[int, int, PairClassification, int]] = []
     for variant in plan.variants:
         skipped_pairs = tuple(
             {
@@ -2443,16 +2476,19 @@ async def execute_batch_replay(
                 continue
             attempted_variant = True
             for repeat_index in range(1, plan.repeats + 1):
-                outcome = await _execute_one_batch_attempt(
-                    state=state, tracer=tracer, feedback=feedback,
-                    experiment_run_id=experiment_run_id, case=plan.cases[phase_run_id],
-                    pair=pair, repeat_index=repeat_index,
+                case = plan.cases[phase_run_id]
+                attempt_id = state.insert_experiment_attempt(
+                    experiment_run_id=experiment_run_id, phase_run_id=phase_run_id,
+                    repeat_index=repeat_index,
+                    baseline_evidence=build_batch_case_evidence(
+                        case, pair.plan, case.oracle, pair.price_estimate,
+                    ),
                 )
-                attempts.append(outcome)
+                queued.append((experiment_run_id, attempt_id, pair, repeat_index))
         if not attempted_variant:
             state.complete_experiment_run_without_attempts(experiment_run_id)
 
-    return BatchExecutionOutcome(experiment_run_ids=experiment_run_ids, attempts=tuple(attempts))
+    return experiment_run_ids, queued
 
 
 def latest_attempts_by_case(attempts: Sequence[Experiment]) -> dict[tuple[int, int], Experiment]:
@@ -2495,6 +2531,7 @@ async def retry_batch_replay(
     phase_run_ids: tuple[int, ...] | None = None,
     pricing_catalog: PricingCatalog | None = None,
     dossier_root: Path | str | None = None,
+    recover_interrupted: bool = False,
 ) -> BatchExecutionOutcome:
     """Retry every (or a caller-selected subset of) failed latest-attempt
     (case, repeat) chains under one existing batch/sweep experiment_runs
@@ -2517,9 +2554,22 @@ async def retry_batch_replay(
     latest_by_case = latest_attempts_by_case(
         [Experiment(**row) for row in state.list_experiment_attempts(experiment_run_id)]
     )
-
+    if recover_interrupted:
+        try:
+            expected = expected_experiment_pairs(config)
+        except ValueError as exc:
+            raise RetryResolutionError(
+                f"experiment_run {experiment_run_id} has an invalid stored plan: {exc}"
+            ) from exc
+        if expected is None or set(latest_by_case) != expected:
+            raise RetryResolutionError(
+                "Interrupted run lacks its complete pinned attempt population; "
+                "preview and authorize a new batch. Historical missing cases cannot be resumed."
+            )
+    eligible_statuses = {"failed", "queued", "running"} if recover_interrupted else {"failed"}
     failed_cases = {
-        key: attempt for key, attempt in latest_by_case.items() if attempt.status == "failed"
+        key: attempt for key, attempt in latest_by_case.items()
+        if attempt.status in eligible_statuses
     }
     if phase_run_ids is not None:
         known_ids = {phase_run_id for phase_run_id, _repeat in latest_by_case}
@@ -2558,8 +2608,8 @@ async def retry_batch_replay(
             raise RetryResolutionError(loaded.error.detail)
         relevance_by_phase = {case.phase_run.id: case for case in loaded.value.cases}
 
-    attempts_out: list[BatchAttemptOutcome] = []
-    for (phase_run_id, repeat_index), failed_attempt in sorted(failed_cases.items()):
+    prepared: list[tuple[Experiment, BatchCase, PairClassification]] = []
+    for (phase_run_id, _repeat_index), failed_attempt in sorted(failed_cases.items()):
         try:
             pinned_evidence = json.loads(failed_attempt.baseline_evidence)
         except (TypeError, json.JSONDecodeError) as exc:
@@ -2620,10 +2670,24 @@ async def retry_batch_replay(
                 f"evidence (changed fields: {changed_fields}); start and authorize a new "
                 "batch instead of retrying this run"
             )
+        prepared.append((failed_attempt, case, pair))
+
+    # Validate the entire selected population before changing state or spending.
+    attempts_out: list[BatchAttemptOutcome] = []
+    for failed_attempt, case, pair in prepared:
+        if failed_attempt.status == "running":
+            state.fail_experiment(
+                failed_attempt.id,
+                error_detail="Operator recovered interrupted execution (--recover-interrupted)",
+            )
         outcome = await _execute_one_batch_attempt(
             state=state, tracer=tracer, feedback=feedback, experiment_run_id=experiment_run_id,
-            case=case, pair=pair, supersedes_experiment_id=failed_attempt.id,
-            repeat_index=repeat_index,
+            case=case, pair=pair,
+            supersedes_experiment_id=(
+                failed_attempt.id if failed_attempt.status != "queued" else None
+            ),
+            queued_experiment_id=failed_attempt.id if failed_attempt.status == "queued" else None,
+            repeat_index=failed_attempt.repeat_index,
         )
         attempts_out.append(outcome)
 

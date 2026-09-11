@@ -453,6 +453,15 @@ def parse_args() -> argparse.Namespace:
         help="Retry every (or an explicitly selected subset of) failed latest-attempt cases "
         "under one existing batch/sweep experiment_runs parent",
     )
+    batch_replay_p.add_argument(
+        "--outcome-file", help="Write executed run IDs and completion counts as JSON",
+    )
+    batch_retry_p.add_argument(
+        "--recover-interrupted",
+        action="store_true",
+        help="Resume pinned queued work and retry abandoned running attempts. "
+        "Stop the original worker before using this flag; recovery is recorded on each attempt.",
+    )
     batch_retry_p.add_argument(
         "--experiment-run-id",
         type=positive_int,
@@ -512,6 +521,13 @@ def parse_args() -> argparse.Namespace:
         "manifest.json and run.sh that batch-replay consumes",
     )
     grid_sub = grid_p.add_subparsers(dest="grid_command", required=True)
+    grid_report_p = grid_sub.add_parser(
+        "report", help="Export canonical reports for every study cell",
+    )
+    grid_report_p.add_argument(
+        "manifest_file", help="Expanded manifest beside *.outcome.json files",
+    )
+    grid_report_p.add_argument("--out", required=True, help="Directory for JSON/Markdown reports")
     grid_expand_p = grid_sub.add_parser("expand", help="Validate the grid and write its expansion")
     grid_expand_p.add_argument("grid_file", help="Path to the grid document (YAML or JSON)")
     grid_expand_p.add_argument(
@@ -930,6 +946,7 @@ def main() -> None:
             batch_replay_feedback,
             batch_retry_feedback,
             grid_expand_feedback,
+            grid_report_feedback,
             replay_feedback,
             report_feedback,
         )
@@ -943,7 +960,10 @@ def main() -> None:
         elif args.feedback_command == "report":
             report_feedback(args)
         elif args.feedback_command == "grid":
-            grid_expand_feedback(args)
+            if args.grid_command == "report":
+                grid_report_feedback(args)
+            else:
+                grid_expand_feedback(args)
         return
     if args.stats:
         show_stats()

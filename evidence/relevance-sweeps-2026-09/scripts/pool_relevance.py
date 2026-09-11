@@ -173,6 +173,12 @@ def format_rows(rows: Sequence[RunRow]) -> str:
 
 
 def main(argv: Sequence[str]) -> None:
+    if "--historical-exploratory" not in argv:
+        raise SystemExit(
+            "Archived exploratory scorer: use scout feedback grid report for new campaigns. "
+            "Pass --historical-exploratory only to reproduce the historical tables."
+        )
+    argv = [arg for arg in argv if arg != "--historical-exploratory"]
     exclude_route, run_min = parse_args(argv)
     conn = sqlite3.connect(DB_PATH)
     traces = sqlite3.connect(TRACES_PATH)

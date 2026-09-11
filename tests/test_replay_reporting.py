@@ -44,6 +44,7 @@ def state():
 
 async def _run_single_variant_batch(
     state, tracer, feedback, monkeypatch, *, case_count: int = 2, repeats: int = 1,
+    on_queued=None,
 ) -> tuple[int, list[int]]:
     """Seed `case_count` reply_draft cases (all sharing one baseline model/
     prompt segment) and execute one batch replay against them with a
@@ -74,6 +75,7 @@ async def _run_single_variant_batch(
         selector=selector, variants=variants, skip_policy=ee.SkipPolicy(),
         authorize_plan_sha256=plan.plan_sha256, pricing_catalog=catalog,
         dossier_root=Path("/unused"), repeats=repeats,
+        on_queued=on_queued,
     )
     return outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME], phase_run_ids
 
@@ -93,6 +95,14 @@ async def test_report_rejects_historical_out_of_plan_or_incomplete_terminal_rows
     monkeypatch.setattr(state, "list_experiment_attempts", lambda _: rows)
     with pytest.raises(rr.ReportError, match="out-of-plan|incomplete terminal"):
         rr.build_batch_report(state, experiment_run_ids=[run_id])
+
+
+async def test_report_is_independent_of_run_id_order(state, tracer, feedback, monkeypatch) -> None:
+    runs, _ = await _run_two_variant_sweep(state, tracer, feedback, monkeypatch)
+    ids = list(runs.values())
+    assert rr.render_json(rr.build_batch_report(state, experiment_run_ids=ids)) == rr.render_json(
+        rr.build_batch_report(state, experiment_run_ids=list(reversed(ids))),
+    )
 
 
 async def _run_two_variant_sweep(

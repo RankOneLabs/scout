@@ -28,7 +28,6 @@ backends:
     identity_config: identity-config-local.json
     env:
       OLLAMA_HOST: http://frink:11434
-      SCOUT_REPLAY_REASONING: "off"    # ephemeral container patch until batch-replay carries `reasoning`
 models:
   # frontier / large hosted
   - {id: gemini-2.5-flash,     backend: openrouter, model: openrouter/google/gemini-2.5-flash}

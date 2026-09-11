@@ -1,5 +1,8 @@
 # Relevance sweeps, September 2026
 
+**Historical exploratory evidence.** Execution provenance and legacy pooling have
+known limitations. See [ARCHIVE.md](ARCHIVE.md) before using these figures to choose models.
+
 Relevance-only grading of the recorded evaluate phase, replayed against frozen
 snapshots via `scout feedback batch-replay`. Response writing is not measured.
 
