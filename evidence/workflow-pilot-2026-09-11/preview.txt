@@ -1,0 +1,22 @@
+task: relevance; snapshot=cb09c4f0b35216982bde1303e0f3c49012369be3181d79435a5cf354bfcc71f7; partition=all
+excluded evaluation 48955: missing_complete_relevance_phase
+excluded evaluation 48956: missing_complete_relevance_phase
+population: 51 case(s)
+variants: ['qwen3-30b-a3b-2507-nothink-openrouter', 'gemma-4-26b-a4b-nothink-openrouter']
+  variant 'qwen3-30b-a3b-2507-nothink-openrouter': reasoning off
+  variant 'gemma-4-26b-a4b-nothink-openrouter': reasoning off
+repeats per scored pair: 1
+planned attempts: 102
+scored: 102
+unscored: 0
+no-op: 0
+unpriceable: 0
+selected: 102
+skipped: 0
+price catalog: version=1 as_of=2026-09-09 hash=fac2e6048efc33bbbf571798cd9fdac56de6263eb2f5d09c44fbaa4c6e573045 source=https://openrouter.ai/api/v1/models
+estimated USD (openrouter/google/gemma-4-26b-a4b-it): 0.004140
+estimated USD (openrouter/qwen/qwen3-30b-a3b-instruct-2507): 0.002701
+estimated USD (total): 0.006841
+max LLM calls per case: 4
+aggregate max LLM calls: 408
+canonical plan sha256: 08072bc8a9b1af74defe3e59a1310314d4cc0547dd794fc114d862268187af75

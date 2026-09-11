@@ -1,0 +1,18 @@
+[
+  {
+    "run_id_in_copy": 116,
+    "planned_and_completed": 51,
+    "exact_pair_membership": true,
+    "parent_and_worker_reasoning_off": true,
+    "total_llm_calls": 51,
+    "candidate_cost_usd": 0.00656248935
+  },
+  {
+    "run_id_in_copy": 117,
+    "planned_and_completed": 51,
+    "exact_pair_membership": true,
+    "parent_and_worker_reasoning_off": true,
+    "total_llm_calls": 51,
+    "candidate_cost_usd": 0.00521157
+  }
+]
