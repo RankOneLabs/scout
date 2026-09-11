@@ -1,0 +1,210 @@
+{
+  "format": "scout.heldout-provenance/v1",
+  "study": "heldout-agent-ops-2026-09-11",
+  "frozen_at": "2026-09-11T19:55:47.145528+00:00",
+  "environment": {
+    "code_revision": "eca680fb25252cbf20fd0ba05876072e661c5f18",
+    "dependency_lock_digest": "3d47d17c05ffd4cfe99d3e6555b69477cfb1d2bed4292b234792e078e9083059",
+    "python_version": "3.12.13"
+  },
+  "runtime_deployment_sha": "d20bf214873ee62d4b8928438505fd4ad4508f5c",
+  "execution_mode": "isolated source checkout with matching deployed dependency lock; all three stores are campaign copies",
+  "task": {
+    "kind": "relevance",
+    "snapshot_digest": "881df34dafbcaac6531d9c0b1526123a2f117640c0833de732afcf9ebbe814cb",
+    "partition_digest": "4c38d622bef8a5ecca591083d835c7ad13290cc1d1764209bf20e70f610f28ae",
+    "partition": "heldout"
+  },
+  "authorization": {
+    "authorized_at": "2026-09-11T19:57:40.115942+00:00",
+    "plan_sha256": "c0c4812ba8ed3995885626219f9ad3b9e213fdeb512c0b5eaa3ff45c09690eda",
+    "freeze_sha256": "d5080f7db83d41cdd5b175f31fc08fc5b65441d83dd0d2f7b8731564097f566d",
+    "preview_sha256": "cc0fd86f77d40b1292bcb55ec7cc75e08d6219b7beb579d8a887a7c8a9cf6ce4",
+    "estimated_usd": 0.074717,
+    "planned_attempts": 360,
+    "final_exposure_check": {
+      "checked_at": "2026-09-11T19:57:40.048213+00:00",
+      "database": "/app/data/scout.db",
+      "selected_groups": 40,
+      "exposed_selected_groups": 0,
+      "group_identities_unchanged": true
+    }
+  },
+  "experiment_run_ids": {
+    "gemini-2.5-flash-reference": 120,
+    "qwen3-30b-a3b-2507": 121,
+    "gemma-4-26b-a4b": 122
+  },
+  "inputs": {
+    "labels_sha256": "60276fd6075fe0abcd212cd4ac4373f089f3951adf6362cd8d598e2e9711ccf7",
+    "prompt_sha256": "727e772b784f2b499eee4565d28b15f65a9fb03086abf6a90e20ca5907cbbbc0",
+    "sweep_sha256": "72d025d4782afedfcf6330e9b9186e688f4ae79dfda2e8bdf73cd13a3135f248",
+    "pricing_sha256": "1399e8d168c641a3c11613a9211515888c8c1435296e7a4bcd08898b51902f97",
+    "original_cases": 40,
+    "retained_cases": 40,
+    "human_relevant": 13,
+    "human_not_relevant": 27,
+    "exclusions": [],
+    "original_stored_decision_strata": {
+      "0": 20,
+      "1": 20
+    },
+    "critic_rejected_cases_with_positive_relevance_traces": 8,
+    "selected_private_file_sha256": "594a381bb885ebaca7ed364f9afdae5d7f388f999c3442beb9a14e0bcd71f2cf",
+    "cohort_digest": "db63cd3423b59fc9305ef6e059090e7282e83d92f8ba0409b8c0f4168c5e4e50"
+  },
+  "validation": {
+    "completed_attempts": 360,
+    "llm_calls": 361,
+    "feedback_verified_attempts": 360,
+    "exact_plan_membership": true,
+    "retry_campaigns": 0,
+    "analysis_committed_at": "Fri Sep 11 19:57:36 UTC 2026",
+    "analysis_sha256": "b9df897b112e8d34b760073082d4b031bc7fc186dfcbdb1d33d4e784b94b4925",
+    "snapshot_associations": {
+      "checked_at": "2026-09-11T19:58:27.383857+00:00",
+      "cases": 40,
+      "phase_count": 96,
+      "critic_phase_count": 28,
+      "all_associations_match": true,
+      "note": "Read-only validation prompted by PR29 review; experiment code, labels, cohort and predictions were not changed."
+    },
+    "canonical_and_supplemental_metrics_agree": true
+  },
+  "cost": {
+    "actual_usd": 0.07865928704999998,
+    "actual_usd_is_complete": false,
+    "task": "relevance",
+    "unknown_cost_attempt_count": 1,
+    "known_partial_attempt_call_cost_usd": 0.0004899,
+    "known_call_cost_usd": 0.07914918704999999,
+    "unpriced_call_count": 1,
+    "incomplete_attempts": [
+      {
+        "id": 6577,
+        "experiment_run_id": 120,
+        "phase_run_id": 6427,
+        "repeat_index": 3,
+        "candidate_trace_id": "8083daa0-b744-4871-afcc-6a495f489cf8",
+        "candidate_cost": null,
+        "candidate_llm_call_count": 2,
+        "llm_calls": [
+          {
+            "id": "43714bd5-68ce-4a16-8245-22a270e6a527",
+            "kind": "llm_call",
+            "name": "completion",
+            "error": null,
+            "usage_input_tokens": 0,
+            "usage_output_tokens": 0,
+            "usage_cost": null
+          },
+          {
+            "id": "5fd26b4d-c1c8-480b-8c81-79cba6bb463b",
+            "kind": "llm_call",
+            "name": "completion",
+            "error": null,
+            "usage_input_tokens": 1058,
+            "usage_output_tokens": 69,
+            "usage_cost": 0.0004899
+          }
+        ]
+      }
+    ]
+  },
+  "deployment": {
+    "checked_at": "2026-09-11T20:17:38.285603+00:00",
+    "deployment_commit": "1043bc469dd6ac6ac0526581d869e166c0fcbab2",
+    "live_schema_version": 42,
+    "live_quick_check": "ok",
+    "embedding_host": "http://frink:11434",
+    "heldout_grades_in_live_database": 0,
+    "heldout_attempts_in_live_database": 0,
+    "note": "Experiment records and human labels remain in the isolated campaign stores."
+  },
+  "source_backup": {
+    "captured_at": "20260911T190307Z",
+    "deployment_commit": "d20bf214873ee62d4b8928438505fd4ad4508f5c",
+    "databases": [
+      {
+        "file": "scout-verified-smoke-20260911T190307Z-state.db",
+        "sha256": "3ee62d1611aea4fbaf8f1069011f6124fe66e8a6a46d88a40d3a74311aa243ef",
+        "quick_check": "ok",
+        "bytes": 258027520
+      },
+      {
+        "file": "scout-verified-smoke-20260911T190307Z-traces.db",
+        "sha256": "6c73d5d56e7f88e78d1952d6d797c09fa4646b1580dab0febee593cd7dbbf897",
+        "quick_check": "ok",
+        "bytes": 364584960
+      },
+      {
+        "file": "scout-verified-smoke-20260911T190307Z-feedback.db",
+        "sha256": "7cb89cf68cb3281aab009829618bb77173f1e1f8fdca093f9d68de220cb1a601",
+        "quick_check": "ok",
+        "bytes": 5029888
+      }
+    ]
+  },
+  "final_stores": {
+    "captured_at": "2026-09-11T20:12:15.716754+00:00",
+    "databases": [
+      {
+        "file": "state.db",
+        "quick_check": "ok",
+        "bytes": 261447680,
+        "sha256": "5aad91e0580a1f058edd63e4cbde3891b958304c1faa3827ed083fc5f201ab04"
+      },
+      {
+        "file": "traces.db",
+        "quick_check": "ok",
+        "bytes": 367861760,
+        "sha256": "e4099ccf42da25ec46663f68de7d350e7f0604917c021369ec7fe167e10a0d15"
+      },
+      {
+        "file": "feedback.db",
+        "quick_check": "ok",
+        "bytes": 6823936,
+        "sha256": "540448ddb296f24cd4301ece7db3d81a9a608a8810d8d0741ededf6c96da9b29"
+      }
+    ]
+  },
+  "archives": {
+    "audit": {
+      "location": "willie:~/backups/scout-heldout-agent-ops-2026-09-11-audit.tar.gz",
+      "sha256": "3c6767c0b9223345d5ed112274684db5aa493a995282c611cf9f469d9b914424",
+      "bytes": 72259,
+      "git_commit": "fcb89c68a0aa1e6a33ec0ac988f36f1ddca56833",
+      "git_path": "evidence/heldout-agent-ops-2026-09-11/results",
+      "files": {
+        "analysis-commitment.sha256": "a7df021f9103dd581084b11b0f1cdefc60a46fd7f81848469795a01df7f44ddf",
+        "analysis-committed-at.txt": "a3116ecc2ebb2ea03e2987d8d244035f52d6fcbedddc37e67901532e89bd0bca",
+        "analyze-results.py.txt": "b9df897b112e8d34b760073082d4b031bc7fc186dfcbdb1d33d4e784b94b4925",
+        "authorization.json": "ec8e08ff47fecc3fc91ef46e632778f4f9aecdddefea371f2c16e68ad0128d22",
+        "canonical-report.json": "023b6dca0dd880247a0b5474120adfbbfccc33e46b5f4db586be1896abfac462",
+        "canonical-report.md": "f98f0fd1d92fbb41c72f4171d421edcd2391ddde22b3f7dc52fd1ba756e07c37",
+        "comparison.json": "125616bf24dbaec73e43ee2847c3050d4b93faff59cfbc4954aa1840b8aa8c84",
+        "cost-audit.json": "cc6aaa1e1ff4b233745b62f03c6e0636aec1c317207310d127e2bfb1cb09eddc",
+        "deployment-verification.json": "6231c031fa6732a4c7578288db06a65f5fdd2a9f7b7c6074601de601374b86cd",
+        "environment.json": "f0dd2d661521544f3908dcd4350e51e7f5bee11b376900e8ed677c4aa92ad893",
+        "execution.txt": "005a11d062d39fe7d723094b1e32a22d22d1090a157dc8801e14759e5d0d4a55",
+        "final-backup-receipt.json": "ff211d898ff9adfd4b4d5f224ff032a22c9ae252f395c04738a65631ca9347b0",
+        "freeze.json": "d5080f7db83d41cdd5b175f31fc08fc5b65441d83dd0d2f7b8731564097f566d",
+        "outcome.json": "6be2b6324919ca8879944e916ce99dcdcb575b388c2e541099a4ba97150d5d04",
+        "partition.json": "72edfbff4fa1cecfb929fbb7b3dc6572833b1106c278a5241ccd7b92ccbaf2d0",
+        "pre-execution-clarification.md": "ce70eb362d1dd3e29831d62eb654119e3452eca525d13aafc509dba797d4e4e4",
+        "preview.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "preview.txt": "cc0fd86f77d40b1292bcb55ec7cc75e08d6219b7beb579d8a887a7c8a9cf6ce4",
+        "run-experiment.py.txt": "a559e0778452de52ca86fbc8e1a73313c42a931bce8a41a266d402f1d61c5e13",
+        "snapshot-association-audit.json": "1be286d76d75c0dad1b71df5c182b35f3612b9b8bcc68f0fe730cd1ab23ef22b",
+        "source-backup.json": "14f1fff763f52b187ac932aa7522f7eee26fa453dae8a2041500237667868e17",
+        "task.json": "e8c7f79c57c2808c7a8ad51b9dd5894da7412942da97e53bf6d84a9043f0295c",
+        "verification.json": "2944e706a32d1f7bf25f2253a17c129beede1ac49f4e09142df1e6ebc25ab9b8"
+      }
+    },
+    "private_complete_campaign": {
+      "location": "willie:~/backups/scout-heldout-agent-ops-2026-09-11-final.tar.gz",
+      "sha256": "6ad10d41683748706ab8caef472d71ff0ba439ea5abd73168a1d5324ecc8589f",
+      "bytes": 141798006
+    }
+  }
+}

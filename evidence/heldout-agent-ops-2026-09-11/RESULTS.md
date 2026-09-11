@@ -35,7 +35,7 @@ The bootstrap uses 10,000 paired resamples, seed 20260911, NumPy PCG64, and line
 | Qwen | 121 | 120/120 | 120 | $0.0101656 | 2.406 s |
 | Gemma | 122 | 120/120 | 120 | $0.0111173 | 2.174 s |
 
-† The canonical report totals **$0.07865928705** in known complete-attempt costs and explicitly marks one attempt's cost unknown. In Gemini attempt 6577, the first call has no cost and zero recorded token counts; the second call records $0.0004899. Including that priced call gives **$0.07914918705 in known call costs, plus the unpriced call**. Missing metadata is not treated as zero spend. See [cost-audit.json](results/cost-audit.json). These figures exclude local embedding compute and background production scans.
+† The canonical report totals **$0.07865928705** in known complete-attempt costs and explicitly marks one attempt's cost unknown. In Gemini attempt 6577, the first call has no cost and zero recorded token counts; the second call records $0.0004899. Including that priced call gives **$0.07914918705 in known call costs, plus the unpriced call**. Missing metadata is not treated as zero spend. The [provenance record](results/provenance.json) retains both call records under `cost`. These figures exclude local embedding compute and background production scans.
 
 The preview estimate was $0.074717, below the predeclared $1 preview threshold. Its 1,440-call ceiling allowed bounded internal model calls; it was not a hard dollar spending cap. Actual attempts are preserved with exact plan membership, including the two-call attempt. Agent durations include the measured agent execution path; provider routing and service latency were not randomized.
 
@@ -49,7 +49,7 @@ The first preview failed before any candidate calls because replay required the 
 
 The experiment ran pinned code `eca680fb25252cbf20fd0ba05876072e661c5f18` from an isolated source checkout using the deployed dependency lock. During code review, a further snapshot-association guard was added. A read-only audit verified all **96 phase/snapshot associations**, including 28 critic phases, in the fixed cohort. No inputs, labels, prompt, model settings, or analysis choices changed after inference began. PR #29 merged as `1043bc469dd6ac6ac0526581d869e166c0fcbab2`; its final checks passed 2,558 Python tests, Ruff, mypy, reference-evidence validation and web CI.
 
-The merged fix was deployed after the experiment and its backups completed. Worker, sidecar and web containers were running with zero restarts; database schema remained 42, `quick_check` passed, and the checked web/API/sidecar endpoints returned HTTP 200. [Deployment verification](results/deployment-verification.json) confirms that none of the 40 human labels or held-out attempts entered the live database. These health checks do not resolve the previously reported source-pagination/context limits on ordinary scans.
+The merged fix was deployed after the experiment and its backups completed. Worker, sidecar and web containers were running with zero restarts; database schema remained 42, `quick_check` passed, and the checked web/API/sidecar endpoints returned HTTP 200. The `deployment` section of the [provenance record](results/provenance.json) confirms that none of the 40 human labels or held-out attempts entered the live database. These health checks do not resolve the previously reported source-pagination/context limits on ordinary scans.
 
 The original preflight stores and failed preview remain under `run-preflight-d20`. They contain no candidate attempts for this cohort. The final stores were backed up through SQLite's backup API and passed `quick_check`; their receipt is retained. The private archive is `willie:~/backups/scout-heldout-agent-ops-2026-09-11-final.tar.gz`, SHA-256 `6ad10d41683748706ab8caef472d71ff0ba439ea5abd73168a1d5324ecc8589f`.
 
@@ -63,10 +63,9 @@ Keep the production model setting unchanged. Use a separate training corpus to m
 
 ## Review artifacts
 
-- [Canonical report](results/canonical-report.md) and [machine-readable report](results/canonical-report.json): exact run membership, scores, costs, coverage and repeat consistency.
-- [Paired comparison](results/comparison.json): overall and stratum metrics, confidence intervals and per-case predictions without post text.
-- [Frozen experiment](results/freeze.json), [authorization](results/authorization.json), [verification](results/verification.json), and [snapshot association audit](results/snapshot-association-audit.json).
-- [Pre-execution clarification](results/pre-execution-clarification.md), [exact experiment script](results/run-experiment.py.txt), and [exact analysis script](results/analyze-results.py.txt). These are campaign provenance, not general-purpose CLI utilities.
+- [Comparison data](results/comparison.json): overall and stratum metrics, confidence intervals, costs, verification counts and per-case predictions without post text.
+- [Provenance](results/provenance.json): source/code/plan identities, run IDs, cost gap, validation and deployment checks, backup locations and file hashes.
+- [Full audit archive](https://github.com/RankOneLabs/scout/tree/fcb89c68a0aa1e6a33ec0ac988f36f1ddca56833/evidence/heldout-agent-ops-2026-09-11/results): the original canonical reports, execution logs, frozen metadata and exact campaign scripts, preserved at an immutable commit. A byte-verified copy is also retained at `willie:~/backups/scout-heldout-agent-ops-2026-09-11-audit.tar.gz`, SHA-256 `3c6767c0b9223345d5ed112274684db5aa493a995282c611cf9f469d9b914424`.
 - Private local review page: `/tmp/scout-heldout-agent-ops-2026-09-11/comparison.html`. It displays the 40 posts, human labels and each model's three decisions, with disagreement filters. Raw posts, private labels and database copies are not published here.
 
 Snapshot: `881df34dafbcaac6531d9c0b1526123a2f117640c0833de732afcf9ebbe814cb`  
