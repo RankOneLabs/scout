@@ -1,6 +1,6 @@
 {
   "PLAN.md": "09d2ba9499bcea99a76ee481dbd6bf45bb24feda9d1aa9fbbe428bb130b23f12",
-  "RESULTS.md": "2416cd1d89dd6f6cce8024f6ac000681d0e7979eb8c55e2d03c45dc5e0794243",
+  "RESULTS.md": "34f92dd37caf5bd024782ef7a49d75136a85296256c299838f2f83ff39a77d8a",
   "inventory.json": "1659bea908de4d921487957aa9d26268f94e5d913e3e4583ce4135a5e4ca0432",
   "prompt.md": "727e772b784f2b499eee4565d28b15f65a9fb03086abf6a90e20ca5907cbbbc0",
   "results/analysis-commitment.sha256": "a7df021f9103dd581084b11b0f1cdefc60a46fd7f81848469795a01df7f44ddf",
@@ -11,6 +11,7 @@
   "results/canonical-report.md": "f98f0fd1d92fbb41c72f4171d421edcd2391ddde22b3f7dc52fd1ba756e07c37",
   "results/comparison.json": "125616bf24dbaec73e43ee2847c3050d4b93faff59cfbc4954aa1840b8aa8c84",
   "results/cost-audit.json": "cc6aaa1e1ff4b233745b62f03c6e0636aec1c317207310d127e2bfb1cb09eddc",
+  "results/deployment-verification.json": "6231c031fa6732a4c7578288db06a65f5fdd2a9f7b7c6074601de601374b86cd",
   "results/environment.json": "f0dd2d661521544f3908dcd4350e51e7f5bee11b376900e8ed677c4aa92ad893",
   "results/execution.txt": "005a11d062d39fe7d723094b1e32a22d22d1090a157dc8801e14759e5d0d4a55",
   "results/final-backup-receipt.json": "ff211d898ff9adfd4b4d5f224ff032a22c9ae252f395c04738a65631ca9347b0",
