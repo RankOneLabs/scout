@@ -453,7 +453,9 @@ class EvaluationStore:
         now = datetime.now(UTC).isoformat()
         with self._uow.begin_immediate():
             if self._planned_pairs(experiment_run_id) != frozenset():
-                raise ExperimentCASError("only an empty authorized plan can complete without attempts")
+                raise ExperimentCASError(
+                    "only an empty authorized plan can complete without attempts"
+                )
             cursor = self._conn.execute(
                 "UPDATE experiment_runs SET status = 'complete', completed_at = ? "
                 "WHERE id = ? AND status = 'queued' AND NOT EXISTS ("
