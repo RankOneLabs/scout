@@ -63,6 +63,13 @@ with zero restarts. Worker build SHA matched the deployed commit. `/`, the
 experiments page, experiment-run API, attempt API and sidecar health endpoint all
 returned 200.
 
+The ordinary scan after the final deployment, **scan 623**, finished at 18:54 UTC:
+six posts scanned, zero relevant and **22 platform-fetch limits**, so its honest
+status remains `partial`. Its sole keyword match was a blocked author; the scan
+did not exercise live drafting. The successful installed-schema provider probe
+above verifies that path. Source pagination limits remain an independent
+operational limitation; this deployment does not establish complete source coverage.
+
 Production campaign files remain under
 `/app/data/campaigns/production-smoke-2026-09-11/` on willie. The final release is
 `~/apps/releases/scout-d20bf21`; its immediate rollback release is

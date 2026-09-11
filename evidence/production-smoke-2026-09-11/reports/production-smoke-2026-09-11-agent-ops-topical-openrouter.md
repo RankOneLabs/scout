@@ -41,4 +41,3 @@ Precision, recall, and confusion weights on common successful cases; each case h
 | `gemma-4-26b-a4b-nothink-openrouter` | candidate | 1.0000 | 1.0000 | 3.0 | 0.0 | 0.0 | 0.0 |
 | `qwen3-30b-a3b-2507-nothink-openrouter` | baseline | 1.0000 | 1.0000 | 3.0 | 0.0 | 0.0 | 0.0 |
 | `qwen3-30b-a3b-2507-nothink-openrouter` | candidate | 1.0000 | 1.0000 | 3.0 | 0.0 | 0.0 | 0.0 |
-

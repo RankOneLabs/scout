@@ -77,8 +77,9 @@ original attempts and cost, and report the recovery separately.
 
 Report case-weighted accuracy, precision/recall, paired accuracy differences,
 coverage, actual cost including failed attempts, and latency. Quantify uncertainty
-with a paired bootstrap over the 40 case groups (all models and repeats travel
-together in each resample), using a fixed seed and 10,000 resamples. Do not treat
+with a paired bootstrap within each recorded prediction stratum (all models and
+repeats for a case travel together in each resample), retaining 20 groups per
+stratum, using a fixed seed and 10,000 resamples. Do not treat
 120 draws as 120 independent cases. Apply Holm adjustment if testing both
 challengers against the shared reference. A small or uncertain difference remains
 inconclusive; it is not a reason to pick a model by the best observed run.
