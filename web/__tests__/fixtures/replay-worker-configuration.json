@@ -9,7 +9,7 @@
   "max_parse_retries": 2,
   "max_tool_calls": 1,
   "model": "candidate-model",
-  "output_schema_sha256": "ebb1f75960d7669ccaf06ac770f5e5824ea1cda6338b258303806ecd135569cf",
+  "output_schema_sha256": "ff418dbe4c9a5bc27ba0dfea21bf301421bdd65d85448ddf41d3f8019647322b",
   "phase": "reply_draft",
   "reasoning": null,
   "system_prompt_sha256": "candidate-hash",
