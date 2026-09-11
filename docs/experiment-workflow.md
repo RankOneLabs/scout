@@ -13,7 +13,9 @@ SCOUT="$PWD/.venv/bin/scout" bash /tmp/campaign/run.sh
 
 The runner previews and authorizes each exact plan, explicitly skips unchanged
 model/prompt pairs, and records `<sweep>.outcome.json` containing every variant's
-run ID. An existing outcome file is never overwritten. Any failed batch or missing
+run ID immediately after the queue commits, before model calls. Completion counts
+are filled by atomic replacement when execution finishes; a new execution cannot
+overwrite an existing campaign's outcome file. Any failed batch or missing
 sweep makes the runner exit nonzero. `reports/index.md` links every sweep report;
 the JSON contains verified execution identity, retained evidence and completion counts.
 Project/prompt/backend/quant labels remain declared annotations in the input manifest;

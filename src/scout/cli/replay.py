@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import scout.replay.experiments as ee
@@ -290,6 +292,40 @@ def _load_catalog_or_exit(pricing_catalog_path: str | None) -> PricingCatalog:
         raise SystemExit(2) from exc
 
 
+def _write_batch_outcome_file(
+    path: Path, run_ids: dict[str, int], *, outcome: ee.BatchExecutionOutcome | None = None,
+) -> None:
+    """Checkpoint IDs before inference; replace the finished outcome atomically."""
+    document = {
+        "version": 1, "experiment_run_ids": run_ids,
+        "complete": (
+            None if outcome is None else sum(a.status == "complete" for a in outcome.attempts)
+        ),
+        "failed": (
+            None if outcome is None else sum(a.status != "complete" for a in outcome.attempts)
+        ),
+    }
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(json.dumps(document, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if outcome is None:
+            # Exclusive creation prevents replacing an earlier campaign.
+            os.link(temporary, path)
+        else:
+            os.replace(temporary, path)
+    except OSError as exc:
+        raise ee.ReplayError(
+            f"Cannot checkpoint experiment runs {run_ids} to {path}: {exc}"
+        ) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def batch_replay_feedback(args: argparse.Namespace) -> None:
     """Handle `scout feedback batch-replay`: preview (default) or execute
     (--execute-paid-replay, with --authorize-plan-sha256) a batch or sweep
@@ -320,6 +356,10 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
     catalog = _load_catalog_or_exit(args.pricing_catalog)
     dossier_root = Path(args.dossier_root) if args.dossier_root else None
 
+    def checkpoint(run_ids: dict[str, int]) -> None:
+        if outcome_file:
+            _write_batch_outcome_file(Path(outcome_file), run_ids)
+
     async def _run() -> None:
         async with replay_runtime(db_path=DB_PATH) as rt:
             if not args.execute_paid_replay:
@@ -349,15 +389,13 @@ def batch_replay_feedback(args: argparse.Namespace) -> None:
                 dossier_root=dossier_root,
                 sweep=sweep,
                 repeats=args.repeats,
+                on_queued=checkpoint,
             )
             _print_batch_outcome(outcome)
             if outcome_file:
-                Path(outcome_file).write_text(json.dumps({
-                    "version": 1,
-                    "experiment_run_ids": outcome.experiment_run_ids,
-                    "complete": sum(a.status == "complete" for a in outcome.attempts),
-                    "failed": sum(a.status != "complete" for a in outcome.attempts),
-                }, indent=2) + "\n", encoding="utf-8")
+                _write_batch_outcome_file(
+                    Path(outcome_file), outcome.experiment_run_ids, outcome=outcome,
+                )
             if any(attempt.status != "complete" for attempt in outcome.attempts):
                 raise SystemExit(1)
 

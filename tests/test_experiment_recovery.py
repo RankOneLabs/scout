@@ -8,6 +8,7 @@ from jig import SQLiteFeedbackLoop, SQLiteTracer
 
 import scout.replay.experiments as ee
 import scout.replay.reporting as rr
+from scout.cli.replay import _write_batch_outcome_file
 from scout.storage.state import StateManager
 from tests.test_evaluation_experiments import _pricing_catalog_for_tests
 from tests.test_replay_reporting import _run_single_variant_batch
@@ -37,6 +38,7 @@ async def test_interruption_preserves_plan_and_recovery_completes_only_unfinishe
 
     async def interrupt_second(**kwargs):
         nonlocal calls
+        assert outcome_path.exists(), "run IDs must be checkpointed before any model call"
         calls += 1
         if calls == 2:
             if interrupted_status == "running":
@@ -45,12 +47,19 @@ async def test_interruption_preserves_plan_and_recovery_completes_only_unfinishe
         return await original(**kwargs)
 
     monkeypatch.setattr(ee, "_execute_one_batch_attempt", interrupt_second)
+    outcome_path = tmp_path / "sweep.outcome.json"
     with StateManager(db_path=":memory:") as state:
         tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
         feedback = SQLiteFeedbackLoop(db_path=str(tmp_path / "feedback.db"))
         with pytest.raises(Interrupted):
-            await _run_single_variant_batch(state, tracer, feedback, monkeypatch, case_count=2)
+            await _run_single_variant_batch(
+                state, tracer, feedback, monkeypatch, case_count=2,
+                on_queued=lambda ids: _write_batch_outcome_file(outcome_path, ids),
+            )
         run = state.conn.execute("select id from experiment_runs").fetchone()[0]
+        checkpoint = json.loads(outcome_path.read_text())
+        assert checkpoint["experiment_run_ids"] == {"default": run}
+        assert checkpoint["complete"] is None
         before = state.list_experiment_attempts(run)
         assert [row["status"] for row in before] == ["complete", interrupted_status]
         report = rr.build_batch_report(state, experiment_run_ids=[run])
@@ -79,3 +88,24 @@ async def test_interruption_preserves_plan_and_recovery_completes_only_unfinishe
             assert outcome.attempts[0].experiment_id == before[1]["id"]
         final = rr.build_batch_report(state, experiment_run_ids=[run])
         assert (final["status"], final["provisional"]) == ("complete", False)
+
+
+def test_failed_final_write_preserves_run_id_checkpoint(tmp_path, monkeypatch) -> None:
+    import scout.cli.replay as replay_cli
+
+    path = tmp_path / "outcome.json"
+    run_ids = {"candidate": 1}
+    _write_batch_outcome_file(path, run_ids)
+    before = path.read_bytes()
+
+    def fail_replace(*args):
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(replay_cli.os, "replace", fail_replace)
+    with pytest.raises(ee.ReplayError, match="Cannot checkpoint"):
+        _write_batch_outcome_file(
+            path, run_ids,
+            outcome=ee.BatchExecutionOutcome(experiment_run_ids=run_ids, attempts=()),
+        )
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]

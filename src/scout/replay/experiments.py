@@ -32,7 +32,7 @@ import dataclasses
 import hashlib
 import json
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2382,6 +2382,7 @@ async def execute_batch_replay(
     dossier_root: Path | str | None = None,
     sweep: SweepDefinition | None = None,
     repeats: int = 1,
+    on_queued: Callable[[dict[str, int]], None] | None = None,
 ) -> BatchExecutionOutcome:
     """Execute one explicitly authorized batch or sweep replay end to end.
 
@@ -2419,6 +2420,8 @@ async def execute_batch_replay(
     # missing evidence or an uncreated variant.
     with state.db.begin_immediate():
         experiment_run_ids, queued = _queue_batch_plan(state, plan, name=name, sweep=sweep)
+    if on_queued is not None:
+        on_queued(dict(experiment_run_ids))
     attempts = []
     for run_id, attempt_id, pair, repeat_index in queued:
         attempts.append(await _execute_one_batch_attempt(

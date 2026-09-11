@@ -44,6 +44,7 @@ def state():
 
 async def _run_single_variant_batch(
     state, tracer, feedback, monkeypatch, *, case_count: int = 2, repeats: int = 1,
+    on_queued=None,
 ) -> tuple[int, list[int]]:
     """Seed `case_count` reply_draft cases (all sharing one baseline model/
     prompt segment) and execute one batch replay against them with a
@@ -74,6 +75,7 @@ async def _run_single_variant_batch(
         selector=selector, variants=variants, skip_policy=ee.SkipPolicy(),
         authorize_plan_sha256=plan.plan_sha256, pricing_catalog=catalog,
         dossier_root=Path("/unused"), repeats=repeats,
+        on_queued=on_queued,
     )
     return outcome.experiment_run_ids[ee.DEFAULT_BATCH_VARIANT_NAME], phase_run_ids
 
