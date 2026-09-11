@@ -463,7 +463,10 @@ class TestRelevanceBatch:
         ).fetchone()[0] == 0
 
     @pytest.mark.parametrize(
-        "defect", ["approve", "missing", "drift", "failure_reason", "wrong_surface"],
+        "defect", [
+            "approve", "missing", "drift", "failure_reason", "wrong_surface",
+            "snapshot_phase", "snapshot_scan",
+        ],
     )
     async def test_critic_override_requires_matching_frozen_rejection(
         self, state, tracer, feedback, monkeypatch, tmp_path, defect,
@@ -472,7 +475,26 @@ class TestRelevanceBatch:
             state, tracer, feedback, monkeypatch, tmp_path,
             critic_verdict="approve" if defect == "approve" else "reject",
         )
-        if defect in ("missing", "drift"):
+        if defect in ("snapshot_phase", "snapshot_scan"):
+            critic = state.conn.execute(
+                "SELECT * FROM evaluation_phase_runs WHERE phase='critic'",
+            ).fetchone()
+            snapshot_phase = "relevance" if defect == "snapshot_phase" else "critic"
+            scan_operator = "=" if defect == "snapshot_phase" else "<>"
+            wrong_snapshot = state.conn.execute(
+                "SELECT p.id FROM feedback_snapshot_phases p "
+                "JOIN feedback_snapshots s ON s.id=p.snapshot_id "
+                f"WHERE p.phase=? AND s.scan_id {scan_operator} ? LIMIT 1",
+                (snapshot_phase, critic["scan_id"]),
+            ).fetchone()[0]
+            with state.db.transaction():
+                state.conn.execute("DROP TRIGGER evaluation_phase_runs_link_once")
+                state.conn.execute(
+                    "UPDATE evaluation_phase_runs SET snapshot_phase_id=? WHERE id=?",
+                    (wrong_snapshot, critic["id"]),
+                )
+            task = _freeze_relevance_task(state, tmp_path)
+        elif defect in ("missing", "drift"):
             with state.db.transaction():
                 state.conn.execute("DROP TRIGGER evaluation_phase_runs_link_once")
                 if defect == "missing":

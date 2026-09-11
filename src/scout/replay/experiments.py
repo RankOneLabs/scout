@@ -1700,6 +1700,14 @@ async def _verify_relevance_decision(
         or state.get_phase_run(critic.id) != dataclasses.asdict(critic)
     ):
         raise SelectorResolutionError(f"{message}: critic phase identity mismatch")
+    with state.db.read_transaction():
+        snapshot = state.conn.execute(
+            "SELECT p.phase, s.scan_id FROM feedback_snapshot_phases p "
+            "JOIN feedback_snapshots s ON s.id=p.snapshot_id WHERE p.id=?",
+            (critic.snapshot_phase_id,),
+        ).fetchone()
+    if snapshot is None or snapshot["phase"] != "critic" or snapshot["scan_id"] != critic.scan_id:
+        raise SelectorResolutionError(f"{message}: critic snapshot association mismatch")
     baseline = await resolve_baseline(state, tracer, critic.id)
     side = _side_evidence(baseline.root_span)
     if not side.complete or _sha256_utf8(_canonical_json(side.value)) != side.sha256:
