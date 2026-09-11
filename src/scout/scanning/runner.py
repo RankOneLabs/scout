@@ -821,9 +821,11 @@ def _annotate_author(state: StateManager, msg: Message) -> None:
             rule_version=classification.rule_version,
             matched_text=classification.matched_text,
         )
-    except sqlite3.Error:
+    except (sqlite3.Error, ValueError):
+        # ValueError: the store rejects a blank identity. Either way the
+        # post keeps flowing; only the annotation is lost.
         logger.warning(
-            "author classification failed for %s:%s", msg.platform, msg.author_id, exc_info=True
+            "author classification failed for %s:%r", msg.platform, msg.author_id, exc_info=True
         )
 
 

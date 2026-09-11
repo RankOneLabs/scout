@@ -23,8 +23,8 @@ from scout.scanning.author_class import (
 
 FIXTURE = Path(__file__).parent / "fixtures" / "author_classifier" / "acceptance.json"
 
-# Blocked authors the rule must flag: 22 of 43 on 2026-09-11. The rest are
-# brand accounts and individuals, which name and handle alone cannot teach.
+# Blocked authors the rule must flag: 22 of 41 on 2026-09-11. The rest are
+# brand accounts, which name and handle alone cannot teach.
 BLOCKED_RECALL_FLOOR = 22
 
 # Unblocked authors with a human-graded relevant post that the rule flags.
@@ -42,7 +42,6 @@ EXPECTED_GOOD_HITS = frozenset(
 
 class FixtureAuthor(TypedDict):
     platform: str
-    author_id: str
     names: list[str]
     handles: list[str]
 
@@ -63,7 +62,7 @@ def _is_flagged(author: FixtureAuthor) -> bool:
 
 
 def _first_handle(author: FixtureAuthor) -> str:
-    return author["handles"][0] if author["handles"] else author["author_id"]
+    return author["handles"][0] if author["handles"] else author["names"][0]
 
 
 @pytest.mark.parametrize(
@@ -126,7 +125,7 @@ def test_handle_from_url(url: str | None, handle: str | None) -> None:
 def test_acceptance_blocked_recall_meets_floor() -> None:
     blocked, _ = _load()
     flagged = sum(_is_flagged(author) for author in blocked)
-    assert len(blocked) == 43
+    assert len(blocked) == 41
     assert flagged >= BLOCKED_RECALL_FLOOR
 
 

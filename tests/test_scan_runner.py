@@ -1025,6 +1025,57 @@ async def test_author_is_annotated_before_the_block_check(
 
 
 @pytest.mark.asyncio
+async def test_author_annotation_failure_does_not_abort_the_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    in_memory_state: StateManager,
+    tmp_path: Path,
+) -> None:
+    # The store rejects a blank identity with ValueError; the annotation is
+    # dropped and the post still reaches the pipeline.
+    now = datetime.now(UTC)
+    msg = _message("annotation-fails", now)
+    scan_id = in_memory_state.start_scan()
+    monkeypatch.setattr(
+        in_memory_state,
+        "record_author_classification",
+        Mock(side_effect=ValueError("author_id must be non-empty")),
+    )
+    pipeline_result = Mock()
+    pipeline_result.outputs = {"score_and_draft": Err(Mock(detail="test", operation="op"))}
+    run_mock = AsyncMock(return_value=pipeline_result)
+
+    monkeypatch.setattr(scan_runner, "run_pipeline", run_mock)
+    monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
+    monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
+
+    routed = [RoutedMessage(message=msg, keyword_route=None)]
+    await scan_runner.score_messages(
+        routed,
+        [msg],
+        {"evaluate": "e", "respond": "r", "critique": "c"},
+        {},
+        {},
+        "model",
+        "model",
+        "model",
+        Mock(),
+        Mock(),
+        in_memory_state,
+        scan_id,
+        str(tmp_path / "digest.md"),
+        feedback_snapshot=in_memory_state.record_feedback_snapshot(scan_id, mode="shadow"),
+    )
+
+    assert run_mock.await_count == 1
+    assert (
+        in_memory_state.conn.execute("SELECT COUNT(*) FROM author_classifications").fetchone()[0]
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_digest_failure_preserves_committed_posts(
     monkeypatch: pytest.MonkeyPatch,
     in_memory_state: StateManager,

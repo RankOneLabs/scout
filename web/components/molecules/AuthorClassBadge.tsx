@@ -14,12 +14,14 @@ export function AuthorClassBadge({ classification }: AuthorClassBadgeProps) {
   const detail = classification.matched_text
     ? `matched "${classification.matched_text}" (rule v${classification.rule_version})`
     : `rule v${classification.rule_version}`;
+  const explanation = `Name or handle looks like an automated feed: ${detail}. Advisory only; the post was still evaluated.`;
   return (
     <span
-      title={`Name or handle looks like an automated feed: ${detail}. Advisory only; the post was still evaluated.`}
+      title={explanation}
       className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300"
     >
       {classification.author_class}
+      <span className="sr-only">. {explanation}</span>
     </span>
   );
 }
