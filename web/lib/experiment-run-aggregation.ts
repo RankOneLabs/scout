@@ -103,6 +103,11 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     latest.push(attempts[attempts.length - 1]);
   }
 
+  // Attempts are inserted one case at a time as execution reaches them,
+  // and the parent projection stays 'running' until every planned chain
+  // exists, so a nonterminal run legitimately covers only part of its
+  // plan and has no final verdict. A run killed mid-way stays here too.
+  const inFlight = input.status === "running" || input.status === "queued";
   let skipped = 0;
   let planned = caseIds.size;
   if (config.version !== 2) {
@@ -118,11 +123,7 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
     for (const phaseRunId of caseIds) if (!plannedIds.has(phaseRunId)) fail("attempt outside plan");
     skipped = skippedIds.size;
     planned = config.phase_run_ids.length;
-    // Attempts are inserted one case at a time as execution reaches them,
-    // so a run still in flight (or killed mid-way, which leaves it in
-    // 'running' forever) legitimately covers only part of its plan. Only a
-    // run that reached a terminal status must account for every case.
-    const inFlight = input.status === "running" || input.status === "queued";
+    // Only a run that reached a terminal status must account for every case.
     if (!inFlight && planned !== caseIds.size + skipped) fail("plan population is incomplete");
     // Execution runs a case's repeats back to back, so a run cut short can
     // leave a case with only its earlier repeats; the summary must not
@@ -176,7 +177,7 @@ export function aggregateExperimentRun(input: AggregateExperimentRunInput): Expe
   const cost = metric(costPairs);
   const latency = metric(latencyPairs);
   let verdict: ExperimentRunSummary["verdict"];
-  if (statusCounts.running + statusCounts.queued > 0) verdict = "pending";
+  if (inFlight || statusCounts.running + statusCounts.queued > 0) verdict = "pending";
   else if (statusCounts.failed > 0 && statusCounts.complete === 0) verdict = "failed";
   else if (qualityDelta === null) verdict = "not_graded";
   else if (qualityDelta < 0) verdict = "candidate_recommended";

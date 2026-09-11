@@ -1367,6 +1367,54 @@ class TestExperimentRunsAndAttempts:
         in_memory_state.fail_experiment(second, error_detail="boom")
         assert in_memory_state.get_experiment_run(run_id)["status"] == "failed"
 
+    def test_run_status_stays_running_until_every_planned_chain_exists(
+        self, in_memory_state: StateManager
+    ) -> None:
+        # Execution inserts one chain at a time. A planned run whose only
+        # inserted chain has completed is still in flight, not complete.
+        first_case = self._seed_phase_run(in_memory_state)
+        second_case = self._seed_phase_run(
+            in_memory_state, trace_id="baseline-trace-2", platform_id="exp-baseline-2"
+        )
+        config = json.dumps(
+            {
+                "phase_run_ids": [first_case, second_case, 999],
+                "skipped_pairs": [{"phase_run_id": 999, "reason": "unscored"}],
+                "repeats": 2,
+            }
+        )
+        run_id = in_memory_state.create_experiment_run(name="r", candidate_config=config)
+        chains = [
+            (first_case, 1),
+            (first_case, 2),
+            (second_case, 1),
+            (second_case, 2),
+        ]
+        statuses = []
+        for phase_run_id, repeat_index in chains:
+            experiment_id = in_memory_state.insert_experiment_attempt(
+                experiment_run_id=run_id,
+                phase_run_id=phase_run_id,
+                baseline_evidence="{}",
+                repeat_index=repeat_index,
+            )
+            in_memory_state.cas_experiment_to_running(experiment_id)
+            in_memory_state.fail_experiment(experiment_id, error_detail="boom")
+            statuses.append(in_memory_state.get_experiment_run(run_id)["status"])
+        assert statuses == ["running", "running", "running", "failed"]
+
+    def test_run_without_a_plan_terminalizes_on_its_chains(
+        self, in_memory_state: StateManager
+    ) -> None:
+        phase_run_id = self._seed_phase_run(in_memory_state)
+        run_id = in_memory_state.create_experiment_run(name="r", candidate_config="{}")
+        experiment_id = in_memory_state.insert_experiment_attempt(
+            experiment_run_id=run_id, phase_run_id=phase_run_id, baseline_evidence="{}",
+        )
+        in_memory_state.cas_experiment_to_running(experiment_id)
+        in_memory_state.fail_experiment(experiment_id, error_detail="boom")
+        assert in_memory_state.get_experiment_run(run_id)["status"] == "failed"
+
     @pytest.mark.parametrize("bad", [0, -1, True, "2"])
     def test_invalid_repeat_index_rejected(self, in_memory_state: StateManager, bad) -> None:
         phase_run_id = self._seed_phase_run(in_memory_state)

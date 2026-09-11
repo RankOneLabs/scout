@@ -79,6 +79,8 @@ describe("aggregateExperimentRun", () => {
     expect(running.current_case_count).toBe(1);
     expect(running.current_chain_count).toBe(1);
     expect(running.repeat_count).toBe(2);
+    // Its only chain is complete, but the run is not: no final verdict yet.
+    expect(running.verdict).toBe("pending");
     expect(() => aggregateExperimentRun({ ...base, status: "partial" as const, attempts })).toThrow(/plan population/);
     // Plan membership still holds while in flight.
     expect(() => aggregateExperimentRun({ ...base, status: "running" as const, attempts: [attempt(1, 1, null, 2, 0.1, 3)] })).toThrow(/repeat index outside plan/);

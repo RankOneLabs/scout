@@ -506,6 +506,12 @@ class EvaluationStore:
         terminal = {"complete", "failed"}
         if all(s == "queued" for s in statuses):
             new_status = "queued"
+        elif len(statuses) < self._planned_chain_count(experiment_run_id):
+            # Execution inserts one chain at a time, so a plan with chains
+            # still to come is in flight even when every inserted chain has
+            # already gone terminal; terminalizing here would make a run
+            # killed in that gap read as complete with cases missing.
+            new_status = "running"
         elif all(s in terminal for s in statuses):
             if all(s == "complete" for s in statuses):
                 new_status = "complete"
@@ -522,6 +528,33 @@ class EvaluationStore:
             "UPDATE experiment_runs SET status = ?, completed_at = ? WHERE id = ?",
             (new_status, completed_at, experiment_run_id),
         )
+
+    def _planned_chain_count(self, experiment_run_id: int) -> int:
+        """Chains the run's plan authorizes: (planned cases - skipped) x repeats.
+
+        Runs without a plan in their candidate_config (legacy v2 shapes,
+        ad-hoc test configs) return 0, so the projection falls back to
+        reading only the chains that exist.
+        """
+        row = self._conn.execute(
+            "SELECT candidate_config FROM experiment_runs WHERE id = ?", (experiment_run_id,)
+        ).fetchone()
+        if row is None:
+            return 0
+        try:
+            config = json.loads(row["candidate_config"])
+        except (TypeError, ValueError):
+            return 0
+        if not isinstance(config, dict):
+            return 0
+        planned = config.get("phase_run_ids")
+        if not isinstance(planned, list):
+            return 0
+        skipped = config.get("skipped_pairs")
+        skipped_count = len(skipped) if isinstance(skipped, list) else 0
+        repeats = config.get("repeats")
+        repeat_count = repeats if isinstance(repeats, int) and repeats >= 1 else 1
+        return max(len(planned) - skipped_count, 0) * repeat_count
 
     def insert_experiment_attempt(
         self,
