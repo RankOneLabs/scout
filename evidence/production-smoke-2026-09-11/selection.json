@@ -1,0 +1,15 @@
+{
+  "purpose": "production workflow smoke; exploratory, not held-out",
+  "source_snapshot": "cb09c4f0b35216982bde1303e0f3c49012369be3181d79435a5cf354bfcc71f7",
+  "selection_rule": "first three complete relevance sources ordered by evaluation ID",
+  "evaluation_ids": [
+    45433,
+    45439,
+    45443
+  ],
+  "snapshot_digest": "8eb5699bdeb389bad224ec081d869f2a793085d581b8a199e86ed75975143a00",
+  "attempts": 6,
+  "repeats": 1,
+  "preview_budget_usd": 0.1,
+  "automatic_retries": false
+}

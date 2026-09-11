@@ -1,0 +1,21 @@
+version: 1
+name: production-smoke-2026-09-11
+projects:
+  agent-ops:
+    task_config: /app/data/campaigns/production-smoke-2026-09-11/task.json
+prompts:
+  topical:
+    file: /app/evidence/relevance-sweeps-2026-09/prompts/prompt-agent-ops-topical.md
+backends:
+  openrouter:
+    pricing_catalog: /app/evidence/relevance-sweeps-2026-09/pricing-openrouter-20260909b.json
+    identity_config: /app/evidence/relevance-sweeps-2026-09/identity-config.json
+models:
+- id: qwen3-30b-a3b-2507
+  backend: openrouter
+  model: openrouter/qwen/qwen3-30b-a3b-instruct-2507
+  reasoning: false
+- id: gemma-4-26b-a4b
+  backend: openrouter
+  model: openrouter/google/gemma-4-26b-a4b-it
+  reasoning: false

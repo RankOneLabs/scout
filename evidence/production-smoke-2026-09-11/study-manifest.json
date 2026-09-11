@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "grid": "production-smoke-2026-09-11",
+  "grid_file": "/app/data/campaigns/production-smoke-2026-09-11/study.yaml",
+  "cells": [
+    {
+      "sweep_name": "production-smoke-2026-09-11-agent-ops-topical-openrouter",
+      "sweep_file": "production-smoke-2026-09-11-agent-ops-topical-openrouter.yaml",
+      "variant": "qwen3-30b-a3b-2507-nothink-openrouter",
+      "project": "agent-ops",
+      "prompt": "topical",
+      "backend": "openrouter",
+      "model_id": "qwen3-30b-a3b-2507",
+      "model": "openrouter/qwen/qwen3-30b-a3b-instruct-2507",
+      "quant": null,
+      "reasoning": false,
+      "repeat": 1
+    },
+    {
+      "sweep_name": "production-smoke-2026-09-11-agent-ops-topical-openrouter",
+      "sweep_file": "production-smoke-2026-09-11-agent-ops-topical-openrouter.yaml",
+      "variant": "gemma-4-26b-a4b-nothink-openrouter",
+      "project": "agent-ops",
+      "prompt": "topical",
+      "backend": "openrouter",
+      "model_id": "gemma-4-26b-a4b",
+      "model": "openrouter/google/gemma-4-26b-a4b-it",
+      "quant": null,
+      "reasoning": false,
+      "repeat": 1
+    }
+  ]
+}
