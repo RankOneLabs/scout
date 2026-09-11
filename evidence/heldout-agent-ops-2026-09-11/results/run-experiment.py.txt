@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import platform
+import re
+import subprocess
+import sys
+from collections import Counter
+from datetime import UTC, datetime
+from pathlib import Path
+
+from jig import SQLiteTracer
+from scout.config import GradeRecord
+from scout.grading.artifacts import ProducerEnvironment
+from scout.grading.assistance import group_posts, validate_partition
+from scout.grading.assistance_store import load_training_examples
+from scout.grading.assistance_types import FrozenPartition, PartitionMember, RejectedPopulation
+from scout.grading.assistance_wire import PARTITION_WIRE
+from scout.grading.snapshots import (
+    CorpusSelection, CorpusSnapshot, FrozenGradePopulation, RecordedPost,
+    build_snapshot_bundle, read_grade_population, verify_snapshot_replay,
+)
+from scout.grading.wire import encode_wire_v1
+from scout.replay.experiments import resolve_baseline
+from scout.replay.tasks import RelevanceTask, load_relevance_population
+from scout.result import Ok
+from scout.storage.db import read_only_connection
+from scout.storage.state import StateManager
+
+ROOT = Path('/app/data/campaigns/heldout-agent-ops-2026-09-11')
+RUN = ROOT / 'run'
+REPO = RUN / 'code'
+REV = 'eca680fb25252cbf20fd0ba05876072e661c5f18'
+PROMPT_SHA = '727e772b784f2b499eee4565d28b15f65a9fb03086abf6a90e20ca5907cbbbc0'
+SCOUT = '/app/.venv/bin/scout'
+
+
+def unwrap(result):
+    if not isinstance(result, Ok):
+        raise RuntimeError(str(result.error))
+    return result.value
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def canonical(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def write(path, value):
+    with path.open('x') as handle:
+        handle.write(json.dumps(value, indent=2) + '\n')
+
+
+def validate_labels():
+    labels = json.loads((ROOT / 'labels.json').read_text())
+    original = json.loads((ROOT / 'review.json').read_text())
+    selected = json.loads((ROOT / 'selected-private.json').read_text())
+    assert canonical(selected) == original['cohort_digest']
+    for key in ('format', 'cohort_digest', 'rubric_version'):
+        assert labels[key] == original[key]
+    assert labels['reviewer'].strip() and len(labels['cases']) == len(original['cases']) == 40
+    assert len({row['evaluation_id'] for row in selected}) == 40
+    assert len({row['group_id'] for row in selected}) == 40
+    for actual, expected in zip(labels['cases'], original['cases'], strict=True):
+        assert {k: v for k, v in actual.items() if k not in ('label', 'note')} == {
+            k: v for k, v in expected.items() if k not in ('label', 'note')}
+        assert canonical({k: actual[k] for k in ('content', 'parent_text')}) == actual['content_digest']
+        assert actual['label'] in ('relevant', 'not_relevant')
+    assert {row['evaluation_id'] for row in selected} == {row['evaluation_id'] for row in labels['cases']}
+    counts = Counter(row['label'] for row in labels['cases'])
+    assert len(counts) == 2
+    assert Counter(row['relevant'] for row in selected) == {0: 20, 1: 20}
+    return selected, labels
+
+
+def check_exposure(selected, db_path):
+    with read_only_connection(str(db_path)) as conn:
+        posts = [RecordedPost.model_validate(dict(row)) for row in conn.execute('SELECT * FROM posts')]
+        groups = group_posts(posts)
+        used = {r[0] for r in conn.execute('SELECT post_id FROM grades')}
+        used.update(r[0] for r in conn.execute(
+            'SELECT DISTINCT p.post_id FROM evaluation_experiments x '
+            'JOIN evaluation_phase_runs p ON p.id=x.phase_run_id'))
+        used_groups = {groups[p] for p in used if p in groups}
+        for row in selected:
+            assert groups[row['post_id']] == row['group_id'], 'Group changed since reservation'
+            assert row['group_id'] not in used_groups, 'New grading/experiment exposure'
+        return {'checked_at': datetime.now(UTC).isoformat(), 'database': str(db_path),
+                'selected_groups': 40, 'exposed_selected_groups': 0, 'group_identities_unchanged': True}
+
+
+async def check_baselines(selected, db_path, traces_path):
+    state = StateManager(str(db_path), init_schema=False, allow_create=False)
+    tracer = SQLiteTracer(db_path=str(traces_path))
+    try:
+        for row in selected:
+            baseline = await resolve_baseline(state, tracer, row['phase_run_id'])
+            assert baseline.baseline_model == row['model']
+            assert hashlib.sha256(baseline.baseline_system_prompt.encode()).hexdigest() == row['baseline_prompt_sha256']
+            assert hashlib.sha256(baseline.recorded_input.encode()).hexdigest() == row['recorded_input_sha256']
+    finally:
+        await tracer.close()
+        state.close()
+
+
+def environment():
+    import scout.replay.experiments as experiments
+    assert os.environ['SCOUT_EXPERIMENT_SHA'] == REV
+    assert Path(experiments.__file__).resolve() == REPO / 'src/scout/replay/experiments.py'
+    assert sha(REPO / 'uv.lock') == sha(Path('/app/uv.lock'))
+    assert sha(ROOT / 'prompt.md') == PROMPT_SHA
+    return ProducerEnvironment(code_revision=REV,
+        dependency_lock_digest=sha(REPO / 'uv.lock'), python_version=platform.python_version())
+
+
+def runtime_env():
+    return {**os.environ, 'DB_PATH': str(RUN / 'state.db'),
+            'TRACE_DB_PATH': str(RUN / 'traces.db'), 'FEEDBACK_DB_PATH': str(RUN / 'feedback.db'),
+            'PYTHONPATH': str(REPO / 'src'),
+            'SCOUT_MODEL_IDENTITY_CONFIG': (RUN / 'identity-config.json').read_text()}
+
+
+def prepare():
+    assert not (RUN / 'freeze.json').exists()
+    selected, labels = validate_labels()
+    env = environment()
+    receipt = json.loads((ROOT / 'source-backup.json').read_text())
+    for row, name in zip(receipt['databases'], ('state.db', 'traces.db', 'feedback.db'), strict=True):
+        assert sha(RUN / name) == row['sha256'], 'Backup digest mismatch'
+    exposure = [check_exposure(selected, RUN / 'state.db'), check_exposure(selected, '/app/data/scout.db')]
+    asyncio.run(check_baselines(selected, RUN / 'state.db', RUN / 'traces.db'))
+    label_by_id = {r['evaluation_id']: r for r in labels['cases']}
+    selected_by_id = {r['evaluation_id']: r for r in selected}
+    graded_at = datetime.fromisoformat(labels['saved_at'].replace('Z', '+00:00'))
+    grade_map = []
+    with StateManager(str(RUN / 'state.db'), allow_create=False) as state:
+        for row in selected:
+            label = label_by_id[row['evaluation_id']]['label'] == 'relevant'
+            correct = bool(row['relevant']) == label
+            judgment = 'correct' if correct else ('false_negative' if label else 'false_positive')
+            # The shared v3 contract requires action fields. These are a mechanical
+            # relevance-only adapter, NOT additional human action/draft judgments.
+            note = (f"Blind topical label by {labels['reviewer']}: "
+                    f"{label_by_id[row['evaluation_id']]['label']}; rubric {labels['rubric_version']}. "
+                    'Action fields are derived relevance-only bookkeeping; action/draft quality was not reviewed.')
+            grade = GradeRecord(post_id=row['post_id'], evaluation_id=row['evaluation_id'],
+                scan_id=row['scan_id'], source='cli', graded_at=graded_at,
+                relevance_judgment=judgment, action_judgment='accept' if correct else 'fail',
+                dimensions=None if correct else ['contextual_understanding'],
+                failure_note=None if correct else note,
+                context_missing_input=None if correct else 'Human topical classification differs from recorded relevance decision.')
+            grade_id = state.save_grade(grade)
+            revisions = state.get_grade_revisions(grade_id)
+            assert len(revisions) == 1
+            grade_map.append({'evaluation_id': row['evaluation_id'], 'case_id': label_by_id[row['evaluation_id']]['case_id'],
+                'grade_id': grade_id, 'grade_revision_id': revisions[0]['id'],
+                'reviewer': labels['reviewer'], 'label': label_by_id[row['evaluation_id']]['label'],
+                'relevance_judgment': judgment})
+        with state.db.read_transaction():
+            population = unwrap(read_grade_population(state.conn, Path('/srv/content-agn')))
+        items = tuple(i for i in population.items if i.evaluation and i.evaluation.id in selected_by_id)
+        assert len(items) == 40 and all(not i.exposures for i in items)
+        frozen_population = FrozenGradePopulation(observed_at=population.observed_at, items=items)
+        bundle = unwrap(build_snapshot_bundle(frozen_population, CorpusSelection(project_key='agent-ops'), env.model_dump_json().encode()))
+        assert unwrap(verify_snapshot_replay(bundle)) == 1
+        digest = bundle.lineages[0].outputs[0]
+        contents = {a.digest: a.content for a in bundle.artifacts}
+        snapshot = CorpusSnapshot.model_validate_json(contents[digest])
+        assert len(snapshot.members) == 40 and not snapshot.exclusions
+        assert all(m.is_relevant == (label_by_id[m.evaluation_id]['label'] == 'relevant') for m in snapshot.members)
+        examples = unwrap(load_training_examples(bundle, digest))
+        partition = FrozenPartition(snapshot_digest=digest, members=tuple(
+            PartitionMember(evaluation_id=e.evaluation_id, input_digest=e.input_digest,
+                group_id=selected_by_id[e.evaluation_id]['group_id'], partition='heldout', exposed=False, provenance=())
+            for e in examples))
+        unwrap(validate_partition(examples, RejectedPopulation(project_key='agent-ops', items=()), partition))
+        unwrap(state.artifacts.import_bundle(bundle))
+        partition_digest = unwrap(state.artifacts.put(encode_wire_v1(partition, PARTITION_WIRE)))
+        task = RelevanceTask(snapshot_digest=digest, partition='heldout', partition_digest=partition_digest)
+        cases = unwrap(load_relevance_population(state, task))
+        assert len(cases.cases) == 40 and not cases.exclusions and not cases.dropped_duplicate_phase_run_ids
+        assert {c.phase_run.id for c in cases.cases} == {r['phase_run_id'] for r in selected}
+    write(RUN / 'environment.json', env.model_dump())
+    write(RUN / 'task.json', task.model_dump(mode='json'))
+    write(RUN / 'partition.json', partition.model_dump(mode='json'))
+    write(RUN / 'grade-provenance.json', {'labels_sha256': sha(ROOT / 'labels.json'), 'reviewer': labels['reviewer'],
+        'scope': 'Human relevance labels only. Required action/dimension fields are mechanically derived adapters, not human action or causal judgments. Isolated DB must not feed live grading, action analytics, or prompt tuning.', 'grades': grade_map})
+    (RUN / 'snapshot-bundle.json').write_text(bundle.model_dump_json(indent=2) + '\n')
+    for source, destination in (
+        (ROOT / 'prompt.md', RUN / 'prompt.md'), (ROOT / 'sweep.yaml', RUN / 'sweep.yaml'),
+        (REPO / 'evidence/relevance-sweeps-2026-09/identity-config.json', RUN / 'identity-config.json'),
+        (REPO / 'evidence/relevance-sweeps-2026-09/pricing-openrouter-20260909b.json', RUN / 'pricing.json')):
+        with destination.open('xb') as handle:
+            handle.write(source.read_bytes())
+    command = [SCOUT, 'feedback', 'batch-replay', '--name', 'heldout-agent-ops-2026-09-11',
+        '--task-config', str(RUN / 'task.json'), '--sweep-file', str(RUN / 'sweep.yaml'),
+        '--repeats', '3', '--pricing-catalog', str(RUN / 'pricing.json')]
+    write(RUN / 'command.json', command)
+    freeze = {'frozen_at': datetime.now(UTC).isoformat(), 'code_revision': REV,
+        'runtime_deployment_sha': os.environ['SCOUT_BUILD_SHA'],
+        'execution_mode': 'isolated source checkout with matching deployed dependency lock; all three stores are campaign copies',
+        'preflight_note': 'The first preview ran no candidate calls and rejected eight valid critic-rejected cases. PR29 verifies the critic transition. Labels, cohort, candidate prompt, and analysis remain unchanged.',
+        'snapshot_digest': digest,
+        'partition_digest': partition_digest, 'reviewer': labels['reviewer'], 'label_counts': dict(Counter(r['label'] for r in labels['cases'])),
+        'original_cases': 40, 'retained_cases': 40, 'exclusions': [], 'strata': {'0': 20, '1': 20},
+        'planned_attempts': 360, 'automatic_retries': False, 'preview_budget_usd': 1.0,
+        'bootstrap': {'seed': 20260911, 'resamples': 10000, 'unit': 'related group / case', 'stratified_by': 'recorded_prediction', 'confidence_level': 0.95, 'method': 'paired percentile'},
+        'hypothesis_tests': False, 'exposure_checks': exposure,
+        'files': {str(p.relative_to(ROOT)): sha(p) for p in (
+            ROOT / 'labels.json', ROOT / 'review.json', ROOT / 'selected-private.json', ROOT / 'PLAN.md', ROOT / 'selection.json',
+            ROOT / 'source-backup.json', RUN / 'environment.json', RUN / 'task.json', RUN / 'partition.json',
+            RUN / 'grade-provenance.json', RUN / 'snapshot-bundle.json', RUN / 'prompt.md', RUN / 'sweep.yaml',
+            RUN / 'identity-config.json', RUN / 'pricing.json', RUN / 'command.json',
+            RUN / 'code.tar', Path(__file__),
+            *sorted(p for p in REPO.rglob('*') if p.is_file() and '__pycache__' not in p.parts))}}
+    write(RUN / 'freeze.json', freeze)
+    result = subprocess.run(command, env=runtime_env(), capture_output=True, text=True)
+    (RUN / 'preview.txt').write_text(result.stdout)
+    (RUN / 'preview.stderr.txt').write_text(result.stderr)
+    print(json.dumps({k: v for k, v in freeze.items() if k != 'files'}, indent=2))
+    print(result.stdout)
+    if result.returncode:
+        print(result.stderr)
+        raise SystemExit(result.returncode)
+
+
+def execute():
+    selected, _ = validate_labels()
+    env = environment()
+    freeze = json.loads((RUN / 'freeze.json').read_text())
+    assert env.model_dump() == json.loads((RUN / 'environment.json').read_text())
+    for name, digest in freeze['files'].items():
+        assert sha(ROOT / name) == digest, f'Frozen file changed: {name}'
+    exposure = check_exposure(selected, '/app/data/scout.db')
+    asyncio.run(check_baselines(selected, RUN / 'state.db', RUN / 'traces.db'))
+    preview = (RUN / 'preview.txt').read_text()
+    assert 'planned attempts: 360\n' in preview and 'selected: 120\n' in preview
+    estimate = re.search(r'estimated USD \(total\): ([0-9.]+)', preview)
+    assert estimate and float(estimate[1]) < 1
+    plan = re.search(r'canonical plan sha256: ([0-9a-f]{64})', preview)
+    assert plan
+    write(RUN / 'authorization.json', {'authorized_at': datetime.now(UTC).isoformat(), 'plan_sha256': plan[1],
+        'freeze_sha256': sha(RUN / 'freeze.json'), 'preview_sha256': sha(RUN / 'preview.txt'),
+        'estimated_usd': float(estimate[1]), 'planned_attempts': 360, 'final_exposure_check': exposure})
+    command = json.loads((RUN / 'command.json').read_text()) + [
+        '--execute-paid-replay', '--authorize-plan-sha256', plan[1], '--outcome-file', str(RUN / 'outcome.json')]
+    with (RUN / 'execution.txt').open('x') as log:
+        result = subprocess.run(command, env=runtime_env(), stdout=log, stderr=subprocess.STDOUT)
+    print('Execution exit:', result.returncode)
+    raise SystemExit(result.returncode)
+
+
+if __name__ == '__main__':
+    {'prepare': prepare, 'execute': execute}[sys.argv[1]]()

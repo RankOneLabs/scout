@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import sqlite3
+import statistics
+import subprocess
+import sys
+from collections import Counter
+
+import numpy as np
+from jig import SQLiteTracer
+
+sys.path.insert(0, '/app/data/campaigns/heldout-agent-ops-2026-09-11/run')
+from runner import ROOT, RUN, SCOUT, runtime_env, write
+from scout.storage.experiment_plan import expected_experiment_pairs
+
+REFERENCE = 'gemini-2.5-flash-reference'
+
+
+async def verify():
+    outcome = json.loads((RUN / 'outcome.json').read_text())
+    freeze = json.loads((RUN / 'freeze.json').read_text())
+    ids = outcome['experiment_run_ids']
+    db = sqlite3.connect('file:' + str(RUN / 'state.db') + '?mode=ro', uri=True)
+    db.row_factory = sqlite3.Row
+    feedback = sqlite3.connect('file:' + str(RUN / 'feedback.db') + '?mode=ro', uri=True)
+    tracer = SQLiteTracer(db_path=str(RUN / 'traces.db'))
+    checks = []
+    try:
+        for variant, run_id in ids.items():
+            parent = db.execute('SELECT * FROM experiment_runs WHERE id=?', (run_id,)).fetchone()
+            config = json.loads(parent['candidate_config'])
+            attempts = list(db.execute('SELECT * FROM evaluation_experiments WHERE experiment_run_id=? ORDER BY id', (run_id,)))
+            assert parent['status'] in ('complete', 'failed')
+            assert len(attempts) == 120
+            assert {(a['phase_run_id'], a['repeat_index']) for a in attempts} == expected_experiment_pairs(config)
+            assert all(a['supersedes_experiment_id'] is None for a in attempts)
+            latencies = []
+            llm_latencies = []
+            errors = []
+            calls_count = 0
+            feedback_verified = 0
+            for attempt in attempts:
+                assert attempt['status'] in ('complete', 'failed')
+                evidence = json.loads(attempt['baseline_evidence'])
+                assert evidence['worker_configuration']['reasoning'] is False
+                assert evidence['target']['task']['snapshot_digest'] == freeze['snapshot_digest']
+                assert evidence['target']['task']['partition_digest'] == freeze['partition_digest']
+                if attempt['candidate_trace_id']:
+                    spans = await tracer.get_trace(attempt['candidate_trace_id'])
+                    calls = [s for s in spans if s.kind.value == 'llm_call']
+                    assert len(calls) == attempt['candidate_llm_call_count']
+                    calls_count += len(calls)
+                    roots = [s for s in spans if s.kind.value == 'agent_run' and s.parent_id is None]
+                    assert len(roots) == 1
+                    if roots[0].duration_ms is not None:
+                        latencies.append(roots[0].duration_ms)
+                    llm_latencies.extend(s.duration_ms for s in calls if s.duration_ms is not None)
+                    if attempt['status'] == 'complete':
+                        grades = [s for s in spans if s.kind.value == 'grading']
+                        assert len(grades) == 1
+                        grade = grades[0].output
+                        if grade.get('feedback_error') or not grade.get('feedback_result_id'):
+                            errors.append({'experiment_id': attempt['id'], 'stage': 'feedback_persistence'})
+                        else:
+                            result_id = grade['feedback_result_id']
+                            row = feedback.execute('SELECT length(embedding) FROM results WHERE id=?', (result_id,)).fetchone()
+                            assert row and row[0] > 0
+                            assert feedback.execute('SELECT count(*) FROM scores WHERE result_id=?', (result_id,)).fetchone()[0] > 0
+                            feedback_verified += 1
+                if attempt['status'] == 'failed':
+                    errors.append({'experiment_id': attempt['id'], 'stage': 'candidate', 'detail': attempt['error_detail']})
+            costs = [a['candidate_cost'] for a in attempts if a['candidate_cost'] is not None]
+            checks.append({'variant': variant, 'run_id': run_id, 'status': parent['status'],
+                'attempts': len(attempts), 'status_counts': dict(Counter(a['status'] for a in attempts)),
+                'llm_calls': calls_count, 'retries': 0, 'exact_plan_membership': True,
+                'known_cost_usd': sum(costs), 'unknown_cost_attempts': len(attempts) - len(costs),
+                'feedback_verified_attempts': feedback_verified, 'errors': errors,
+                'agent_latency_ms': {'count': len(latencies), 'median': statistics.median(latencies) if latencies else None,
+                    'p95': float(np.quantile(latencies, .95)) if latencies else None},
+                'llm_latency_ms': {'count': len(llm_latencies), 'median': statistics.median(llm_latencies) if llm_latencies else None,
+                    'p95': float(np.quantile(llm_latencies, .95)) if llm_latencies else None}})
+    finally:
+        await tracer.close()
+        db.close()
+        feedback.close()
+    write(RUN / 'verification.json', {'database': str(RUN / 'state.db'), 'runs': checks})
+    for fmt, suffix in (('json', 'json'), ('markdown', 'md')):
+        subprocess.run([SCOUT, 'feedback', 'report', '--experiment-run-id', *map(str, sorted(ids.values())),
+            '--format', fmt, '--out', str(RUN / ('canonical-report.' + suffix))], env=runtime_env(), check=True)
+
+
+def statistics_report():
+    report = json.loads((RUN / 'canonical-report.json').read_text())
+    freeze = json.loads((RUN / 'freeze.json').read_text())
+    selected = json.loads((ROOT / 'selected-private.json').read_text())
+    labels = json.loads((ROOT / 'labels.json').read_text())
+    verification = json.loads((RUN / 'verification.json').read_text())
+    assert not report['provisional']
+    selection_by_id = {r['evaluation_id']: r for r in selected}
+    labels_by_id = {r['evaluation_id']: r for r in labels['cases']}
+    all_ids = sorted(selection_by_id)
+    models = [REFERENCE] + sorted(v['variant'] for v in verification['runs'] if v['variant'] != REFERENCE)
+    by_case = {v: {} for v in models}
+    for case in report['cases']:
+        if case['status'] != 'complete' or case['score'] is None:
+            continue
+        score = case['score']
+        eid = score['target']['evaluation_id']
+        assert score['target']['is_relevant'] == (labels_by_id[eid]['label'] == 'relevant')
+        by_case[case['variant']].setdefault(eid, []).append(score['candidate_relevant'])
+    common = sorted(set.intersection(*(set(by_case[v]) for v in models)))
+    assert len(report['segments']) == 1
+    # Never silently change the bootstrap population when all draws for a case failed.
+    can_bootstrap = common == all_ids
+    y = np.array([labels_by_id[e]['label'] == 'relevant' for e in common], dtype=float)
+    p = np.array([[np.mean(by_case[v][e]) for e in common] for v in models])
+    strata = np.array([selection_by_id[e]['relevant'] for e in common])
+
+    def metrics(predictions, target):
+        tp = (predictions * target).sum(axis=-1)
+        fp = (predictions * (1 - target)).sum(axis=-1)
+        tn = ((1 - predictions) * (1 - target)).sum(axis=-1)
+        fn = ((1 - predictions) * target).sum(axis=-1)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            return {'accuracy': (tp + tn) / target.shape[-1], 'precision': tp / (tp + fp), 'recall': tp / (tp + fn)}
+
+    def bounds(values):
+        finite = values[np.isfinite(values)]
+        return {'low': float(np.quantile(finite, .025)) if len(finite) else None,
+                'high': float(np.quantile(finite, .975)) if len(finite) else None,
+                'defined_resamples': len(finite)}
+
+    observed = metrics(p, y)
+    draws = None
+    if can_bootstrap:
+        rng = np.random.default_rng(freeze['bootstrap']['seed'])
+        draws = np.concatenate([rng.choice(np.flatnonzero(strata == s), size=(10000, int((strata == s).sum())), replace=True)
+                                for s in (0, 1)], axis=1)
+        boot = metrics(p[:, draws], y[draws])
+    summaries = []
+    canonical = {v['variant']: v for v in report['segments'][0]['variants']}
+    for i, variant in enumerate(models):
+        measured = {k: (float(v[i]) if np.isfinite(v[i]) else None) for k, v in observed.items()}
+        for key, value in measured.items():
+            expected = canonical[variant]['candidate_' + key]
+            assert (value is None and expected is None) or (value is not None and abs(value - expected) < 1e-10)
+        summaries.append({'variant': variant, **measured,
+            'intervals_95': {key: bounds(values[i]) for key, values in boot.items()} if can_bootstrap else None,
+            'successful_cases': len(by_case[variant]), 'common_cases': len(common),
+            'successful_draws': sum(len(v) for v in by_case[variant].values()),
+            'unstable_cases': sum(len(set(values)) > 1 for values in by_case[variant].values()),
+            'strata': {str(s): {k: (float(v[0]) if np.isfinite(v[0]) else None)
+                for k, v in metrics(p[i:i+1, strata == s], y[strata == s]).items()} for s in (0, 1)},
+            'accuracy_difference_vs_reference': float(observed['accuracy'][i] - observed['accuracy'][0]),
+            'paired_difference_interval_95': bounds(boot['accuracy'][i] - boot['accuracy'][0]) if can_bootstrap else None})
+    payload = {'format': 'scout.heldout-comparison/v1', 'snapshot_digest': freeze['snapshot_digest'],
+        'partition_digest': freeze['partition_digest'], 'plan_sha256': report['plan_sha256'],
+        'original_cases': 40, 'retained_cases': 40, 'human_relevant': 13, 'human_not_relevant': 27,
+        'majority_class_accuracy': 27 / 40, 'models': summaries, 'verification': verification,
+        'bootstrap': {**freeze['bootstrap'], 'computed': can_bootstrap, 'rng': 'numpy.default_rng / PCG64',
+            'quantile': 'linear', 'paired_models_and_repeats': True},
+        'historical_relevance_model': {k: canonical[REFERENCE]['baseline_' + k] for k in ('accuracy', 'precision', 'recall')},
+        'sampling_strata_note': 'The 20/20 sampling strata are final stored evaluation decisions. Eight negative-stratum cases have positive relevance traces and verified later critic rejections.',
+        'scope': 'Equal-case diagnostic cohort, not production prevalence. Marginal 95% intervals; no hypothesis tests or familywise winner claims.',
+        'case_results': [{'case_id': labels_by_id[e]['case_id'], 'evaluation_id': e, 'group_id': selection_by_id[e]['group_id'],
+            'sampling_stratum': selection_by_id[e]['relevant'], 'human_relevant': labels_by_id[e]['label'] == 'relevant',
+            'predictions': {v: by_case[v].get(e, []) for v in models}} for e in all_ids]}
+    write(RUN / 'comparison.json', payload)
+    print(json.dumps({k: v for k, v in payload.items() if k not in ('case_results', 'verification')}, indent=2))
+
+
+if __name__ == '__main__':
+    asyncio.run(verify())
+    statistics_report()

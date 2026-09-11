@@ -1,0 +1,24 @@
+{
+  "captured_at": "20260911T190307Z",
+  "deployment_commit": "d20bf214873ee62d4b8928438505fd4ad4508f5c",
+  "databases": [
+    {
+      "file": "scout-verified-smoke-20260911T190307Z-state.db",
+      "sha256": "3ee62d1611aea4fbaf8f1069011f6124fe66e8a6a46d88a40d3a74311aa243ef",
+      "quick_check": "ok",
+      "bytes": 258027520
+    },
+    {
+      "file": "scout-verified-smoke-20260911T190307Z-traces.db",
+      "sha256": "6c73d5d56e7f88e78d1952d6d797c09fa4646b1580dab0febee593cd7dbbf897",
+      "quick_check": "ok",
+      "bytes": 364584960
+    },
+    {
+      "file": "scout-verified-smoke-20260911T190307Z-feedback.db",
+      "sha256": "7cb89cf68cb3281aab009829618bb77173f1e1f8fdca093f9d68de220cb1a601",
+      "quick_check": "ok",
+      "bytes": 5029888
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "database": "/app/data/campaigns/heldout-agent-ops-2026-09-11/run/state.db",
+  "runs": [
+    {
+      "variant": "gemini-2.5-flash-reference",
+      "run_id": 120,
+      "status": "complete",
+      "attempts": 120,
+      "status_counts": {
+        "complete": 120
+      },
+      "llm_calls": 121,
+      "retries": 0,
+      "exact_plan_membership": true,
+      "known_cost_usd": 0.0573764,
+      "unknown_cost_attempts": 1,
+      "feedback_verified_attempts": 120,
+      "errors": [],
+      "agent_latency_ms": {
+        "count": 120,
+        "median": 1273.9515000000001,
+        "p95": 1896.7509499999992
+      },
+      "llm_latency_ms": {
+        "count": 121,
+        "median": 1178.671,
+        "p95": 1739.152
+      }
+    },
+    {
+      "variant": "qwen3-30b-a3b-2507",
+      "run_id": 121,
+      "status": "complete",
+      "attempts": 120,
+      "status_counts": {
+        "complete": 120
+      },
+      "llm_calls": 120,
+      "retries": 0,
+      "exact_plan_membership": true,
+      "known_cost_usd": 0.01016562705,
+      "unknown_cost_attempts": 0,
+      "feedback_verified_attempts": 120,
+      "errors": [],
+      "agent_latency_ms": {
+        "count": 120,
+        "median": 2406.339,
+        "p95": 4185.971799999999
+      },
+      "llm_latency_ms": {
+        "count": 120,
+        "median": 2304.232,
+        "p95": 4104.349199999999
+      }
+    },
+    {
+      "variant": "gemma-4-26b-a4b",
+      "run_id": 122,
+      "status": "complete",
+      "attempts": 120,
+      "status_counts": {
+        "complete": 120
+      },
+      "llm_calls": 120,
+      "retries": 0,
+      "exact_plan_membership": true,
+      "known_cost_usd": 0.01111726,
+      "unknown_cost_attempts": 0,
+      "feedback_verified_attempts": 120,
+      "errors": [],
+      "agent_latency_ms": {
+        "count": 120,
+        "median": 2174.2535,
+        "p95": 4940.48385
+      },
+      "llm_latency_ms": {
+        "count": 120,
+        "median": 2085.328,
+        "p95": 4845.610899999999
+      }
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 # Agent-ops held-out comparison preparation
 
-Status: **40 cases reserved; awaiting blind human labels. No candidate inference has run on this cohort.**
+Status: **Completed: 40 human-labelled cases, 360 completed attempts. See [results](RESULTS.md).**
+
+The protocol below is retained as the pre-execution plan. Its recorded-decision strata include later critic rejections; see the results and the retained pre-execution clarification for that distinction. The completed comparison did not exclude or replace any cases.
 
 The private packet is retained on willie under
 `/app/data/campaigns/heldout-agent-ops-2026-09-11/` and locally under

@@ -1,0 +1,22 @@
+task: relevance; snapshot=881df34dafbcaac6531d9c0b1526123a2f117640c0833de732afcf9ebbe814cb; partition=heldout
+population: 40 case(s)
+variants: ['gemini-2.5-flash-reference', 'qwen3-30b-a3b-2507', 'gemma-4-26b-a4b']
+  variant 'gemini-2.5-flash-reference': reasoning off
+  variant 'qwen3-30b-a3b-2507': reasoning off
+  variant 'gemma-4-26b-a4b': reasoning off
+repeats per scored pair: 3
+planned attempts: 360
+scored: 120
+unscored: 0
+no-op: 0
+unpriceable: 0
+selected: 120
+skipped: 0
+price catalog: version=1 as_of=2026-09-09 hash=fac2e6048efc33bbbf571798cd9fdac56de6263eb2f5d09c44fbaa4c6e573045 source=https://openrouter.ai/api/v1/models
+estimated USD (openrouter/google/gemini-2.5-flash): 0.057230
+estimated USD (openrouter/google/gemma-4-26b-a4b-it): 0.010631
+estimated USD (openrouter/qwen/qwen3-30b-a3b-instruct-2507): 0.006856
+estimated USD (total): 0.074717
+max LLM calls per case: 4
+aggregate max LLM calls: 1440
+canonical plan sha256: c0c4812ba8ed3995885626219f9ad3b9e213fdeb512c0b5eaa3ff45c09690eda

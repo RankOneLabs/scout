@@ -1,0 +1,682 @@
+{
+  "checked_at": "2026-09-11T19:58:27.383857+00:00",
+  "cases": 40,
+  "phase_count": 96,
+  "critic_phase_count": 28,
+  "all_associations_match": true,
+  "note": "Read-only validation prompted by PR29 review; experiment code, labels, cohort and predictions were not changed.",
+  "phases": [
+    {
+      "id": 5964,
+      "phase": "relevance",
+      "scan_id": 593,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 593
+    },
+    {
+      "id": 5965,
+      "phase": "reply_draft",
+      "scan_id": 593,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 593
+    },
+    {
+      "id": 5966,
+      "phase": "critic",
+      "scan_id": 593,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 593
+    },
+    {
+      "id": 5782,
+      "phase": "relevance",
+      "scan_id": 585,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 585
+    },
+    {
+      "id": 5783,
+      "phase": "reply_draft",
+      "scan_id": 585,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 585
+    },
+    {
+      "id": 5784,
+      "phase": "critic",
+      "scan_id": 585,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 585
+    },
+    {
+      "id": 6364,
+      "phase": "relevance",
+      "scan_id": 616,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6365,
+      "phase": "reply_draft",
+      "scan_id": 616,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6366,
+      "phase": "critic",
+      "scan_id": 616,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 5559,
+      "phase": "relevance",
+      "scan_id": 579,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 579
+    },
+    {
+      "id": 5560,
+      "phase": "reply_draft",
+      "scan_id": 579,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 579
+    },
+    {
+      "id": 5561,
+      "phase": "critic",
+      "scan_id": 579,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 579
+    },
+    {
+      "id": 5198,
+      "phase": "relevance",
+      "scan_id": 568,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 568
+    },
+    {
+      "id": 5199,
+      "phase": "reply_draft",
+      "scan_id": 568,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 568
+    },
+    {
+      "id": 5200,
+      "phase": "critic",
+      "scan_id": 568,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 568
+    },
+    {
+      "id": 5384,
+      "phase": "relevance",
+      "scan_id": 574,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5385,
+      "phase": "reply_draft",
+      "scan_id": 574,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5386,
+      "phase": "critic",
+      "scan_id": 574,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 6134,
+      "phase": "relevance",
+      "scan_id": 603,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 603
+    },
+    {
+      "id": 6135,
+      "phase": "reply_draft",
+      "scan_id": 603,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 603
+    },
+    {
+      "id": 6136,
+      "phase": "critic",
+      "scan_id": 603,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 603
+    },
+    {
+      "id": 5919,
+      "phase": "relevance",
+      "scan_id": 591,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 591
+    },
+    {
+      "id": 5920,
+      "phase": "reply_draft",
+      "scan_id": 591,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 591
+    },
+    {
+      "id": 5921,
+      "phase": "critic",
+      "scan_id": 591,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 591
+    },
+    {
+      "id": 6426,
+      "phase": "relevance",
+      "scan_id": 618,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 618
+    },
+    {
+      "id": 6449,
+      "phase": "relevance",
+      "scan_id": 620,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6450,
+      "phase": "reply_draft",
+      "scan_id": 620,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6451,
+      "phase": "critic",
+      "scan_id": 620,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6382,
+      "phase": "relevance",
+      "scan_id": 617,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 617
+    },
+    {
+      "id": 5393,
+      "phase": "relevance",
+      "scan_id": 574,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5394,
+      "phase": "reply_draft",
+      "scan_id": 574,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5395,
+      "phase": "critic",
+      "scan_id": 574,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5922,
+      "phase": "relevance",
+      "scan_id": 591,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 591
+    },
+    {
+      "id": 5923,
+      "phase": "reply_draft",
+      "scan_id": 591,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 591
+    },
+    {
+      "id": 5924,
+      "phase": "critic",
+      "scan_id": 591,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 591
+    },
+    {
+      "id": 5839,
+      "phase": "relevance",
+      "scan_id": 587,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 587
+    },
+    {
+      "id": 5840,
+      "phase": "reply_draft",
+      "scan_id": 587,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 587
+    },
+    {
+      "id": 5841,
+      "phase": "critic",
+      "scan_id": 587,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 587
+    },
+    {
+      "id": 6354,
+      "phase": "relevance",
+      "scan_id": 616,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6355,
+      "phase": "reply_draft",
+      "scan_id": 616,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6356,
+      "phase": "critic",
+      "scan_id": 616,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6147,
+      "phase": "relevance",
+      "scan_id": 603,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 603
+    },
+    {
+      "id": 6148,
+      "phase": "reply_draft",
+      "scan_id": 603,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 603
+    },
+    {
+      "id": 6149,
+      "phase": "critic",
+      "scan_id": 603,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 603
+    },
+    {
+      "id": 6437,
+      "phase": "relevance",
+      "scan_id": 619,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 619
+    },
+    {
+      "id": 6199,
+      "phase": "relevance",
+      "scan_id": 605,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 605
+    },
+    {
+      "id": 6200,
+      "phase": "reply_draft",
+      "scan_id": 605,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 605
+    },
+    {
+      "id": 6201,
+      "phase": "critic",
+      "scan_id": 605,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 605
+    },
+    {
+      "id": 6370,
+      "phase": "relevance",
+      "scan_id": 616,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6371,
+      "phase": "reply_draft",
+      "scan_id": 616,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6372,
+      "phase": "critic",
+      "scan_id": 616,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 616
+    },
+    {
+      "id": 6441,
+      "phase": "relevance",
+      "scan_id": 620,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6338,
+      "phase": "relevance",
+      "scan_id": 614,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 614
+    },
+    {
+      "id": 6427,
+      "phase": "relevance",
+      "scan_id": 618,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 618
+    },
+    {
+      "id": 6386,
+      "phase": "relevance",
+      "scan_id": 617,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 617
+    },
+    {
+      "id": 6334,
+      "phase": "relevance",
+      "scan_id": 614,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 614
+    },
+    {
+      "id": 6335,
+      "phase": "relevance",
+      "scan_id": 614,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 614
+    },
+    {
+      "id": 6336,
+      "phase": "reply_draft",
+      "scan_id": 614,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 614
+    },
+    {
+      "id": 6337,
+      "phase": "critic",
+      "scan_id": 614,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 614
+    },
+    {
+      "id": 5786,
+      "phase": "relevance",
+      "scan_id": 585,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 585
+    },
+    {
+      "id": 5787,
+      "phase": "reply_draft",
+      "scan_id": 585,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 585
+    },
+    {
+      "id": 5788,
+      "phase": "critic",
+      "scan_id": 585,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 585
+    },
+    {
+      "id": 6435,
+      "phase": "relevance",
+      "scan_id": 619,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 619
+    },
+    {
+      "id": 6339,
+      "phase": "relevance",
+      "scan_id": 615,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 615
+    },
+    {
+      "id": 6447,
+      "phase": "relevance",
+      "scan_id": 620,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6019,
+      "phase": "relevance",
+      "scan_id": 600,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 600
+    },
+    {
+      "id": 6020,
+      "phase": "reply_draft",
+      "scan_id": 600,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 600
+    },
+    {
+      "id": 6021,
+      "phase": "critic",
+      "scan_id": 600,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 600
+    },
+    {
+      "id": 6448,
+      "phase": "relevance",
+      "scan_id": 620,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 5556,
+      "phase": "relevance",
+      "scan_id": 579,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 579
+    },
+    {
+      "id": 5557,
+      "phase": "reply_draft",
+      "scan_id": 579,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 579
+    },
+    {
+      "id": 5558,
+      "phase": "critic",
+      "scan_id": 579,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 579
+    },
+    {
+      "id": 5223,
+      "phase": "relevance",
+      "scan_id": 569,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 569
+    },
+    {
+      "id": 5224,
+      "phase": "reply_draft",
+      "scan_id": 569,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 569
+    },
+    {
+      "id": 5225,
+      "phase": "critic",
+      "scan_id": 569,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 569
+    },
+    {
+      "id": 5241,
+      "phase": "relevance",
+      "scan_id": 570,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 570
+    },
+    {
+      "id": 5242,
+      "phase": "reply_draft",
+      "scan_id": 570,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 570
+    },
+    {
+      "id": 5243,
+      "phase": "critic",
+      "scan_id": 570,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 570
+    },
+    {
+      "id": 6409,
+      "phase": "relevance",
+      "scan_id": 618,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 618
+    },
+    {
+      "id": 6410,
+      "phase": "reply_draft",
+      "scan_id": 618,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 618
+    },
+    {
+      "id": 6411,
+      "phase": "critic",
+      "scan_id": 618,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 618
+    },
+    {
+      "id": 5372,
+      "phase": "relevance",
+      "scan_id": 574,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5373,
+      "phase": "reply_draft",
+      "scan_id": 574,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5374,
+      "phase": "critic",
+      "scan_id": 574,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5246,
+      "phase": "relevance",
+      "scan_id": 570,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 570
+    },
+    {
+      "id": 5247,
+      "phase": "reply_draft",
+      "scan_id": 570,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 570
+    },
+    {
+      "id": 5248,
+      "phase": "critic",
+      "scan_id": 570,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 570
+    },
+    {
+      "id": 6455,
+      "phase": "relevance",
+      "scan_id": 620,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6456,
+      "phase": "reply_draft",
+      "scan_id": 620,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6457,
+      "phase": "critic",
+      "scan_id": 620,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 620
+    },
+    {
+      "id": 6340,
+      "phase": "relevance",
+      "scan_id": 615,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 615
+    },
+    {
+      "id": 6341,
+      "phase": "reply_draft",
+      "scan_id": 615,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 615
+    },
+    {
+      "id": 6342,
+      "phase": "critic",
+      "scan_id": 615,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 615
+    },
+    {
+      "id": 5404,
+      "phase": "relevance",
+      "scan_id": 574,
+      "snapshot_phase": "relevance",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5405,
+      "phase": "reply_draft",
+      "scan_id": 574,
+      "snapshot_phase": "reply_draft",
+      "snapshot_scan": 574
+    },
+    {
+      "id": 5406,
+      "phase": "critic",
+      "scan_id": 574,
+      "snapshot_phase": "critic",
+      "snapshot_scan": 574
+    }
+  ]
+}

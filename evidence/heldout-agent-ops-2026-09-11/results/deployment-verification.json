@@ -1,0 +1,10 @@
+{
+  "checked_at": "2026-09-11T20:17:38.285603+00:00",
+  "deployment_commit": "1043bc469dd6ac6ac0526581d869e166c0fcbab2",
+  "live_schema_version": 42,
+  "live_quick_check": "ok",
+  "embedding_host": "http://frink:11434",
+  "heldout_grades_in_live_database": 0,
+  "heldout_attempts_in_live_database": 0,
+  "note": "Experiment records and human labels remain in the isolated campaign stores."
+}
