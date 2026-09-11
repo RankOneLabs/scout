@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
 
 from scout.config import CritiqueResult, Message, RelevanceResult
 
@@ -66,9 +66,20 @@ class QuestionSegment(BaseModel):
         return v
 
 
+def _draft_segment_json_schema(schema: dict[str, JsonValue]) -> None:
+    """Keep tagged validation while emitting a provider-compatible union.
+
+    Each branch requires a distinct literal ``type``, so anyOf and oneOf
+    accept exactly the same values here. OpenAI strict tools accept anyOf
+    but reject oneOf; the OpenAPI discriminator is not needed on the wire.
+    """
+    schema["anyOf"] = schema.pop("oneOf")
+    schema.pop("discriminator", None)
+
+
 DraftSegment = Annotated[
     DeclarativeSegment | ResourceSegment | QuestionSegment,
-    Field(discriminator="type"),
+    Field(discriminator="type", json_schema_extra=_draft_segment_json_schema),
 ]
 
 
