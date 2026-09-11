@@ -1036,8 +1036,8 @@ def _render_relevance_markdown(report: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "Precision, recall, and confusion counts on common successful attempts, "
-                "every completed repeat one observation "
+                "Precision, recall, and confusion weights on common successful cases; "
+                "each case has total weight one across its successful repeats "
                 "(FP = replied to an irrelevant post, FN = missed a relevant post):",
                 "",
                 "| variant | prediction | precision | recall | TP | FP | TN | FN |",
