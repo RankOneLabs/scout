@@ -1,16 +1,17 @@
 {
-  "renderer_revision": "71e8ce07145827b9cbf2c61cb41cb2c4098a56c9",
-  "note": "Numeric JSON is the original runner output. Markdown uses corrected equal-case-weight wording.",
+  "renderer_revision": "51acf8350533c3ec39154c253c0dd128efe2a263",
+  "note": "Original report JSON retained verbatim. Final report omits unchecked manifest annotations; all other JSON fields are identical.",
   "artifact_sha256": {
     "PLAN.md": "7071b467bafe30a68ff937dcf9d61992001023978f87e567741d75fd20c0371b",
-    "RESULTS.md": "874907e82f63866fdf18c6a119357a05c3eb489e34c06a623c9087a0a8296c6d",
+    "RESULTS.md": "121d26614168e6cc4a8ad01039ed7d8c6bb478f9985ca8bfee156af0b5de1fc1",
     "execution.txt": "003bd178f71ca6809364c7a7bbc5b715e2150fb54e78daa7d45313c418c2e835",
-    "study-manifest.json": "baf84a2def20fb7571a9e8b7980d4a8c182488b2a8ca56e1acc67350c5fa18a5",
     "preview.txt": "ab853d16e80ff6f7cbcad6294113978988e80998eb4607fbb20e7beca5f1d9e5",
     "provenance.json": "3cbfe6b971a03a0e748a95d1023e0e6cadeffc2f46d3725f8c4061eb145ed5d3",
     "reports/index.md": "7d929c04453cd8be2a10c0a0486bdf65ec4e28d32ea3d851dc4f0f0bdcb0b345",
-    "reports/workflow-pilot-2026-09-11-agent-ops-topical-openrouter.json": "01c5518b27682066dc56c9d89446a8420ce8ccd71bc0e1fd5fac53dfb15b3bb7",
+    "reports/original-report.json": "01c5518b27682066dc56c9d89446a8420ce8ccd71bc0e1fd5fac53dfb15b3bb7",
+    "reports/workflow-pilot-2026-09-11-agent-ops-topical-openrouter.json": "148d2cbe2e2a24a44cb991e585ff0d39cea120ec08a878b3e712fb4c30244dd4",
     "reports/workflow-pilot-2026-09-11-agent-ops-topical-openrouter.md": "5a0c17dec02e088aee380d07727c9e2a33f8586cc194bdbd00e1fc7be37aeb64",
+    "study-manifest.json": "baf84a2def20fb7571a9e8b7980d4a8c182488b2a8ca56e1acc67350c5fa18a5",
     "study.yaml": "8473e23e10ba657e799929fd0d6b3a1ad6efd8542a659ba3412f303f7867410d",
     "verification.json": "20e248330a161cdf7e5ee9e21690e086cda8ffdbf844889996c6e682b97fc288",
     "workflow-pilot-2026-09-11-agent-ops-topical-openrouter.outcome.json": "80935b2c4688cf07d4cddf733607ac66caa0e6451a2774f70ab93acdd29c762a"

@@ -35,6 +35,8 @@ compute is not included in provider inference cost.
 
 Run IDs **116 and 117 belong to isolated database copies**, not production.
 Production databases and the original dirty development checkout were untouched.
-The original numeric JSON is retained verbatim. Markdown was rendered with a later
-wording correction that describes equal case weighting; that renderer revision is
-recorded separately from the execution revision.
+The [original report JSON](reports/original-report.json) is retained verbatim.
+The final report publishes only study identity fields verified against retained
+configuration; unchecked manifest annotations are omitted. Its numeric fields are
+identical to the original report. The report producer revision is recorded separately
+from the execution revision.
