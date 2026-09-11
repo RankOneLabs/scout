@@ -44,8 +44,14 @@ backup. Do not call model-generated labels human judgments.
 
 Resolve every uncertain case before running candidates. If the rubric cannot
 classify a case from retained evidence, record the exclusion and reason before
-preview. Never replace a difficult case after viewing candidate results. Require
-both human classes to be present, and publish final label and exclusion counts.
+preview. Do not replace excluded cases. Reduce the cohort to the remaining
+reviewable groups and freeze each stratum's retained count before execution.
+Require at least ten retained groups in each recorded-prediction stratum and both
+human classes overall; otherwise stop and design a new cohort before inference.
+Publish original and retained counts, labels and reasons for every exclusion.
+For N retained cases, the exact planned attempt count is 9 × N, with 360 as the
+maximum when no cases are excluded. Equal-case aggregate metrics describe this
+retained diagnostic cohort; they do not estimate the original 20/20 population.
 
 Freeze the resulting corpus and an explicit partition for that exact snapshot,
 keeping all previously exposed thread/duplicate groups outside heldout. Recheck
@@ -55,7 +61,7 @@ partition digest. A different snapshot requires a different partition.
 
 ## Comparison to run after labels are frozen
 
-Use `sweep.yaml` and the unmodified `prompt.md` for **all three models**:
+Use `sweep.yaml` and the unmodified, agent-ops-only `prompt.md` for **all three models**:
 
 1. Gemini 2.5 Flash as the reference under the same candidate prompt.
 2. Qwen3 30B A3B Instruct 2507.
@@ -78,8 +84,9 @@ original attempts and cost, and report the recovery separately.
 Report case-weighted accuracy, precision/recall, paired accuracy differences,
 coverage, actual cost including failed attempts, and latency. Quantify uncertainty
 with a paired bootstrap within each recorded prediction stratum (all models and
-repeats for a case travel together in each resample), retaining 20 groups per
-stratum, using a fixed seed and 10,000 resamples. Do not treat
+repeats for a case travel together in each resample), drawing each stratum's
+frozen retained number of groups with replacement, using seed 20260911 and
+10,000 resamples. Do not treat
 120 draws as 120 independent cases. Apply Holm adjustment if testing both
 challengers against the shared reference. A small or uncertain difference remains
 inconclusive; it is not a reason to pick a model by the best observed run.
