@@ -58,6 +58,8 @@ describe("aggregateExperimentRun", () => {
     expect(result.correction_distance.case_count).toBe(1);
     // A run cut short after repeat 1 must not read as a complete run.
     expect(() => aggregateExperimentRun({ ...base, attempts: [attempt(1, 1, null, 2, 0.1)] })).toThrow(/repeat population/);
+    // Two chains are not enough: the indexes must be exactly 1..repeats.
+    expect(() => aggregateExperimentRun({ ...base, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, null, 4, 0.1, 3)] })).toThrow(/repeat index outside plan/);
   });
 
   it("rejects broken lineage", () => {
