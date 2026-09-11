@@ -733,11 +733,14 @@ class TestRelevanceBatch:
         run_id = state.create_experiment_run(name="out-of-scope", candidate_config=config)
         trace_id = await _make_baseline_trace(tracer, feedback)
         outside_id = _seed_phase_run(state, trace_id=trace_id, model="claude-haiku-4-5-20251001")
-        attempt_id = state.insert_experiment_attempt(
-            experiment_run_id=run_id,
-            phase_run_id=outside_id,
-            baseline_evidence="{}",
-        )
+        # Simulate a malformed historical row: the insertion API now rejects
+        # this pair before retry validation ever needs to handle it.
+        attempt_id = state.conn.execute(
+            "INSERT INTO evaluation_experiments "
+            "(experiment_run_id, phase_run_id, attempt_number, status, baseline_evidence, "
+            "created_at) VALUES (?, ?, 1, 'queued', '{}', '2026-09-11T00:00:00Z')",
+            (run_id, outside_id),
+        ).lastrowid
         state.cas_experiment_to_running(attempt_id)
         state.fail_experiment(attempt_id, error_detail="synthetic failure")
         with pytest.raises(

@@ -62,6 +62,30 @@ describe("aggregateExperimentRun", () => {
     expect(() => aggregateExperimentRun({ ...base, attempts: [attempt(1, 1, null, 2, 0.1), attempt(2, 2, null, 4, 0.1, 3)] })).toThrow(/repeat index outside plan/);
   });
 
+  it("lets a run still in flight cover only part of its plan", () => {
+    // Attempts are inserted per case as execution reaches them, so a
+    // running run (or one killed mid-way and never closed) has chains for
+    // only some planned cases and only some repeats; that is progress, not
+    // corruption. The same evidence under a terminal status is corruption.
+    const config = {
+      version: 4 as const, phase: "reply_draft" as const, variant_name: "default", model_override: "candidate",
+      system_prompt_override: null, system_prompt_override_sha256: null, repeats: 2, grader_attached: true,
+      sweep: null, plan_sha256: "p", phase_run_ids: [11, 12, 13], dropped_duplicate_phase_run_ids: [], skipped_pairs: [],
+    };
+    const base = { id: 7, name: "run", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: config };
+    const attempts = [attempt(1, 1, null, 2, 0.1)];
+    const running = aggregateExperimentRun({ ...base, status: "running" as const, attempts });
+    expect(running.planned_case_count).toBe(3);
+    expect(running.current_case_count).toBe(1);
+    expect(running.current_chain_count).toBe(1);
+    expect(running.repeat_count).toBe(2);
+    // Its only chain is complete, but the run is not: no final verdict yet.
+    expect(running.verdict).toBe("pending");
+    expect(() => aggregateExperimentRun({ ...base, status: "partial" as const, attempts })).toThrow(/plan population/);
+    // Plan membership still holds while in flight.
+    expect(() => aggregateExperimentRun({ ...base, status: "running" as const, attempts: [attempt(1, 1, null, 2, 0.1, 3)] })).toThrow(/repeat index outside plan/);
+  });
+
   it("rejects broken lineage", () => {
     expect(() => aggregateExperimentRun({ id: 7, name: "run", status: "complete", created_at: "2026-01-01T00:00:00Z", completed_at: null, candidate_config: { version: 2, phase: "reply_draft", model: "candidate", system_prompt: "p", system_prompt_sha256: "h", grader_attached: true }, attempts: [attempt(2, 2, null, -1, 0.2)] })).toThrow(/lineage root/);
   });

@@ -79,6 +79,7 @@ from scout.replay.experiments import (
 )
 from scout.replay.tasks import RelevanceScore, RelevanceTask
 from scout.storage.evaluations import Experiment
+from scout.storage.experiment_plan import expected_experiment_pairs
 from scout.storage.state import StateManager
 
 REPORT_SCHEMA_VERSION = 6
@@ -153,6 +154,18 @@ def _collect_parents(
                 f"(candidate_config version {config.get('version')!r}; expected one of "
                 f"{SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS})"
             )
+        try:
+            expected = expected_experiment_pairs(config)
+        except ValueError as exc:
+            raise ReportError(f"invalid experiment plan: {exc}") from exc
+        actual = {
+            (row["phase_run_id"], row["repeat_index"])
+            for row in state.list_experiment_attempts(experiment_run_id)
+        }
+        if expected is None or not actual <= expected:
+            raise ReportError(f"experiment_run {experiment_run_id} has out-of-plan attempts")
+        if run["status"] in ("complete", "partial", "failed") and actual != expected:
+            raise ReportError(f"experiment_run {experiment_run_id} has an incomplete terminal plan")
         parents.append({"experiment_run_id": experiment_run_id, **config})
 
     plan_hashes = {parent["plan_sha256"] for parent in parents}
