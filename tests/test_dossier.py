@@ -39,6 +39,7 @@ from scout.dossiers.resolver import (
     DossierSummary,
     _build_resolution,
     _is_v1_index_version,
+    _load_pinned_schema,
     get_dossier_revision,
     get_pinned_dossier_revision,
     resolve_dossier,
@@ -212,6 +213,27 @@ def test_resolve_dossier_fails_closed_on_wrong_schema_id(tmp_path: Path) -> None
     revision = get_dossier_revision(repo)
     with pytest.raises(DossierResolutionError, match=r"must declare \$id"):
         resolve_dossier(repo, revision, "gateway", "gateway-dossier")
+
+
+def test_load_pinned_schema_accepts_expected_path_on_another_host(tmp_path: Path) -> None:
+    repo = tmp_path / "dossier-source"
+    (repo / "schemas").mkdir(parents=True)
+    (repo / "schemas" / "index.v1.schema.json").write_text(
+        '{"$schema": "https://json-schema.org/draft/2020-12/schema", '
+        '"$id": "https://dossiers.example/schemas/index.v1.schema.json", '
+        '"type": "object"}'
+    )
+    _init_git_repo(repo)
+
+    schema = _load_pinned_schema(
+        repo,
+        get_dossier_revision(repo),
+        "schemas/index.v1.schema.json",
+        "gateway",
+        "gateway-dossier",
+    )
+
+    assert schema["$id"] == "https://dossiers.example/schemas/index.v1.schema.json"
 
 
 # ---------------------------------------------------------------------------
