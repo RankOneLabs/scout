@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -843,6 +843,7 @@ async def score_messages(
     fetch_failures: list[dict[str, object]] | None = None,
     dossier_summaries: dict[str, DossierSummary] | None = None,
     dossier_revision: str | None = None,
+    lease_check: Callable[[], None] | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
     """Score messages via Scout's phase pipeline, write digest incrementally.
 
@@ -952,6 +953,8 @@ async def score_messages(
     _dossiers: dict[str, DossierSummary] = dossier_summaries or {}
 
     for i, routed in enumerate(routed_candidates):
+        if lease_check is not None:
+            lease_check()
         msg = routed.message
         logger.info("Processing %d/%d: %s...", i + 1, len(routed_candidates), msg.content[:80])
 
@@ -1271,6 +1274,38 @@ def build_platform_scanners(max_pages: int | None = None) -> tuple[
     return discord_scanner, farcaster_scanner, bluesky_scanner
 
 
+def _acquire_scan_lease(
+    state: StateManager, heartbeat_state: StateManager, owner_id: str
+) -> lease_lifecycle.EnvironmentLeaseHandle | None:
+    """Acquire this environment's lease, reconcile abandoned canonical
+    owners under its fence, and start the dedicated-connection heartbeat.
+    Returns None (after logging) when another worker holds the lease."""
+    match lease_lifecycle.acquire_lease(
+        state,
+        environment=SCOUT_ENVIRONMENT,
+        owner_id=owner_id,
+        heartbeat_state=heartbeat_state,
+        ttl_seconds=_config.SCOUT_LEASE_TTL_SECONDS,
+        heartbeat_interval_seconds=_config.SCOUT_LEASE_HEARTBEAT_SECONDS,
+    ):
+        case Err(error):
+            logger.error(
+                "Could not acquire environment lease for %r: %s",
+                SCOUT_ENVIRONMENT, error.detail,
+            )
+            return None
+        case Ok(handle):
+            pass
+    reconciled = lease_lifecycle.reconcile_abandoned_owners(state, handle)
+    if reconciled:
+        logger.warning(
+            "Reconciled %d abandoned canonical owner scan(s) in environment=%r at "
+            "startup: %s", len(reconciled), SCOUT_ENVIRONMENT, reconciled,
+        )
+    handle.start_heartbeat()
+    return handle
+
+
 async def main_loop(args: argparse.Namespace) -> None:
     """Main agent loop — single scan or continuous."""
 
@@ -1288,42 +1323,26 @@ async def main_loop(args: argparse.Namespace) -> None:
     feedback: SQLiteFeedbackLoop | None = None
     owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
-        lease_result = state.acquire_environment_lease(
-            SCOUT_ENVIRONMENT, owner_id, ttl_seconds=_config.SCOUT_LEASE_TTL_SECONDS,
-        )
-        match lease_result:
-            case Err(error):
-                logger.error(
-                    "Could not acquire environment lease for %r: %s",
-                    SCOUT_ENVIRONMENT, error.detail,
-                )
-                sys.exit(1)
-            case Ok(held):
-                lease_fence = held.fence
-        reconciled = state.reconcile_abandoned_canonical_owners(SCOUT_ENVIRONMENT, lease_fence)
-        if reconciled:
-            logger.warning(
-                "Reconciled %d abandoned canonical owner scan(s) in environment=%r at "
-                "startup: %s", len(reconciled), SCOUT_ENVIRONMENT, reconciled,
-            )
+        # Heartbeat renewals run on their own connection so they can never
+        # contend with a scan transaction on the primary one.
+        heartbeat_state = StateManager(db_path=DB_PATH, init_schema=False)
+        lease_handle = _acquire_scan_lease(state, heartbeat_state, owner_id)
+        if lease_handle is None:
+            with contextlib.suppress(Exception):
+                heartbeat_state.close()
+            sys.exit(1)
+        lease_fence = lease_handle.fence
         try:
             while True:
-                # Every heartbeat renewal is a short compare-and-set on this
-                # same connection, checkpointed at the top of each scan
-                # iteration rather than via a background task — no
-                # transaction is ever open across it. A lost lease here
-                # means another worker has taken over this environment;
-                # single-shot invocations stop rather than risk advancing
-                # a watermark that would immediately be fenced out anyway.
-                renewal = state.renew_environment_lease(
-                    SCOUT_ENVIRONMENT, owner_id, lease_fence,
-                    ttl_seconds=_config.SCOUT_LEASE_TTL_SECONDS,
-                )
-                if isinstance(renewal, Err):
+                if lease_handle.lost:
+                    # Another worker took this environment over. A single-shot
+                    # invocation stops; continuous mode waits out the normal
+                    # interval and tries to acquire a fresh generation.
                     logger.error(
-                        "Lost environment lease for %r before starting scan: %s",
-                        SCOUT_ENVIRONMENT, renewal.error.detail,
+                        "Lost environment lease for %r; no further scans under this owner",
+                        SCOUT_ENVIRONMENT,
                     )
+                    await lease_handle.stop(release=False)
                     if not args.continuous:
                         sys.exit(1)
                     logger.info(
@@ -1331,7 +1350,11 @@ async def main_loop(args: argparse.Namespace) -> None:
                         SCAN_INTERVAL_HOURS,
                     )
                     await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
-                    continue
+                    reacquired = _acquire_scan_lease(state, heartbeat_state, owner_id)
+                    if reacquired is None:
+                        continue
+                    lease_handle = reacquired
+                    lease_fence = lease_handle.fence
                 logger.info("=" * 60)
                 logger.info("Starting scan...")
                 logger.info("=" * 60)
@@ -1415,6 +1438,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                         else:
                             logger.info("First scan — fetching recent messages")
 
+                        lease_handle.check()
                         fetch_started_at = datetime.now(UTC)
                         # Committed and durably visible before the platform
                         # clients are ever awaited: a crash or cancellation
@@ -1438,6 +1462,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                         )
                         all_messages = fetched.messages
                         fetch_failures = list(fetched.failures)
+                        lease_handle.check()
                         required_source_keys, covered_source_keys = (
                             coverage_lifecycle.register_source_outcomes(
                                 state, fetched.source_outcomes
@@ -1510,6 +1535,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                             break
                         assert tracer is not None
                         assert feedback is not None
+                        lease_handle.check()
                         base_mode_cfg = MODES[mode_name]
                         logger.info(
                             "Running %s pass (evaluate=%s, respond=%s, critique=%s)...",
@@ -1768,6 +1794,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 fetch_failures=[_failure_to_dict(f) for f in fetch_failures],
                                 dossier_summaries=_dossier_summaries,
                                 dossier_revision=_dossier_revision,
+                                lease_check=lease_handle.check,
                             )
 
                             for failure in processing_failures:
@@ -1896,8 +1923,12 @@ async def main_loop(args: argparse.Namespace) -> None:
                 await feedback.close()
             if tracer is not None:
                 await tracer.close()
-            # Best-effort: release cleanly so an immediate re-run of this
-            # process doesn't have to wait out the TTL/takeover path. A
-            # failure here just means the lease expires normally.
+            # Stop the heartbeat first, then release cleanly on the primary
+            # connection (unless the lease was already lost) so an immediate
+            # re-run doesn't have to wait out the TTL/takeover path.
+            await lease_handle.stop(release=False)
+            if not lease_handle.lost:
+                with contextlib.suppress(Exception):
+                    state.release_environment_lease(SCOUT_ENVIRONMENT, owner_id, lease_fence)
             with contextlib.suppress(Exception):
-                state.release_environment_lease(SCOUT_ENVIRONMENT, owner_id, lease_fence)
+                heartbeat_state.close()

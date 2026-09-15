@@ -580,7 +580,7 @@ class TestEnvironmentLeaseHandle:
         state, db_path = file_backed_state
         owner_id = generate_owner_id()
         result = acquire_lease(
-            state, environment="production", owner_id=owner_id, db_path=db_path,
+            state, environment="production", owner_id=owner_id, heartbeat_state=StateManager(db_path=db_path, init_schema=False),
             ttl_seconds=0.6, heartbeat_interval_seconds=0.2,
         )
         assert isinstance(result, Ok)
@@ -599,7 +599,7 @@ class TestEnvironmentLeaseHandle:
         state, db_path = file_backed_state
         owner_id = generate_owner_id()
         result = acquire_lease(
-            state, environment="production", owner_id=owner_id, db_path=db_path,
+            state, environment="production", owner_id=owner_id, heartbeat_state=StateManager(db_path=db_path, init_schema=False),
             ttl_seconds=30, heartbeat_interval_seconds=10,
         )
         assert isinstance(result, Ok)
@@ -613,7 +613,7 @@ class TestEnvironmentLeaseHandle:
         state, db_path = file_backed_state
         owner_id = generate_owner_id()
         result = acquire_lease(
-            state, environment="production", owner_id=owner_id, db_path=db_path,
+            state, environment="production", owner_id=owner_id, heartbeat_state=StateManager(db_path=db_path, init_schema=False),
             ttl_seconds=30, heartbeat_interval_seconds=10,
         )
         assert isinstance(result, Ok)
@@ -627,7 +627,7 @@ class TestEnvironmentLeaseHandle:
         state, db_path = file_backed_state
         first_owner = generate_owner_id()
         first = acquire_lease(
-            state, environment="production", owner_id=first_owner, db_path=db_path,
+            state, environment="production", owner_id=first_owner, heartbeat_state=StateManager(db_path=db_path, init_schema=False),
             ttl_seconds=30, heartbeat_interval_seconds=10,
         )
         assert isinstance(first, Ok)
@@ -642,7 +642,7 @@ class TestEnvironmentLeaseHandle:
 
         second_owner = generate_owner_id()
         second = acquire_lease(
-            state, environment="production", owner_id=second_owner, db_path=db_path,
+            state, environment="production", owner_id=second_owner, heartbeat_state=StateManager(db_path=db_path, init_schema=False),
             ttl_seconds=30, heartbeat_interval_seconds=10,
         )
         assert isinstance(second, Ok)
