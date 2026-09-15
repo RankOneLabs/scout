@@ -105,6 +105,8 @@ class FarcasterScanner:
                                         f"search: {query[:40]} in /{ch_id}"
                                     ),
                                     retryable=True,
+                                    operation_phase="fetch",
+                                    blocks_watermark_advance=True,
                                 ))
                     else:
                         casts, ceiling, failure = await self._search_paginated(
@@ -122,6 +124,8 @@ class FarcasterScanner:
                                 message=f"Page ceiling reached; fetched {len(casts)} casts",
                                 context=f"search: {query[:40]}",
                                 retryable=True,
+                                operation_phase="fetch",
+                                blocks_watermark_advance=True,
                             ))
 
                 for ch_id in self.channel_ids:
@@ -140,12 +144,18 @@ class FarcasterScanner:
                             message=f"Page ceiling reached; fetched {len(casts)} casts",
                             context=f"feed: /{ch_id}",
                             retryable=True,
+                            operation_phase="fetch",
+                            blocks_watermark_advance=True,
                         ))
 
         except Exception as e:
             logger.error("Farcaster fetch failed: %s", e)
             return PlatformFetchFailure(
-                platform="farcaster", kind="unexpected", message=str(e)
+                platform="farcaster",
+                kind="unexpected",
+                message=str(e),
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
 
         collected.sort(key=lambda m: m.created_at, reverse=True)
@@ -192,18 +202,33 @@ class FarcasterScanner:
                 return Err(classify_http_failure("farcaster", e2, context=context))
             except Exception as e2:
                 return Err(PlatformFetchFailure(
-                    platform="farcaster", kind="unexpected", message=str(e2), context=context,
+                    platform="farcaster",
+                    kind="unexpected",
+                    message=str(e2),
+                    context=context,
+                    operation_phase="fetch",
+                    blocks_watermark_advance=True,
                 ))
         except Exception as e:
             return Err(PlatformFetchFailure(
-                platform="farcaster", kind="unexpected", message=str(e), context=context,
+                platform="farcaster",
+                kind="unexpected",
+                message=str(e),
+                context=context,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             ))
 
         try:
             return Ok(cast(dict[str, object], resp.json()))
         except Exception as e:
             return Err(PlatformFetchFailure(
-                platform="farcaster", kind="unexpected", message=str(e), context=context,
+                platform="farcaster",
+                kind="unexpected",
+                message=str(e),
+                context=context,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             ))
 
     @staticmethod

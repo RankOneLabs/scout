@@ -259,6 +259,8 @@ class BlueskyScanner:
                 kind="auth_error",
                 message=net_err.detail,
                 retryable=False,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
         if net_err.status in (401, 403):
             return PlatformFetchFailure(
@@ -267,6 +269,8 @@ class BlueskyScanner:
                 message=net_err.detail,
                 http_status=net_err.status,
                 retryable=False,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
         return PlatformFetchFailure(
             platform="bluesky",
@@ -274,6 +278,8 @@ class BlueskyScanner:
             message=net_err.detail,
             http_status=net_err.status,
             retryable=True,
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
         )
 
     # Maximum number of URIs per app.bsky.feed.getPosts request.
@@ -338,6 +344,8 @@ class BlueskyScanner:
                                 message=f"Page ceiling reached; fetched {len(posts)} posts",
                                 context=f"search: {query[:40]} lang={lang or 'none'}",
                                 retryable=True,
+                                operation_phase="fetch",
+                                blocks_watermark_advance=True,
                             ))
 
                 for feed_uri in self.feed_uris:
@@ -360,6 +368,8 @@ class BlueskyScanner:
                             message=f"Page ceiling reached; fetched {len(posts)} posts",
                             context=f"feed: {feed_uri[:50]}",
                             retryable=True,
+                            operation_phase="fetch",
+                            blocks_watermark_advance=True,
                         ))
 
                 # Resolve immediate-parent context for reply posts.
@@ -372,7 +382,11 @@ class BlueskyScanner:
         except Exception as e:
             logger.error("Bluesky fetch failed: %s", e)
             return PlatformFetchFailure(
-                platform="bluesky", kind="unexpected", message=str(e)
+                platform="bluesky",
+                kind="unexpected",
+                message=str(e),
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
 
         collected.sort(key=lambda m: m.created_at, reverse=True)
@@ -425,6 +439,10 @@ class BlueskyScanner:
         # Deduplicate parent URIs and fetch in chunks.
         unique_parent_uris = list(dict.fromkeys(child_to_parent_uri.values()))
         resolved_parents: dict[str, SourceParent] = {}
+        # URIs whose chunk request itself failed — already recorded as one
+        # retryable failure per chunk below, so they must not also be
+        # reported as "successfully confirmed missing" degradation evidence.
+        request_failed_uris: set[str] = set()
 
         for i in range(0, len(unique_parent_uris), self._GETPOSTS_CHUNK_SIZE):
             chunk = unique_parent_uris[i : i + self._GETPOSTS_CHUNK_SIZE]
@@ -432,9 +450,20 @@ class BlueskyScanner:
                 client, headers, chunk
             )
             resolved_parents.update(chunk_resolved)
+            if chunk_failures:
+                request_failed_uris.update(chunk)
             failures.extend(chunk_failures)
 
-        # Rebuild messages with parent context.
+        # Rebuild messages with parent context. Every child whose parent
+        # wasn't resolved keeps parent_lookup_status="failed" regardless of
+        # *why* (chunk request failure vs. a successfully-returned response
+        # simply omitting a missing/deleted/malformed parent) — but only the
+        # latter case is recorded as degradation evidence here, once per
+        # unique missing parent URI (decision 9): request-level failures are
+        # already recorded once per chunk in _fetch_parent_chunk, and
+        # per-child noise would multiply that same failure across every
+        # reply sharing the parent.
+        missing_parent_uris: set[str] = set()
         updated: list[Message] = []
         for msg in messages:
             if msg.platform_id not in child_to_parent_uri:
@@ -470,15 +499,24 @@ class BlueskyScanner:
                     parent=None,
                     parent_lookup_status="failed",
                 )
-                # Record a non-fatal failure for each child whose parent could not be resolved.
-                failures.append(PlatformFetchFailure(
-                    platform="bluesky",
-                    kind="parent_context",
-                    message=f"Parent post unavailable for child {msg.platform_id}",
-                    context=f"child:{msg.platform_id} parent:{parent_uri}",
-                    retryable=True,
-                ))
+                if parent_uri not in request_failed_uris:
+                    missing_parent_uris.add(parent_uri)
             updated.append(new_msg)
+
+        # One permanent, non-blocking degradation record per unique missing/
+        # deleted/malformed parent — not per affected child — so parent
+        # lookup quality stays diagnosable without multiplying noise or
+        # blocking otherwise-complete primary ingestion.
+        for parent_uri in sorted(missing_parent_uris):
+            failures.append(PlatformFetchFailure(
+                platform="bluesky",
+                kind="parent_missing",
+                message=f"Parent post unavailable or malformed: {parent_uri}",
+                context=f"parent:{parent_uri}",
+                retryable=False,
+                operation_phase="parent_lookup",
+                blocks_watermark_advance=False,
+            ))
 
         resolved_count = sum(
             1 for uri in child_to_parent_uri.values() if uri in resolved_parents
@@ -514,7 +552,13 @@ class BlueskyScanner:
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as e:
-            failure = classify_http_failure("bluesky", e, context="parent_context")
+            failure = classify_http_failure(
+                "bluesky",
+                e,
+                context="parent_context",
+                operation_phase="parent_lookup",
+                blocks_watermark_advance=False,
+            )
             failures.append(failure)
             return resolved, failures
         except Exception as e:
@@ -524,6 +568,8 @@ class BlueskyScanner:
                 message=str(e),
                 context="parent_context",
                 retryable=True,
+                operation_phase="parent_lookup",
+                blocks_watermark_advance=False,
             ))
             return resolved, failures
 
@@ -591,18 +637,33 @@ class BlueskyScanner:
                 return Err(classify_http_failure("bluesky", e2, context=context))
             except Exception as e2:
                 return Err(PlatformFetchFailure(
-                    platform="bluesky", kind="unexpected", message=str(e2), context=context,
+                    platform="bluesky",
+                    kind="unexpected",
+                    message=str(e2),
+                    context=context,
+                    operation_phase="fetch",
+                    blocks_watermark_advance=True,
                 ))
         except Exception as e:
             return Err(PlatformFetchFailure(
-                platform="bluesky", kind="unexpected", message=str(e), context=context,
+                platform="bluesky",
+                kind="unexpected",
+                message=str(e),
+                context=context,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             ))
 
         try:
             return Ok(cast(dict[str, object], resp.json()))
         except Exception as e:
             return Err(PlatformFetchFailure(
-                platform="bluesky", kind="unexpected", message=str(e), context=context,
+                platform="bluesky",
+                kind="unexpected",
+                message=str(e),
+                context=context,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             ))
 
     @staticmethod

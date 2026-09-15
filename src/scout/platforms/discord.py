@@ -105,6 +105,8 @@ class DiscordScanner:
                                     ),
                                     context=f"channel:{ch_id}",
                                     retryable=True,
+                                    operation_phase="fetch",
+                                    blocks_watermark_advance=True,
                                 ))
                                 logger.warning(
                                     "Discord channel %d hit page ceiling (%d messages)",
@@ -148,6 +150,8 @@ class DiscordScanner:
                             message=str(e) or f"No access to channel {ch_id}",
                             context=f"channel:{ch_id}",
                             retryable=False,
+                            operation_phase="fetch",
+                            blocks_watermark_advance=True,
                         ))
                     except discord.NotFound as e:
                         logger.warning("Channel %d not found, skipping", ch_id)
@@ -157,6 +161,8 @@ class DiscordScanner:
                             message=str(e) or f"Channel {ch_id} not found",
                             context=f"channel:{ch_id}",
                             retryable=False,
+                            operation_phase="fetch",
+                            blocks_watermark_advance=True,
                         ))
                     except Exception as e:
                         logger.error("Error fetching channel %d: %s", ch_id, e)
@@ -166,6 +172,8 @@ class DiscordScanner:
                             message=str(e),
                             context=f"channel:{ch_id}",
                             retryable=True,
+                            operation_phase="fetch",
+                            blocks_watermark_advance=True,
                         ))
 
             except Exception as e:
@@ -182,6 +190,8 @@ class DiscordScanner:
                 kind="auth_error",
                 message=str(e),
                 retryable=False,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
         except discord.PrivilegedIntentsRequired as e:
             return PlatformFetchFailure(
@@ -189,12 +199,16 @@ class DiscordScanner:
                 kind="auth_error",
                 message=str(e),
                 retryable=False,
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
         except Exception as e:
             return PlatformFetchFailure(
                 platform="discord",
                 kind="unexpected",
                 message=str(e),
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
 
         if fetch_error:
@@ -202,6 +216,8 @@ class DiscordScanner:
                 platform="discord",
                 kind="unexpected",
                 message=str(fetch_error),
+                operation_phase="fetch",
+                blocks_watermark_advance=True,
             )
 
         # Sort newest-first (deterministic ordering for downstream scoring/tests)

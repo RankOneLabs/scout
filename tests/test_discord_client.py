@@ -309,6 +309,8 @@ class TestFetchMessagesIntegration:
         assert result.failures[0].message == (
             "Page ceiling reached; fetched 2 total messages so far (cap 2)"
         )
+        assert result.failures[0].operation_phase == "fetch"
+        assert result.failures[0].blocks_watermark_advance is True
 
     @pytest.mark.asyncio
     async def test_channel_fetch_error_returns_partial_failure(self) -> None:
@@ -342,6 +344,8 @@ class TestFetchMessagesIntegration:
         assert result.failures[0].kind == "unexpected"
         assert result.failures[0].context == "channel:456"
         assert "channel API failed" in result.failures[0].message
+        assert result.failures[0].operation_phase == "fetch"
+        assert result.failures[0].blocks_watermark_advance is True
 
     @pytest.mark.asyncio
     async def test_dedup_across_channels(self) -> None:

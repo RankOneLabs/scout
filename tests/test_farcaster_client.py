@@ -555,6 +555,10 @@ class TestFetchMessagesIntegration:
         assert isinstance(result, PlatformFetchSuccess)
         assert result.page_ceiling_reached is True
         assert len(result.messages) == 2
+        ceiling_failures = [f for f in result.failures if f.kind == "page_ceiling"]
+        assert len(ceiling_failures) == 1
+        assert ceiling_failures[0].operation_phase == "fetch"
+        assert ceiling_failures[0].blocks_watermark_advance is True
 
     @pytest.mark.asyncio
     async def test_results_sorted_newest_first(
