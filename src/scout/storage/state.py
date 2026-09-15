@@ -16,7 +16,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import asdict
 from datetime import datetime
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 # These used to be TYPE_CHECKING-only imports from paa_declarations and
 # paa_events, deferred because paa_registry imports this module's evaluator
@@ -68,6 +68,9 @@ from scout.storage.registry import RegistryStore
 from scout.storage.scans import CoverageFinalizationError as CoverageFinalizationError
 from scout.storage.scans import CoverageFinalizationResult as CoverageFinalizationResult
 from scout.storage.scans import CoverageOutcome as CoverageOutcome
+from scout.storage.scans import EnvironmentLease as EnvironmentLease
+from scout.storage.scans import LeaseError as LeaseError
+from scout.storage.scans import ProbeRunResult as ProbeRunResult
 from scout.storage.scans import ScanRole as ScanRole
 from scout.storage.scans import ScanStatus as ScanStatus
 from scout.storage.scans import ScanStore, StoredAuthorClassification
@@ -348,6 +351,101 @@ class StateManager:
 
     def bump_environment_lease_fence(self, environment: str) -> int:
         return self._scans.bump_environment_lease_fence(environment)
+
+    # --- Environment lease (delegates to ScanStore) ---
+
+    def acquire_environment_lease(
+        self, environment: str, owner_id: str, *, ttl_seconds: float
+    ) -> Result[EnvironmentLease, LeaseError]:
+        return self._scans.acquire_environment_lease(
+            environment, owner_id, ttl_seconds=ttl_seconds
+        )
+
+    def renew_environment_lease(
+        self, environment: str, owner_id: str, fence: int, *, ttl_seconds: float
+    ) -> Result[EnvironmentLease, LeaseError]:
+        return self._scans.renew_environment_lease(
+            environment, owner_id, fence, ttl_seconds=ttl_seconds
+        )
+
+    def release_environment_lease(self, environment: str, owner_id: str, fence: int) -> bool:
+        return self._scans.release_environment_lease(environment, owner_id, fence)
+
+    def reconcile_abandoned_canonical_owners(
+        self, environment: str, current_fence: int
+    ) -> list[int]:
+        return self._scans.reconcile_abandoned_canonical_owners(environment, current_fence)
+
+    def link_secondary_scan(self, scan_id: int, *, canonical_scan_id: int) -> None:
+        self._scans.link_secondary_scan(scan_id, canonical_scan_id=canonical_scan_id)
+
+    # --- Six-hour probe evidence (delegates to ScanStore) ---
+
+    def start_probe_run(self, environment: str, *, source_count: int) -> int:
+        return self._scans.start_probe_run(environment, source_count=source_count)
+
+    def complete_probe_run(
+        self, probe_run_id: int, *, passed: bool, page_count: int, detail_json: str
+    ) -> None:
+        self._scans.complete_probe_run(
+            probe_run_id, passed=passed, page_count=page_count, detail_json=detail_json
+        )
+
+    def get_probe_run(self, probe_run_id: int) -> ProbeRunResult | None:
+        return self._scans.get_probe_run(probe_run_id)
+
+    def get_latest_passed_probe(
+        self, environment: str, *, max_age_seconds: float
+    ) -> ProbeRunResult | None:
+        return self._scans.get_latest_passed_probe(environment, max_age_seconds=max_age_seconds)
+
+    # --- Recovery audit (delegates to ScanStore) ---
+
+    def record_recovery_operation(
+        self,
+        *,
+        environment: str,
+        operation: Literal["backfill", "cutover", "stale_check"],
+        operator: str,
+        rationale: str,
+        policy: str | None = None,
+        source_evidence: str | None = None,
+        probe_run_id: int | None = None,
+        expected_old_watermark: datetime | None = None,
+        accepted_new_watermark: datetime | None = None,
+        outcome: Literal["accepted", "refused"],
+        detail: str | None = None,
+    ) -> int:
+        return self._scans.record_recovery_operation(
+            environment=environment,
+            operation=operation,
+            operator=operator,
+            rationale=rationale,
+            policy=policy,
+            source_evidence=source_evidence,
+            probe_run_id=probe_run_id,
+            expected_old_watermark=expected_old_watermark,
+            accepted_new_watermark=accepted_new_watermark,
+            outcome=outcome,
+            detail=detail,
+        )
+
+    def cutover_watermark(
+        self,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        expected_old_watermark: datetime | None,
+        accepted_new_watermark: datetime,
+    ) -> Result[int, CoverageFinalizationError]:
+        return self._scans.cutover_watermark(
+            environment=environment,
+            owner_id=owner_id,
+            fence=fence,
+            expected_old_watermark=expected_old_watermark,
+            accepted_new_watermark=accepted_new_watermark,
+        )
 
     def get_source_checkpoint(self, source_key: str) -> SourceCheckpoint | None:
         return self._scans.get_source_checkpoint(source_key)
