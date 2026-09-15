@@ -35,6 +35,13 @@ ScanRole = Literal["canonical_live", "secondary", "rescore"]
 # `coverage_outcome='complete'` (primary coverage fully in), or vice versa.
 CoverageOutcome = Literal["complete", "partial", "blocked"]
 
+# Mirrors scout.errors.OperationPhase. finalize_scan_coverage treats any
+# stored value outside this set — not just the literal 'unknown' — as
+# blocking: an invalid or unrecognized phase carries no evidence that it is
+# safe to ignore, so it must fail closed rather than silently pass through
+# as non-blocking.
+KNOWN_OPERATION_PHASES = frozenset({"fetch", "parent_lookup", "scan", "digest", "unknown"})
+
 
 @dataclass(frozen=True, slots=True)
 class ScanFetchFailure:
@@ -257,12 +264,35 @@ class ScanStore:
         fail-closed "unclassified" pairing on their behalf. A caller with
         no real classification to pass should construct the failure with
         `operation_phase="unknown", blocks_watermark_advance=True`
-        explicitly — `finalize_scan_coverage` always treats an
-        `operation_phase="unknown"` row as blocking regardless of the
-        stored `blocks_watermark_advance` value.
+        explicitly — `finalize_scan_coverage` always treats a stored
+        `operation_phase` outside `KNOWN_OPERATION_PHASES` as blocking
+        regardless of the stored `blocks_watermark_advance` value.
+
+        Raises `ValueError` for a value outside `KNOWN_OPERATION_PHASES`
+        (validated at the write boundary, not just read back later), and
+        for a scan whose coverage was already finalized — a failure
+        recorded after `finalize_scan_coverage` ran could invalidate a
+        durable `coverage_outcome`/`watermark_advanced` decision that
+        nothing would otherwise recompute, so the write is rejected rather
+        than silently coexisting with a now-stale outcome. Call
+        `finalize_scan_coverage` again after resolving/recording the
+        failure to re-derive coverage from the full evidence.
         """
+        if operation_phase not in KNOWN_OPERATION_PHASES:
+            raise ValueError(
+                f"operation_phase {operation_phase!r} is not in KNOWN_OPERATION_PHASES"
+            )
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
+            scan_row = self._conn.execute(
+                "SELECT coverage_outcome FROM scans WHERE id = ?", (scan_id,)
+            ).fetchone()
+            if scan_row is not None and scan_row["coverage_outcome"] is not None:
+                raise ValueError(
+                    f"cannot record a fetch failure for scan {scan_id}: its coverage was "
+                    "already finalized by finalize_scan_coverage; call finalize_scan_coverage "
+                    "again after recording this failure to re-derive coverage_outcome"
+                )
             cursor = self._conn.execute(
                 "INSERT INTO scan_fetch_failures "
                 "(scan_id, platform, context, kind, message, http_status, retry_after, "
@@ -394,7 +424,6 @@ class ScanStore:
         required_source_keys: frozenset[str] = frozenset(),
         covered_source_keys: frozenset[str] = frozenset(),
         coverage_classifier_version: int,
-        now: datetime | None = None,
         expected_coverage_outcome: CoverageOutcome | None = None,
     ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
         """Atomically derive and record whether scan_id's primary coverage
@@ -417,10 +446,12 @@ class ScanStore:
         checked against durable state, and the blocking set is computed
         exclusively from persisted `scan_fetch_failures` rows — callers
         cannot submit a coverage boolean or arbitrary blocker IDs. A
-        deliberately unclassified/unknown failure
-        (`operation_phase='unknown'`) is always treated as blocking,
-        regardless of its own `blocks_watermark_advance` value, so a
-        misclassification can never accidentally read as safe.
+        deliberately unclassified/unknown failure, or any value outside
+        `KNOWN_OPERATION_PHASES`, is always treated as blocking regardless
+        of its own `blocks_watermark_advance` value, so a misclassification
+        can never accidentally read as safe. Calling this again after a
+        prior finalization only ever raises `watermark_advanced` — it can
+        never clear a durable advancement recorded by an earlier call.
 
         Returns `Err` for a structural/eligibility violation (missing scan,
         non-terminal or failed/interrupted status, non-canonical-live role,
@@ -440,8 +471,8 @@ class ScanStore:
 
         with self._uow.begin_immediate():
             row = self._conn.execute(
-                "SELECT status, role, environment, run_kind, fetch_started_at, lease_fence "
-                "FROM scans WHERE id = ?",
+                "SELECT status, role, environment, run_kind, fetch_started_at, lease_fence, "
+                "watermark_advanced FROM scans WHERE id = ?",
                 (scan_id,),
             ).fetchone()
             if row is None:
@@ -465,7 +496,7 @@ class ScanStore:
             if not row["fetch_started_at"]:
                 return _err("scan has no stored fetch_started_at")
             fetch_started_at = datetime.fromisoformat(row["fetch_started_at"])
-            reference_now = now if now is not None else datetime.now(UTC)
+            reference_now = datetime.now(UTC)
             if fetch_started_at > reference_now:
                 return _err(
                     f"future fetch_started_at: {fetch_started_at.isoformat()} "
@@ -478,11 +509,13 @@ class ScanStore:
                     f"{sorted(missing_required)}"
                 )
 
+            valid_non_blocking_phases = KNOWN_OPERATION_PHASES - {"unknown"}
+            placeholders = ", ".join("?" for _ in valid_non_blocking_phases)
             blocking_rows = self._conn.execute(
                 "SELECT id FROM scan_fetch_failures WHERE scan_id = ? "
-                "AND (blocks_watermark_advance = 1 OR operation_phase = 'unknown') "
+                f"AND (blocks_watermark_advance = 1 OR operation_phase NOT IN ({placeholders})) "
                 "ORDER BY id",
-                (scan_id,),
+                (scan_id, *valid_non_blocking_phases),
             ).fetchall()
             blocking_failure_ids = tuple(int(r["id"]) for r in blocking_rows)
             derived_outcome: CoverageOutcome = "blocked" if blocking_failure_ids else "complete"
@@ -504,15 +537,15 @@ class ScanStore:
                     (scan_id, failure_id, created_at),
                 )
 
-            watermark_advanced = False
-            safe_watermark_at: datetime | None = None
-            if derived_outcome == "complete" and advance_watermark:
-                safe_watermark_at = fetch_started_at
-                watermark_advanced = True
+            already_advanced = bool(row["watermark_advanced"])
+            newly_advanced = derived_outcome == "complete" and advance_watermark
+            safe_watermark_at: datetime | None = fetch_started_at if newly_advanced else None
+            watermark_advanced = already_advanced or newly_advanced
 
             self._conn.execute(
                 "UPDATE scans SET coverage_outcome = ?, coverage_classifier_version = ?, "
-                "watermark_advanced = ?, safe_watermark_at = COALESCE(?, safe_watermark_at) "
+                "watermark_advanced = MAX(watermark_advanced, ?), "
+                "safe_watermark_at = COALESCE(?, safe_watermark_at) "
                 "WHERE id = ?",
                 (
                     derived_outcome,
@@ -535,6 +568,30 @@ class ScanStore:
             coverage_classifier_version=coverage_classifier_version,
             blocking_failure_ids=blocking_failure_ids,
         ))
+
+    def mark_coverage_finalization_failed(self, scan_id: int, *, detail: str) -> None:
+        """Force scan_id to `status='failed'` after `finalize_scan_coverage`
+        rejected it post-completion, and record the rejection as an
+        auditable, blocking `scan_fetch_failures` row.
+
+        Unlike `fail_scan`, this updates a scan that already has
+        `completed_at` set — a `finalize_scan_coverage` `Err` means no
+        `coverage_outcome` was ever durably recorded for this scan, so it
+        must not be left looking like an ordinary complete/partial run with
+        silently unmoved coverage.
+        """
+        now = datetime.now(UTC).isoformat()
+        with self._uow.begin():
+            self._conn.execute("UPDATE scans SET status = 'failed' WHERE id = ?", (scan_id,))
+            self._conn.execute(
+                "INSERT INTO scan_fetch_failures "
+                "(scan_id, platform, context, kind, message, retryable, "
+                "operation_phase, blocks_watermark_advance, created_at) "
+                "VALUES (?, 'scan_runner', 'finalize_scan_coverage', "
+                "'coverage_finalization_rejected', ?, 0, 'scan', 1, ?)",
+                (scan_id, detail, now),
+            )
+        logger.error("Scan #%d coverage finalization rejected: %s", scan_id, detail)
 
     # --- Source checkpoints ---
 
@@ -698,15 +755,54 @@ class ScanStore:
         assert row is not None
         return Ok(row)
 
-    def update_source_checkpoint(self, source_key: str, *, checkpoint_at: datetime) -> None:
-        """Advance a source's checkpoint after a scan actually covers it."""
+    def update_source_checkpoint(
+        self, source_key: str, *, checkpoint_at: datetime
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        """Advance an active source's checkpoint after a scan actually
+        covers it.
+
+        Rejects a `source_key` that doesn't name an existing, active source
+        — a typo or a retired source must not silently no-op — and rejects
+        a `checkpoint_at` that would move the cursor backwards or sideways
+        relative to its current stored value, since a late or stale scan
+        must never undo a source's already-recorded progress.
+        """
+        operation = "update_source_checkpoint"
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
+            row = self._conn.execute(
+                "SELECT active, checkpoint_at FROM source_checkpoints WHERE source_key = ?",
+                (source_key,),
+            ).fetchone()
+            if row is None:
+                return Err(SourceCheckpointError(
+                    operation=operation, source_key=source_key,
+                    detail="source checkpoint not found",
+                ))
+            if not row["active"]:
+                return Err(SourceCheckpointError(
+                    operation=operation, source_key=source_key,
+                    detail="source checkpoint is retired",
+                ))
+            current = (
+                datetime.fromisoformat(row["checkpoint_at"]) if row["checkpoint_at"] else None
+            )
+            if current is not None and checkpoint_at <= current:
+                return Err(SourceCheckpointError(
+                    operation=operation, source_key=source_key,
+                    detail=(
+                        f"non-monotonic checkpoint: new={checkpoint_at.isoformat()} "
+                        f"current={current.isoformat()}"
+                    ),
+                ))
             self._conn.execute(
                 "UPDATE source_checkpoints SET checkpoint_at = ?, updated_at = ? "
                 "WHERE source_key = ?",
                 (checkpoint_at.isoformat(), now, source_key),
             )
+        updated = self.get_source_checkpoint(source_key)
+        assert updated is not None
+        return Ok(updated)
 
     @staticmethod
     def _author_identity(platform: str, author_id: str) -> tuple[str, str]:

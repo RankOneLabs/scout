@@ -1600,13 +1600,20 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 status=scan_status,
                                 overflow_count=_overflow,
                             )
-                            if scan_status in ("complete", "partial"):
-                                state.finalize_scan_coverage(
+                            if run_kind == "live" and scan_status in ("complete", "partial"):
+                                match state.finalize_scan_coverage(
                                     scan_id,
                                     environment=SCOUT_ENVIRONMENT,
                                     advance_watermark=advances_watermark,
                                     coverage_classifier_version=1,
-                                )
+                                ):
+                                    case Err(error):
+                                        state.mark_coverage_finalization_failed(
+                                            scan_id, detail=error.detail,
+                                        )
+                                        scan_status = "failed"
+                                    case Ok():
+                                        pass
                             if _overflow > 0:
                                 logger.info(
                                     "Scan outcome: %s | %d scanned, 0 relevant, %d overflow",
@@ -1688,13 +1695,20 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 status=scan_status,
                                 overflow_count=_overflow,
                             )
-                            if scan_status in ("complete", "partial"):
-                                state.finalize_scan_coverage(
+                            if run_kind == "live" and scan_status in ("complete", "partial"):
+                                match state.finalize_scan_coverage(
                                     scan_id,
                                     environment=SCOUT_ENVIRONMENT,
                                     advance_watermark=advances_watermark,
                                     coverage_classifier_version=1,
-                                )
+                                ):
+                                    case Err(error):
+                                        state.mark_coverage_finalization_failed(
+                                            scan_id, detail=error.detail,
+                                        )
+                                        scan_status = "failed"
+                                    case Ok():
+                                        pass
 
                             logger.info(
                                 "Scan outcome: %s | %d scanned, %d relevant, %d overflow",

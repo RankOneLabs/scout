@@ -328,7 +328,6 @@ class StateManager:
         required_source_keys: frozenset[str] = frozenset(),
         covered_source_keys: frozenset[str] = frozenset(),
         coverage_classifier_version: int,
-        now: datetime | None = None,
         expected_coverage_outcome: CoverageOutcome | None = None,
     ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
         return self._scans.finalize_scan_coverage(
@@ -338,9 +337,11 @@ class StateManager:
             required_source_keys=required_source_keys,
             covered_source_keys=covered_source_keys,
             coverage_classifier_version=coverage_classifier_version,
-            now=now,
             expected_coverage_outcome=expected_coverage_outcome,
         )
+
+    def mark_coverage_finalization_failed(self, scan_id: int, *, detail: str) -> None:
+        self._scans.mark_coverage_finalization_failed(scan_id, detail=detail)
 
     def get_environment_lease_fence(self, environment: str) -> int:
         return self._scans.get_environment_lease_fence(environment)
@@ -395,8 +396,10 @@ class StateManager:
     ) -> Result[SourceCheckpoint, SourceCheckpointError]:
         return self._scans.reactivate_source_checkpoint(source_key, reset=reset)
 
-    def update_source_checkpoint(self, source_key: str, *, checkpoint_at: datetime) -> None:
-        self._scans.update_source_checkpoint(source_key, checkpoint_at=checkpoint_at)
+    def update_source_checkpoint(
+        self, source_key: str, *, checkpoint_at: datetime
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        return self._scans.update_source_checkpoint(source_key, checkpoint_at=checkpoint_at)
 
     def save_fetch_failure(
         self,

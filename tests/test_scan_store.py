@@ -387,6 +387,33 @@ class TestSaveFetchFailureClassification:
         assert failures[0]["blocks_watermark_advance"] is False
         _ = failure_id
 
+    def test_rejects_an_operation_phase_outside_the_known_vocabulary(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        with pytest.raises(ValueError, match="KNOWN_OPERATION_PHASES"):
+            in_memory_state.save_fetch_failure(
+                scan_id=scan_id, platform="discord", kind="unexpected", message="boom",
+                operation_phase="bogus", blocks_watermark_advance=False,
+            )
+
+    def test_rejects_a_write_for_a_scan_whose_coverage_was_already_finalized(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
+        in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Ok)
+
+        with pytest.raises(ValueError, match="already finalized"):
+            in_memory_state.save_fetch_failure(
+                scan_id=scan_id, platform="discord", kind="late_failure", message="too late",
+                operation_phase="fetch", blocks_watermark_advance=True,
+            )
+
 
 class TestAdvanceWatermark:
     """The only route that can move safe_watermark_at is
@@ -629,6 +656,57 @@ class TestFinalizeScanCoverage:
         assert isinstance(result, Ok)
         assert result.value.coverage_outcome == "complete"
         assert result.value.watermark_advanced is True
+
+    def test_a_later_non_advancing_finalization_never_clears_watermark_advanced(
+        self, in_memory_state: StateManager
+    ) -> None:
+        """A scan finalized once with advance_watermark=True stays durably
+        marked advanced even if it is finalized again with False, or a new
+        blocking failure is recorded and it re-finalizes as blocked."""
+        scan_id = self._start_eligible_scan(in_memory_state)
+        first = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        assert isinstance(first, Ok)
+        assert first.value.watermark_advanced is True
+
+        second = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=False,
+            coverage_classifier_version=1,
+        )
+        assert isinstance(second, Ok)
+        assert second.value.watermark_advanced is True
+        row = in_memory_state.conn.execute(
+            "SELECT watermark_advanced, safe_watermark_at FROM scans WHERE id = ?", (scan_id,)
+        ).fetchone()
+        assert row["watermark_advanced"] == 1
+        assert row["safe_watermark_at"] is not None
+
+    def test_an_invalid_operation_phase_outside_the_known_vocabulary_blocks(
+        self, in_memory_state: StateManager
+    ) -> None:
+        """A stored operation_phase that is neither a valid phase nor the
+        literal 'unknown' (e.g. corrupted data, a future enum value this
+        code doesn't know about yet) must still fail closed."""
+        scan_id = self._start_eligible_scan(in_memory_state)
+        in_memory_state.conn.execute(
+            "INSERT INTO scan_fetch_failures "
+            "(scan_id, platform, context, kind, message, retryable, "
+            "operation_phase, blocks_watermark_advance, created_at) "
+            "VALUES (?, 'discord', NULL, 'weird', 'garbage phase', 0, 'not_a_real_phase', 0, ?)",
+            (scan_id, datetime.now(UTC).isoformat()),
+        )
+        in_memory_state.commit()
+
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+
+        assert isinstance(result, Ok)
+        assert result.value.coverage_outcome == "blocked"
+        assert result.value.watermark_advanced is False
 
     def test_partial_processing_status_with_only_nonblocking_evidence_still_advances(
         self, in_memory_state: StateManager
@@ -998,3 +1076,65 @@ class TestSourceCheckpoints:
     ) -> None:
         result = in_memory_state.reactivate_source_checkpoint("nonexistent:source:x")
         assert isinstance(result, Err)
+
+    def test_returns_ok_with_the_updated_checkpoint_on_a_valid_advance(
+        self, in_memory_state: StateManager
+    ) -> None:
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:333", platform="discord", source_kind="channel",
+            provider_key="333",
+        )
+        advanced_at = datetime(2026, 5, 1, tzinfo=UTC)
+        result = in_memory_state.update_source_checkpoint(
+            "discord:channel:333", checkpoint_at=advanced_at
+        )
+        assert isinstance(result, Ok)
+        assert result.value.checkpoint_at == advanced_at
+
+    def test_rejects_an_update_for_a_nonexistent_source(
+        self, in_memory_state: StateManager
+    ) -> None:
+        result = in_memory_state.update_source_checkpoint(
+            "nonexistent:source:x", checkpoint_at=datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        assert isinstance(result, Err)
+        assert "not found" in result.error.detail
+
+    def test_rejects_an_update_for_a_retired_source(
+        self, in_memory_state: StateManager
+    ) -> None:
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:444", platform="discord", source_kind="channel",
+            provider_key="444",
+        )
+        in_memory_state.retire_source_checkpoint("discord:channel:444")
+
+        result = in_memory_state.update_source_checkpoint(
+            "discord:channel:444", checkpoint_at=datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        assert isinstance(result, Err)
+        assert "retired" in result.error.detail
+
+    def test_rejects_a_non_monotonic_checkpoint(self, in_memory_state: StateManager) -> None:
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:555", platform="discord", source_kind="channel",
+            provider_key="555",
+        )
+        in_memory_state.update_source_checkpoint(
+            "discord:channel:555", checkpoint_at=datetime(2026, 6, 1, tzinfo=UTC)
+        )
+
+        earlier_result = in_memory_state.update_source_checkpoint(
+            "discord:channel:555", checkpoint_at=datetime(2026, 5, 1, tzinfo=UTC)
+        )
+        assert isinstance(earlier_result, Err)
+        assert "non-monotonic" in earlier_result.error.detail
+
+        same_result = in_memory_state.update_source_checkpoint(
+            "discord:channel:555", checkpoint_at=datetime(2026, 6, 1, tzinfo=UTC)
+        )
+        assert isinstance(same_result, Err)
+
+        current = in_memory_state.get_source_checkpoint("discord:channel:555")
+        assert current is not None
+        assert current.checkpoint_at == datetime(2026, 6, 1, tzinfo=UTC)
