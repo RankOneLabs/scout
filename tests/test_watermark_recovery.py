@@ -69,12 +69,18 @@ class TestStaleCheck:
         self, db_path: str, capsys: pytest.CaptureFixture
     ) -> None:
         with StateManager(db_path=db_path, init_schema=False) as state:
-            accepted = datetime.now(UTC)
+            accepted = datetime.now(UTC) - timedelta(minutes=1)
             acquired = state.acquire_environment_lease("production", "owner", ttl_seconds=30)
             assert acquired.value is not None
+            probe_id = state.start_probe_run(
+                "production", source_count=1, window_hours=6.0, limits_json="{}",
+            )
+            state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
             state.cutover_watermark(
                 environment="production", owner_id="owner", fence=acquired.value.fence,
+                operator="steve", rationale="seed", policy="p", source_evidence="e",
                 expected_old_watermark=None, accepted_new_watermark=accepted,
+                probe_max_age_seconds=3600,
             )
 
         exit_code = watermark_cli.run_watermark(_stale_check_args(db_path))
@@ -88,9 +94,16 @@ class TestStaleCheck:
         with StateManager(db_path=db_path, init_schema=False) as state:
             acquired = state.acquire_environment_lease("development", "owner", ttl_seconds=30)
             assert acquired.value is not None
+            probe_id = state.start_probe_run(
+                "development", source_count=1, window_hours=6.0, limits_json="{}",
+            )
+            state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
             state.cutover_watermark(
                 environment="development", owner_id="owner", fence=acquired.value.fence,
-                expected_old_watermark=None, accepted_new_watermark=datetime.now(UTC),
+                operator="steve", rationale="seed", policy="p", source_evidence="e",
+                expected_old_watermark=None,
+                accepted_new_watermark=datetime.now(UTC) - timedelta(minutes=1),
+                probe_max_age_seconds=3600,
             )
 
         exit_code = watermark_cli.run_watermark(_stale_check_args(db_path))
@@ -101,7 +114,9 @@ class TestProbe:
     def test_probe_with_no_platforms_configured_passes_and_records_evidence(
         self, db_path: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
     ) -> None:
-        monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
 
         async def fake_fetch(*_args: object, **_kwargs: object):
             return PlatformsFetch([], [])
@@ -122,7 +137,9 @@ class TestProbe:
     def test_probe_never_touches_source_checkpoints(
         self, db_path: str, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
 
         async def fake_fetch(*_args: object, **_kwargs: object):
             return PlatformsFetch([], [])
@@ -145,7 +162,9 @@ class TestProbe:
     def test_probe_releases_lease_on_completion(
         self, db_path: str, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
 
         async def fake_fetch(*_args: object, **_kwargs: object):
             return PlatformsFetch([], [])
@@ -164,7 +183,9 @@ class TestBackfill:
     def test_backfill_advances_watermark_on_clean_fetch(
         self, db_path: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
     ) -> None:
-        monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
 
         async def fake_fetch(*_args: object, **_kwargs: object):
             return PlatformsFetch([], [])
@@ -180,7 +201,9 @@ class TestBackfill:
     def test_backfill_records_an_accepted_audit_row(
         self, db_path: str, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
 
         async def fake_fetch(*_args: object, **_kwargs: object):
             return PlatformsFetch([], [])
@@ -217,7 +240,7 @@ class TestCutover:
     def test_cutover_without_a_recent_probe_is_refused(
         self, db_path: str, capsys: pytest.CaptureFixture,
     ) -> None:
-        accepted = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        accepted = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         exit_code = watermark_cli.run_watermark(_cutover_args(db_path, accepted_new=accepted))
         assert exit_code == watermark_cli.EXIT_SOURCE_OR_PROBE_FAILURE
         payload = json.loads(capsys.readouterr().out)
@@ -234,10 +257,12 @@ class TestCutover:
         self, db_path: str, capsys: pytest.CaptureFixture,
     ) -> None:
         with StateManager(db_path=db_path, init_schema=False) as state:
-            probe_id = state.start_probe_run("production", source_count=1)
+            probe_id = state.start_probe_run(
+                "production", source_count=1, window_hours=6.0, limits_json="{}",
+            )
             state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
 
-        accepted = datetime.now(UTC)
+        accepted = datetime.now(UTC) - timedelta(minutes=1)
         exit_code = watermark_cli.run_watermark(
             _cutover_args(db_path, accepted_new=accepted.isoformat())
         )
@@ -255,12 +280,14 @@ class TestCutover:
 
     def test_cutover_refuses_stale_expected_old(self, db_path: str) -> None:
         with StateManager(db_path=db_path, init_schema=False) as state:
-            probe_id = state.start_probe_run("production", source_count=1)
+            probe_id = state.start_probe_run(
+                "production", source_count=1, window_hours=6.0, limits_json="{}",
+            )
             state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
 
         exit_code = watermark_cli.run_watermark(
             _cutover_args(
-                db_path, accepted_new=datetime.now(UTC).isoformat(),
+                db_path, accepted_new=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
                 expected_old=datetime(2020, 1, 1, tzinfo=UTC).isoformat(),
             )
         )
@@ -272,6 +299,8 @@ class TestCutover:
             assert held.value is not None
 
             exit_code = watermark_cli.run_watermark(
-                _cutover_args(db_path, accepted_new=datetime.now(UTC).isoformat())
+                _cutover_args(
+                    db_path, accepted_new=(datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+                )
             )
             assert exit_code == watermark_cli.EXIT_LOCK_CONTENTION

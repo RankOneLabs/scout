@@ -22,6 +22,13 @@ from scout.storage.state import StateManager
 logger = logging.getLogger("scout.scanning.lease")
 
 
+class LeaseLostError(RuntimeError):
+    """Raised at a scan checkpoint once this process no longer holds its
+    environment lease — the lease-bound storage gates would refuse any
+    further advancement anyway; raising stops the work promptly instead of
+    letting it run to a guaranteed refusal."""
+
+
 def generate_owner_id() -> str:
     """A process-unique lease owner identity. A random uuid4 is sufficient
     to distinguish concurrent workers without leaking host/pid details

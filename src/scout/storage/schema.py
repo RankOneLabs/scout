@@ -134,6 +134,8 @@ LEASE_AND_RECOVERY_SCHEMA_STATEMENTS: tuple[str, ...] = (
         passed INTEGER,
         source_count INTEGER NOT NULL DEFAULT 0,
         page_count INTEGER NOT NULL DEFAULT 0,
+        window_hours REAL NOT NULL DEFAULT 0,
+        limits_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(limits_json)),
         detail_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(detail_json)),
         created_at TEXT NOT NULL
     )""",

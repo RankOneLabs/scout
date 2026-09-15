@@ -1231,7 +1231,7 @@ async def score_messages(
     return digest, relevant_count, digest_ok, processing_failures
 
 
-def build_platform_scanners() -> tuple[
+def build_platform_scanners(max_pages: int | None = None) -> tuple[
     DiscordScanner | None, FarcasterScanner | None, BlueskyScanner | None
 ]:
     """Construct every platform client whose credentials are configured.
@@ -1240,13 +1240,13 @@ def build_platform_scanners() -> tuple[
     discord_scanner: DiscordScanner | None = None
     farcaster_scanner: FarcasterScanner | None = None
     bluesky_scanner: BlueskyScanner | None = None
-
     if DISCORD_BOT_TOKEN and DISCORD_SERVER_ID and DISCORD_CHANNEL_IDS:
         discord_scanner = DiscordScanner(
             token=DISCORD_BOT_TOKEN,
             server_id=DISCORD_SERVER_ID,
             channel_ids=DISCORD_CHANNEL_IDS,
             max_messages=MAX_MESSAGES_PER_CHANNEL,
+            max_pages=max_pages,
         )
         logger.info("Discord scanner enabled (%d channels)", len(DISCORD_CHANNEL_IDS))
 
@@ -1255,6 +1255,7 @@ def build_platform_scanners() -> tuple[
             api_key=NEYNAR_API_KEY,
             channel_ids=FARCASTER_CHANNEL_IDS or None,
             max_results_per_query=FARCASTER_MAX_RESULTS_PER_QUERY,
+            max_pages=max_pages,
         )
         channels_info = f", channels: {FARCASTER_CHANNEL_IDS}" if FARCASTER_CHANNEL_IDS else ""
         logger.info("Farcaster scanner enabled (keyword search%s)", channels_info)
@@ -1263,6 +1264,7 @@ def build_platform_scanners() -> tuple[
         bluesky_scanner = BlueskyScanner(
             feed_uris=BLUESKY_FEED_URIS or None,
             max_results_per_query=BLUESKY_MAX_RESULTS_PER_QUERY,
+            max_pages=max_pages,
         )
         logger.info("Bluesky scanner enabled (feeds: %d)", len(BLUESKY_FEED_URIS))
 
@@ -1388,6 +1390,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                     # set for a --rescore/--rescore-failed invocation, which
                     # has no live fetch and so no canonical owner.
                     canonical_scan_id: int | None = None
+                    required_source_keys: frozenset[str] = frozenset()
+                    covered_source_keys: frozenset[str] = frozenset()
                     _overflow = 0
 
                     if args.rescore_failed:
@@ -1416,9 +1420,14 @@ async def main_loop(args: argparse.Namespace) -> None:
                         # clients are ever awaited: a crash or cancellation
                         # during fetch still leaves a recoverable, auditable
                         # attempt behind (decision: pre-I/O canonical owner).
-                        canonical_scan_id = coverage_lifecycle.commit_canonical_owner(
-                            state, environment=SCOUT_ENVIRONMENT, fetch_started_at=fetch_started_at,
-                        )
+                        match coverage_lifecycle.commit_canonical_owner(
+                            state, environment=SCOUT_ENVIRONMENT, owner_id=owner_id,
+                            fence=lease_fence, fetch_started_at=fetch_started_at,
+                        ):
+                            case Ok(committed_scan_id):
+                                canonical_scan_id = committed_scan_id
+                            case Err(lease_error):
+                                raise lease_lifecycle.LeaseLostError(lease_error.detail)
                         active_scan_id = canonical_scan_id
                         fetched = await fetch_messages(
                             discord_scanner,
@@ -1429,6 +1438,11 @@ async def main_loop(args: argparse.Namespace) -> None:
                         )
                         all_messages = fetched.messages
                         fetch_failures = list(fetched.failures)
+                        required_source_keys, covered_source_keys = (
+                            coverage_lifecycle.register_source_outcomes(
+                                state, fetched.source_outcomes
+                            )
+                        )
 
                         all_unseen = (
                             [
@@ -1471,7 +1485,10 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 state,
                                 canonical_scan_id,
                                 environment=SCOUT_ENVIRONMENT,
+                                owner_id=owner_id,
                                 advance_watermark=advances_watermark,
+                                required_source_keys=required_source_keys,
+                                covered_source_keys=covered_source_keys,
                             ):
                                 case Err(finalize_error):
                                     logger.error(
@@ -1704,7 +1721,10 @@ async def main_loop(args: argparse.Namespace) -> None:
                                     state,
                                     scan_id,
                                     environment=SCOUT_ENVIRONMENT,
+                                    owner_id=owner_id,
                                     advance_watermark=advances_watermark,
+                                    required_source_keys=required_source_keys,
+                                    covered_source_keys=covered_source_keys,
                                 ):
                                     case Err(_error):
                                         scan_status = "failed"
@@ -1800,7 +1820,10 @@ async def main_loop(args: argparse.Namespace) -> None:
                                     state,
                                     scan_id,
                                     environment=SCOUT_ENVIRONMENT,
+                                    owner_id=owner_id,
                                     advance_watermark=advances_watermark,
+                                    required_source_keys=required_source_keys,
+                                    covered_source_keys=covered_source_keys,
                                 ):
                                     case Err(_error):
                                         scan_status = "failed"

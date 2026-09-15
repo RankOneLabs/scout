@@ -1,7 +1,7 @@
 """Canonical live fetch-owner lifecycle: commit exactly one owner scan
-before any platform I/O, and finalize it through durable coverage evidence
-on every terminal path — success, empty success, processing exception, or
-cancellation.
+before any platform I/O, bound to the holding lease, and finalize it
+through durable coverage evidence on every terminal path — success, empty
+success, processing exception, or cancellation.
 
 Thin orchestration over `StateManager`'s coverage/lease primitives
 (scout.storage.scans); no platform or scoring knowledge lives here.
@@ -10,10 +10,17 @@ Thin orchestration over `StateManager`'s coverage/lease primitives
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 
+from scout.errors import SourceFetchOutcome
 from scout.result import Err, Ok, Result
-from scout.storage.scans import CoverageFinalizationError, CoverageFinalizationResult, ScanRole
+from scout.storage.scans import (
+    CoverageFinalizationError,
+    CoverageFinalizationResult,
+    LeaseError,
+    ScanRole,
+)
 from scout.storage.state import StateManager
 
 logger = logging.getLogger("scout.scanning.coverage")
@@ -23,18 +30,22 @@ def commit_canonical_owner(
     state: StateManager,
     *,
     environment: str,
+    owner_id: str,
+    fence: int,
     fetch_started_at: datetime,
-) -> int:
+) -> Result[int, LeaseError]:
     """Durably commit exactly one canonical live fetch-owner scan,
-    immediately before calling the platform clients. The returned scan_id
-    already carries the environment's current lease fence — a crash or
-    cancellation during the platform I/O that follows still leaves this
-    row behind as a recoverable, auditable attempt."""
-    return state.start_scan(
-        fetch_started_at=fetch_started_at,
+    immediately before calling the platform clients, in the same
+    transaction that re-verifies `owner_id` still holds `environment`'s
+    lease at `fence`, unexpired. A crash or cancellation during the
+    platform I/O that follows still leaves this row behind as a
+    recoverable, auditable attempt; a worker that already lost its lease
+    gets `Err` and never becomes an owner."""
+    return state.start_canonical_owner_scan(
         environment=environment,
-        run_kind="live",
-        role="canonical_live",
+        owner_id=owner_id,
+        fence=fence,
+        fetch_started_at=fetch_started_at,
     )
 
 
@@ -62,6 +73,30 @@ def commit_linked_secondary(
     return scan_id
 
 
+def register_source_outcomes(
+    state: StateManager, source_outcomes: Sequence[SourceFetchOutcome]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Get-or-create a checkpoint row for every source the fetch attempted
+    (new sources start cold, per the coverage foundation) and derive the
+    (required, covered) normalized source-key sets finalization consumes:
+    required = attempted sources whose checkpoint is active and required;
+    covered = attempted sources whose pagination ended cleanly."""
+    required: set[str] = set()
+    covered: set[str] = set()
+    for outcome in source_outcomes:
+        checkpoint = state.ensure_source_checkpoint(
+            outcome.source_key,
+            platform=outcome.platform,
+            source_kind=outcome.source_kind,
+            provider_key=outcome.provider_key,
+        )
+        if checkpoint.active and checkpoint.required:
+            required.add(outcome.source_key)
+        if outcome.covered:
+            covered.add(outcome.source_key)
+    return frozenset(required), frozenset(covered)
+
+
 def record_interruption(
     state: StateManager,
     scan_id: int,
@@ -72,11 +107,10 @@ def record_interruption(
 ) -> None:
     """Persist a terminal, blocking outcome for a canonical owner that hit
     a processing exception or cancellation during platform I/O or
-    scoring. Safe to call even after the owner's lease fence has been
-    superseded (fenced out): the row still becomes durably terminal with
-    auditable evidence, and finalize_scan_coverage will separately refuse
-    it on the stale-fence check rather than ever advancing the watermark
-    from a lost owner's work."""
+    scoring. Safe to call even after the owner's lease has been lost: the
+    row still becomes durably terminal with auditable evidence, and the
+    lease-bound finalization gate separately refuses ever advancing the
+    watermark from a lost owner's work."""
     state.fail_scan(
         scan_id,
         messages_scanned,
@@ -91,18 +125,25 @@ def finalize_owner(
     scan_id: int,
     *,
     environment: str,
+    owner_id: str,
     advance_watermark: bool,
+    required_source_keys: frozenset[str] = frozenset(),
+    covered_source_keys: frozenset[str] = frozenset(),
     coverage_classifier_version: int = 1,
 ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
-    """Finalize a canonical owner's durable coverage, forcing the scan to
+    """Finalize a canonical owner's durable coverage — watermark and every
+    covered source checkpoint move together, atomically, only while
+    `owner_id` still holds the lease — forcing the scan to
     `status='failed'` with auditable evidence if finalization itself is
-    refused (a stale fence, a non-terminal status, or any other
-    eligibility gate) — never leaving a scan silently uncommitted between
+    refused, never leaving a scan silently uncommitted between
     `complete_scan` and coverage finalization."""
     result = state.finalize_scan_coverage(
         scan_id,
         environment=environment,
         advance_watermark=advance_watermark,
+        owner_id=owner_id,
+        required_source_keys=required_source_keys,
+        covered_source_keys=covered_source_keys,
         coverage_classifier_version=coverage_classifier_version,
     )
     match result:
@@ -118,15 +159,25 @@ def finalize_empty_success(
     scan_id: int,
     *,
     environment: str,
+    owner_id: str,
     advance_watermark: bool,
+    required_source_keys: frozenset[str] = frozenset(),
+    covered_source_keys: frozenset[str] = frozenset(),
 ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
     """Complete and finalize a zero-message, fully covered live fetch.
 
     The caller must not have constructed a tracer, feedback loop, model
     client, or digest for this scan — a fully empty fetch is a valid
-    advancing owner on its own, with no scoring resources needed.
+    advancing owner on its own, and its covered sources' checkpoints
+    advance in the same transaction as the watermark.
     """
     state.complete_scan(scan_id, 0, 0, status="complete", overflow_count=0)
     return finalize_owner(
-        state, scan_id, environment=environment, advance_watermark=advance_watermark,
+        state,
+        scan_id,
+        environment=environment,
+        owner_id=owner_id,
+        advance_watermark=advance_watermark,
+        required_source_keys=required_source_keys,
+        covered_source_keys=covered_source_keys,
     )

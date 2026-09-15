@@ -68,6 +68,8 @@ from scout.storage.registry import RegistryStore
 from scout.storage.scans import CoverageFinalizationError as CoverageFinalizationError
 from scout.storage.scans import CoverageFinalizationResult as CoverageFinalizationResult
 from scout.storage.scans import CoverageOutcome as CoverageOutcome
+from scout.storage.scans import CutoverRefusal as CutoverRefusal
+from scout.storage.scans import CutoverResult as CutoverResult
 from scout.storage.scans import EnvironmentLease as EnvironmentLease
 from scout.storage.scans import LeaseError as LeaseError
 from scout.storage.scans import ProbeRunResult as ProbeRunResult
@@ -328,6 +330,7 @@ class StateManager:
         *,
         environment: str,
         advance_watermark: bool,
+        owner_id: str | None = None,
         required_source_keys: frozenset[str] = frozenset(),
         covered_source_keys: frozenset[str] = frozenset(),
         coverage_classifier_version: int,
@@ -337,6 +340,7 @@ class StateManager:
             scan_id,
             environment=environment,
             advance_watermark=advance_watermark,
+            owner_id=owner_id,
             required_source_keys=required_source_keys,
             covered_source_keys=covered_source_keys,
             coverage_classifier_version=coverage_classifier_version,
@@ -371,6 +375,19 @@ class StateManager:
     def release_environment_lease(self, environment: str, owner_id: str, fence: int) -> bool:
         return self._scans.release_environment_lease(environment, owner_id, fence)
 
+    def start_canonical_owner_scan(
+        self,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        fetch_started_at: datetime,
+    ) -> Result[int, LeaseError]:
+        return self._scans.start_canonical_owner_scan(
+            environment=environment, owner_id=owner_id, fence=fence,
+            fetch_started_at=fetch_started_at,
+        )
+
     def reconcile_abandoned_canonical_owners(
         self, environment: str, current_fence: int
     ) -> list[int]:
@@ -381,8 +398,18 @@ class StateManager:
 
     # --- Six-hour probe evidence (delegates to ScanStore) ---
 
-    def start_probe_run(self, environment: str, *, source_count: int) -> int:
-        return self._scans.start_probe_run(environment, source_count=source_count)
+    def start_probe_run(
+        self,
+        environment: str,
+        *,
+        source_count: int,
+        window_hours: float,
+        limits_json: str,
+    ) -> int:
+        return self._scans.start_probe_run(
+            environment, source_count=source_count, window_hours=window_hours,
+            limits_json=limits_json,
+        )
 
     def complete_probe_run(
         self, probe_run_id: int, *, passed: bool, page_count: int, detail_json: str
@@ -436,19 +463,34 @@ class StateManager:
         environment: str,
         owner_id: str,
         fence: int,
+        operator: str,
+        rationale: str,
+        policy: str,
+        source_evidence: str,
         expected_old_watermark: datetime | None,
         accepted_new_watermark: datetime,
-    ) -> Result[int, CoverageFinalizationError]:
+        probe_max_age_seconds: float,
+        probe_min_window_hours: float = 6.0,
+    ) -> Result[CutoverResult, CutoverRefusal]:
         return self._scans.cutover_watermark(
             environment=environment,
             owner_id=owner_id,
             fence=fence,
+            operator=operator,
+            rationale=rationale,
+            policy=policy,
+            source_evidence=source_evidence,
             expected_old_watermark=expected_old_watermark,
             accepted_new_watermark=accepted_new_watermark,
+            probe_max_age_seconds=probe_max_age_seconds,
+            probe_min_window_hours=probe_min_window_hours,
         )
 
     def get_source_checkpoint(self, source_key: str) -> SourceCheckpoint | None:
         return self._scans.get_source_checkpoint(source_key)
+
+    def list_source_checkpoints(self, *, active_only: bool = True) -> list[SourceCheckpoint]:
+        return self._scans.list_source_checkpoints(active_only=active_only)
 
     def ensure_source_checkpoint(
         self,

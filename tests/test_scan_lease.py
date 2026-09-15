@@ -233,51 +233,279 @@ class TestReconcileAbandonedCanonicalOwners:
         assert isinstance(result, Err)
 
 
+def _passed_probe(
+    state: StateManager, environment: str = "production", window_hours: float = 6.0
+) -> int:
+    probe_id = state.start_probe_run(
+        environment, source_count=1, window_hours=window_hours, limits_json="{}",
+    )
+    state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+    return probe_id
+
+
+def _cutover(state: StateManager, fence: int, **overrides):
+    kwargs = dict(
+        environment="production", owner_id="owner-a", fence=fence,
+        operator="steve", rationale="accept the gap", policy="policy-v1",
+        source_evidence="status page", expected_old_watermark=None,
+        accepted_new_watermark=datetime.now(UTC) - timedelta(minutes=1),
+        probe_max_age_seconds=3600,
+    )
+    kwargs.update(overrides)
+    return state.cutover_watermark(**kwargs)
+
+
+def _audit_rows(state: StateManager) -> list[sqlite3.Row]:
+    return state.db.execute(
+        "SELECT operation, outcome, detail, probe_run_id FROM recovery_operations ORDER BY id"
+    ).fetchall()
+
+
 class TestCutoverWatermark:
-    def test_cutover_requires_current_lease(self, in_memory_state: StateManager) -> None:
-        acquired = _acquire(in_memory_state, "production", "owner-a")
-        assert isinstance(acquired, Ok)
-        result = in_memory_state.cutover_watermark(
-            environment="production",
-            owner_id="owner-a",
-            fence=acquired.value.fence + 1,
-            expected_old_watermark=None,
-            accepted_new_watermark=datetime.now(UTC),
-        )
-        assert isinstance(result, Err)
-
-    def test_cutover_refuses_stale_expected_old(self, in_memory_state: StateManager) -> None:
-        acquired = _acquire(in_memory_state, "production", "owner-a")
-        assert isinstance(acquired, Ok)
-        result = in_memory_state.cutover_watermark(
-            environment="production",
-            owner_id="owner-a",
-            fence=acquired.value.fence,
-            expected_old_watermark=datetime.now(UTC),
-            accepted_new_watermark=datetime.now(UTC),
-        )
-        assert isinstance(result, Err)
-
-    def test_successful_cutover_is_immediately_the_expected_cursor(
+    def test_refuses_without_the_current_lease_and_audits_it(
         self, in_memory_state: StateManager
     ) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        new_watermark = datetime.now(UTC)
-        result = in_memory_state.cutover_watermark(
-            environment="production",
-            owner_id="owner-a",
-            fence=acquired.value.fence,
-            expected_old_watermark=None,
-            accepted_new_watermark=new_watermark,
+        _passed_probe(in_memory_state)
+        result = _cutover(in_memory_state, acquired.value.fence + 1)
+        assert isinstance(result, Err)
+        assert result.error.reason == "lock_not_held"
+        rows = _audit_rows(in_memory_state)
+        assert [r["outcome"] for r in rows] == ["refused"]
+
+    def test_refuses_blank_metadata(self, in_memory_state: StateManager) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        _passed_probe(in_memory_state)
+        result = _cutover(in_memory_state, acquired.value.fence, rationale="   ")
+        assert isinstance(result, Err)
+        assert result.error.reason == "missing_metadata"
+
+    def test_refuses_naive_or_future_accepted_new(self, in_memory_state: StateManager) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        _passed_probe(in_memory_state)
+        naive = _cutover(
+            in_memory_state, acquired.value.fence,
+            accepted_new_watermark=datetime.now().replace(tzinfo=None),
+        )
+        assert isinstance(naive, Err) and naive.error.reason == "invalid_accepted_new"
+        future = _cutover(
+            in_memory_state, acquired.value.fence,
+            accepted_new_watermark=datetime.now(UTC) + timedelta(hours=1),
+        )
+        assert isinstance(future, Err) and future.error.reason == "invalid_accepted_new"
+
+    def test_refuses_without_a_recent_six_hour_probe(self, in_memory_state: StateManager) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        _passed_probe(in_memory_state, window_hours=1.0)
+        result = _cutover(in_memory_state, acquired.value.fence)
+        assert isinstance(result, Err)
+        assert result.error.reason == "missing_probe"
+
+    def test_refuses_stale_expected_old_and_moves_nothing(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        _passed_probe(in_memory_state)
+        result = _cutover(
+            in_memory_state, acquired.value.fence,
+            expected_old_watermark=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        assert isinstance(result, Err)
+        assert result.error.reason == "stale_expected_old"
+        assert in_memory_state.get_last_scan_timestamp(environment="production") is None
+
+    def test_success_is_immediately_the_cursor_with_probe_linked_audit(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        probe_id = _passed_probe(in_memory_state)
+        accepted = datetime.now(UTC) - timedelta(minutes=1)
+        result = _cutover(in_memory_state, acquired.value.fence, accepted_new_watermark=accepted)
+        assert isinstance(result, Ok)
+        assert result.value.probe_run_id == probe_id
+        assert in_memory_state.get_last_scan_timestamp(environment="production") == accepted
+        rows = _audit_rows(in_memory_state)
+        assert [(r["operation"], r["outcome"], r["probe_run_id"]) for r in rows] == [
+            ("cutover", "accepted", probe_id)
+        ]
+
+    def test_accepted_new_must_move_forward_past_expected_old(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        _passed_probe(in_memory_state)
+        first = _cutover(
+            in_memory_state, acquired.value.fence,
+            accepted_new_watermark=datetime.now(UTC) - timedelta(hours=2),
+        )
+        assert isinstance(first, Ok)
+        backwards = _cutover(
+            in_memory_state, acquired.value.fence,
+            expected_old_watermark=first.value.accepted_new_watermark,
+            accepted_new_watermark=first.value.accepted_new_watermark - timedelta(hours=1),
+        )
+        assert isinstance(backwards, Err)
+        assert backwards.error.reason == "invalid_accepted_new"
+
+
+class TestLeaseBoundOwnerCreationAndAdvancement:
+    def test_canonical_owner_creation_requires_the_held_lease(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        wrong_owner = in_memory_state.start_canonical_owner_scan(
+            environment="production", owner_id="owner-b", fence=acquired.value.fence,
+            fetch_started_at=datetime.now(UTC),
+        )
+        assert isinstance(wrong_owner, Err)
+        stale_fence = in_memory_state.start_canonical_owner_scan(
+            environment="production", owner_id="owner-a", fence=acquired.value.fence - 1,
+            fetch_started_at=datetime.now(UTC),
+        )
+        assert isinstance(stale_fence, Err)
+        ok = in_memory_state.start_canonical_owner_scan(
+            environment="production", owner_id="owner-a", fence=acquired.value.fence,
+            fetch_started_at=datetime.now(UTC),
+        )
+        assert isinstance(ok, Ok)
+        row = in_memory_state.db.execute(
+            "SELECT role, lease_fence FROM scans WHERE id = ?", (ok.value,)
+        ).fetchone()
+        assert (row["role"], row["lease_fence"]) == ("canonical_live", acquired.value.fence)
+
+    def test_expired_owner_cannot_create_a_canonical_owner(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        in_memory_state.db.execute(
+            "UPDATE environment_leases SET expires_at = ? WHERE environment = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "production"),
+        )
+        in_memory_state.db.commit()
+        result = in_memory_state.start_canonical_owner_scan(
+            environment="production", owner_id="owner-a", fence=acquired.value.fence,
+            fetch_started_at=datetime.now(UTC),
+        )
+        assert isinstance(result, Err)
+
+    def _owned_complete_scan(self, state: StateManager) -> tuple[int, int]:
+        acquired = _acquire(state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        created = state.start_canonical_owner_scan(
+            environment="production", owner_id="owner-a", fence=acquired.value.fence,
+            fetch_started_at=datetime.now(UTC) - timedelta(minutes=5),
+        )
+        assert isinstance(created, Ok)
+        state.complete_scan(created.value, 0, 0, status="complete")
+        return created.value, acquired.value.fence
+
+    def test_advancement_refused_for_a_matching_fence_whose_lease_expired(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        in_memory_state.db.execute(
+            "UPDATE environment_leases SET expires_at = ? WHERE environment = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "production"),
+        )
+        in_memory_state.db.commit()
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner-a",
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Err)
+        assert "lease" in result.error.detail
+
+    def test_advancement_refused_without_an_owner(self, in_memory_state: StateManager) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Err)
+
+    def test_coverage_read_without_advancement_needs_no_owner(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=False,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Ok)
-        assert in_memory_state.get_last_scan_timestamp(environment="production") == new_watermark
+        assert result.value.watermark_advanced is False
+
+    def test_covered_source_checkpoints_advance_atomically_with_the_watermark(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        for key in ("discord:channel:1", "discord:channel:2"):
+            in_memory_state.ensure_source_checkpoint(
+                key, platform="discord", source_kind="channel", provider_key=key[-1],
+            )
+        in_memory_state.retire_source_checkpoint("discord:channel:2")
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner-a",
+            required_source_keys=frozenset({"discord:channel:1"}),
+            covered_source_keys=frozenset({"discord:channel:1", "discord:channel:2"}),
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Ok)
+        assert result.value.advanced_source_keys == ("discord:channel:1",)
+        active = in_memory_state.get_source_checkpoint("discord:channel:1")
+        retired = in_memory_state.get_source_checkpoint("discord:channel:2")
+        assert active is not None and active.checkpoint_at == result.value.safe_watermark_at
+        assert retired is not None and retired.checkpoint_at is None
+
+    def test_blocked_outcome_never_advances_source_checkpoints(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:1", platform="discord", source_kind="channel", provider_key="1",
+        )
+        in_memory_state.save_fetch_failure(
+            scan_id, platform="discord", kind="page_ceiling", message="ceiling",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner-a",
+            required_source_keys=frozenset({"discord:channel:1"}),
+            covered_source_keys=frozenset(),
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Ok)
+        assert result.value.coverage_outcome == "blocked"
+        checkpoint = in_memory_state.get_source_checkpoint("discord:channel:1")
+        assert checkpoint is not None and checkpoint.checkpoint_at is None
+
+    def test_missing_required_source_without_evidence_is_refused(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner-a",
+            required_source_keys=frozenset({"discord:channel:1"}),
+            covered_source_keys=frozenset(),
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Err)
+        assert "required-source" in result.error.detail
 
 
 class TestProbeAndRecoveryAudit:
     def test_probe_run_lifecycle(self, in_memory_state: StateManager) -> None:
-        probe_id = in_memory_state.start_probe_run("production", source_count=3)
+        probe_id = in_memory_state.start_probe_run(
+            "production", window_hours=6.0, limits_json="{}", source_count=3,
+        )
         in_memory_state.complete_probe_run(
             probe_id, passed=True, page_count=5, detail_json='{"ok": true}'
         )
@@ -287,7 +515,9 @@ class TestProbeAndRecoveryAudit:
         assert run.page_count == 5
 
     def test_get_latest_passed_probe_respects_max_age(self, in_memory_state: StateManager) -> None:
-        probe_id = in_memory_state.start_probe_run("production", source_count=1)
+        probe_id = in_memory_state.start_probe_run(
+            "production", window_hours=6.0, limits_json="{}", source_count=1,
+        )
         in_memory_state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
         assert in_memory_state.get_latest_passed_probe(
             "production", max_age_seconds=3600
@@ -299,8 +529,12 @@ class TestProbeAndRecoveryAudit:
     def test_get_latest_passed_probe_ignores_failed_runs(
         self, in_memory_state: StateManager
     ) -> None:
-        probe_id = in_memory_state.start_probe_run("production", source_count=1)
-        in_memory_state.complete_probe_run(probe_id, passed=False, page_count=1, detail_json="{}")
+        probe_id = in_memory_state.start_probe_run(
+            "production", window_hours=6.0, limits_json="{}", source_count=1,
+        )
+        in_memory_state.complete_probe_run(
+            probe_id, passed=False, page_count=1, detail_json="{}"
+        )
         assert in_memory_state.get_latest_passed_probe(
             "production", max_age_seconds=3600
         ) is None

@@ -79,6 +79,9 @@ class CoverageFinalizationResult:
     safe_watermark_at: datetime | None
     coverage_classifier_version: int
     blocking_failure_ids: tuple[int, ...]
+    # Source checkpoints moved forward in the same transaction as the
+    # watermark advance — empty when nothing advanced.
+    advanced_source_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,18 +141,41 @@ class ProbeRunResult:
     passed: bool | None
     source_count: int
     page_count: int
+    window_hours: float
+    limits_json: str
     detail_json: str
 
 
-@dataclass(frozen=True, slots=True)
-class RecoveryAuditError:
-    """A recovery operation (backfill/cutover/stale_check) was refused
-    before any mutation — the refusal itself is still recorded as an
-    append-only `recovery_operations` row with `outcome='refused'`."""
+CutoverRefusalReason = Literal[
+    "lock_not_held",
+    "missing_probe",
+    "missing_metadata",
+    "invalid_accepted_new",
+    "stale_expected_old",
+    "postcondition_mismatch",
+]
 
-    operation: str
-    environment: str
+
+@dataclass(frozen=True, slots=True)
+class CutoverRefusal:
+    """A cutover was refused inside its own transaction. The refusal is
+    already durably recorded as an append-only `recovery_operations` row
+    (`audit_id`) with `outcome='refused'` by the time this is returned."""
+
+    reason: CutoverRefusalReason
     detail: str
+    audit_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class CutoverResult:
+    """A cutover that committed: the synthetic canonical scan row now read
+    as the cursor, the probe that gated it, and its accepted audit row."""
+
+    scan_id: int
+    probe_run_id: int
+    audit_id: int
+    accepted_new_watermark: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -572,6 +598,61 @@ class ScanStore:
             )
         return released
 
+    def _lease_held_by(
+        self, environment: str, owner_id: str, fence: int, now: datetime
+    ) -> str | None:
+        """Return None when `owner_id` holds `environment`'s lease at exactly
+        `fence`, unexpired as of `now`; otherwise a human-readable reason.
+        Callers run this inside their own transaction so the check and the
+        mutation it guards are one atomic unit."""
+        row = self._conn.execute(
+            "SELECT owner_id, fence, expires_at FROM environment_leases WHERE environment = ?",
+            (environment,),
+        ).fetchone()
+        if row is None:
+            return f"no lease exists for environment={environment!r}"
+        if row["owner_id"] != owner_id:
+            return f"lease held by {row['owner_id']!r}, not {owner_id!r}"
+        if int(row["fence"]) != fence:
+            return f"stale generation: caller fence={fence} current={int(row['fence'])}"
+        if row["expires_at"] is None or datetime.fromisoformat(row["expires_at"]) <= now:
+            return f"lease expired at {row['expires_at']}"
+        return None
+
+    def start_canonical_owner_scan(
+        self,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        fetch_started_at: datetime,
+    ) -> Result[int, LeaseError]:
+        """Create the canonical live fetch-owner scan, bound to the caller's
+        lease in the same transaction: the row is inserted only if
+        `owner_id` still holds `environment`'s lease at exactly `fence`,
+        unexpired. A worker that lost its lease between acquiring it and
+        reaching this point gets `Err` and no row — it never becomes an
+        owner of anything."""
+        operation = "start_canonical_owner_scan"
+        now = datetime.now(UTC)
+        with self._uow.begin_immediate():
+            reason = self._lease_held_by(environment, owner_id, fence, now)
+            if reason is not None:
+                return Err(LeaseError(operation=operation, environment=environment, detail=reason))
+            cursor = self._conn.execute(
+                "INSERT INTO scans "
+                "(started_at, fetch_started_at, environment, run_kind, role, lease_fence) "
+                "VALUES (?, ?, ?, 'live', 'canonical_live', ?)",
+                (now.isoformat(), fetch_started_at.isoformat(), environment, fence),
+            )
+            scan_id = cursor.lastrowid
+        assert scan_id is not None
+        logger.info(
+            "Started canonical owner scan #%d for environment=%s owner=%s fence=%d",
+            scan_id, environment, owner_id, fence,
+        )
+        return Ok(int(scan_id))
+
     def reconcile_abandoned_canonical_owners(
         self, environment: str, current_fence: int
     ) -> list[int]:
@@ -627,6 +708,7 @@ class ScanStore:
         *,
         environment: str,
         advance_watermark: bool,
+        owner_id: str | None = None,
         required_source_keys: frozenset[str] = frozenset(),
         covered_source_keys: frozenset[str] = frozenset(),
         coverage_classifier_version: int,
@@ -699,20 +781,26 @@ class ScanStore:
                 return _err(
                     f"stale lease fence: scan={stored_fence!r} current={current_fence!r}"
                 )
+            reference_now = datetime.now(UTC)
+            if advance_watermark:
+                # Advancement is bound to the holding owner in this same
+                # transaction — not merely to a matching fence number. A
+                # caller whose lease expired or was taken over cannot
+                # advance even if the fence still happens to match.
+                if owner_id is None:
+                    return _err("advancing the watermark requires the holding owner_id")
+                lease_reason = self._lease_held_by(
+                    environment, owner_id, current_fence, reference_now
+                )
+                if lease_reason is not None:
+                    return _err(f"lease not held for advancement: {lease_reason}")
             if not row["fetch_started_at"]:
                 return _err("scan has no stored fetch_started_at")
             fetch_started_at = datetime.fromisoformat(row["fetch_started_at"])
-            reference_now = datetime.now(UTC)
             if fetch_started_at > reference_now:
                 return _err(
                     f"future fetch_started_at: {fetch_started_at.isoformat()} "
                     f"> now={reference_now.isoformat()}"
-                )
-            missing_required = required_source_keys - covered_source_keys
-            if missing_required:
-                return _err(
-                    "incomplete required-source coverage: "
-                    f"{sorted(missing_required)}"
                 )
 
             valid_non_blocking_phases = KNOWN_OPERATION_PHASES - {"unknown"}
@@ -724,7 +812,20 @@ class ScanStore:
                 (scan_id, *valid_non_blocking_phases),
             ).fetchall()
             blocking_failure_ids = tuple(int(r["id"]) for r in blocking_rows)
-            derived_outcome: CoverageOutcome = "blocked" if blocking_failure_ids else "complete"
+
+            # A required source the fetch did not fully cover is only a
+            # coherent claim when persisted failure evidence explains it —
+            # then the outcome is simply 'blocked'. Missing coverage with no
+            # evidence at all is a caller/evidence disagreement, refused.
+            missing_required = required_source_keys - covered_source_keys
+            if missing_required and not blocking_failure_ids:
+                return _err(
+                    "incomplete required-source coverage without failure evidence: "
+                    f"{sorted(missing_required)}"
+                )
+            derived_outcome: CoverageOutcome = (
+                "blocked" if blocking_failure_ids or missing_required else "complete"
+            )
 
             if (
                 expected_coverage_outcome is not None
@@ -735,7 +836,7 @@ class ScanStore:
                     f"{expected_coverage_outcome!r}, derived {derived_outcome!r}"
                 )
 
-            created_at = datetime.now(UTC).isoformat()
+            created_at = reference_now.isoformat()
             for failure_id in blocking_failure_ids:
                 self._conn.execute(
                     "INSERT INTO scan_watermark_blockers (scan_id, failure_id, created_at) "
@@ -762,9 +863,29 @@ class ScanStore:
                 ),
             )
 
+            # Every covered source's checkpoint moves to this scan's fetch
+            # start atomically with the watermark advance — never on a
+            # blocked outcome, never backwards, never for a retired source.
+            advanced_source_keys: list[str] = []
+            if newly_advanced:
+                for source_key in sorted(covered_source_keys):
+                    moved = self._conn.execute(
+                        "UPDATE source_checkpoints SET checkpoint_at = ?, updated_at = ? "
+                        "WHERE source_key = ? AND active = 1 "
+                        "AND (checkpoint_at IS NULL OR checkpoint_at < ?)",
+                        (
+                            fetch_started_at.isoformat(), created_at, source_key,
+                            fetch_started_at.isoformat(),
+                        ),
+                    )
+                    if moved.rowcount > 0:
+                        advanced_source_keys.append(source_key)
+
         logger.info(
-            "Finalized coverage for scan #%d: outcome=%s watermark_advanced=%s blockers=%s",
+            "Finalized coverage for scan #%d: outcome=%s watermark_advanced=%s blockers=%s "
+            "advanced_sources=%s",
             scan_id, derived_outcome, watermark_advanced, blocking_failure_ids,
+            advanced_source_keys,
         )
         return Ok(CoverageFinalizationResult(
             scan_id=scan_id,
@@ -773,6 +894,7 @@ class ScanStore:
             safe_watermark_at=safe_watermark_at,
             coverage_classifier_version=coverage_classifier_version,
             blocking_failure_ids=blocking_failure_ids,
+            advanced_source_keys=tuple(advanced_source_keys),
         ))
 
     def mark_coverage_finalization_failed(self, scan_id: int, *, detail: str) -> None:
@@ -811,16 +933,26 @@ class ScanStore:
 
     # --- Six-hour probe evidence ---
 
-    def start_probe_run(self, environment: str, *, source_count: int) -> int:
-        """Record the start of a read-only probe run. Never touches a
-        source_checkpoints cursor — this is diagnostic evidence only."""
+    def start_probe_run(
+        self,
+        environment: str,
+        *,
+        source_count: int,
+        window_hours: float,
+        limits_json: str,
+    ) -> int:
+        """Record the start of a read-only probe run with the exact window
+        and page/result limits it is about to use, so a later cutover can
+        verify it was a genuine six-hour, normal-limit probe. Never touches
+        a source_checkpoints cursor — this is diagnostic evidence only."""
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
             cursor = self._conn.execute(
                 "INSERT INTO source_probe_runs "
-                "(environment, started_at, source_count, page_count, detail_json, created_at) "
-                "VALUES (?, ?, ?, 0, '{}', ?)",
-                (environment, now, source_count, now),
+                "(environment, started_at, source_count, page_count, window_hours, "
+                "limits_json, detail_json, created_at) "
+                "VALUES (?, ?, ?, 0, ?, ?, '{}', ?)",
+                (environment, now, source_count, window_hours, limits_json, now),
             )
             probe_run_id = cursor.lastrowid
         assert probe_run_id is not None
@@ -849,7 +981,8 @@ class ScanStore:
     def get_probe_run(self, probe_run_id: int) -> ProbeRunResult | None:
         row = self._conn.execute(
             "SELECT id, environment, started_at, completed_at, passed, source_count, "
-            "page_count, detail_json FROM source_probe_runs WHERE id = ?",
+            "page_count, window_hours, limits_json, detail_json "
+            "FROM source_probe_runs WHERE id = ?",
             (probe_run_id,),
         ).fetchone()
         if row is None:
@@ -865,7 +998,7 @@ class ScanStore:
         cutoff = (datetime.now(UTC) - timedelta(seconds=max_age_seconds)).isoformat()
         row = self._conn.execute(
             "SELECT id, environment, started_at, completed_at, passed, source_count, "
-            "page_count, detail_json FROM source_probe_runs "
+            "page_count, window_hours, limits_json, detail_json FROM source_probe_runs "
             "WHERE environment = ? AND passed = 1 AND completed_at IS NOT NULL "
             "AND completed_at >= ? ORDER BY id DESC LIMIT 1",
             (environment, cutoff),
@@ -886,6 +1019,8 @@ class ScanStore:
             passed=bool(row["passed"]) if row["passed"] is not None else None,
             source_count=int(row["source_count"]),
             page_count=int(row["page_count"]),
+            window_hours=float(row["window_hours"]),
+            limits_json=row["limits_json"],
             detail_json=row["detail_json"],
         )
 
@@ -911,22 +1046,47 @@ class ScanStore:
         was requested and why it did not proceed."""
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
-            cursor = self._conn.execute(
-                "INSERT INTO recovery_operations "
-                "(environment, operation, operator, rationale, policy, source_evidence, "
-                "probe_run_id, expected_old_watermark, accepted_new_watermark, outcome, "
-                "detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    environment, operation, operator, rationale, policy, source_evidence,
-                    probe_run_id,
-                    expected_old_watermark.isoformat() if expected_old_watermark else None,
-                    accepted_new_watermark.isoformat() if accepted_new_watermark else None,
-                    outcome, detail, now,
-                ),
+            return self._insert_recovery_operation(
+                environment=environment, operation=operation, operator=operator,
+                rationale=rationale, policy=policy, source_evidence=source_evidence,
+                probe_run_id=probe_run_id, expected_old_watermark=expected_old_watermark,
+                accepted_new_watermark=accepted_new_watermark, outcome=outcome,
+                detail=detail, created_at=now,
             )
-            audit_id = cursor.lastrowid
+
+    def _insert_recovery_operation(
+        self,
+        *,
+        environment: str,
+        operation: Literal["backfill", "cutover", "stale_check"],
+        operator: str,
+        rationale: str,
+        policy: str | None,
+        source_evidence: str | None,
+        probe_run_id: int | None,
+        expected_old_watermark: datetime | None,
+        accepted_new_watermark: datetime | None,
+        outcome: Literal["accepted", "refused"],
+        detail: str | None,
+        created_at: str,
+    ) -> int:
+        """Raw append of one audit row; the caller owns the transaction."""
+        cursor = self._conn.execute(
+            "INSERT INTO recovery_operations "
+            "(environment, operation, operator, rationale, policy, source_evidence, "
+            "probe_run_id, expected_old_watermark, accepted_new_watermark, outcome, "
+            "detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                environment, operation, operator, rationale, policy, source_evidence,
+                probe_run_id,
+                expected_old_watermark.isoformat() if expected_old_watermark else None,
+                accepted_new_watermark.isoformat() if accepted_new_watermark else None,
+                outcome, detail, created_at,
+            ),
+        )
+        audit_id = cursor.lastrowid
         assert audit_id is not None
-        return audit_id
+        return int(audit_id)
 
     def cutover_watermark(
         self,
@@ -934,46 +1094,103 @@ class ScanStore:
         environment: str,
         owner_id: str,
         fence: int,
+        operator: str,
+        rationale: str,
+        policy: str,
+        source_evidence: str,
         expected_old_watermark: datetime | None,
         accepted_new_watermark: datetime,
-    ) -> Result[int, CoverageFinalizationError]:
+        probe_max_age_seconds: float,
+        probe_min_window_hours: float = 6.0,
+    ) -> Result[CutoverResult, CutoverRefusal]:
         """Atomically accept a gap: install `accepted_new_watermark` as
         `environment`'s cursor via a synthetic, already-finalized
-        canonical-live scan row, gated by a compare-and-set against the
-        cursor `expected_old_watermark` the caller observed before
-        requesting cutover.
+        canonical-live scan row.
 
-        Requires the caller's lease (`owner_id`/`fence`) to still be the
-        environment's current, unexpired holder — the recovery lock
-        (decision 8) — and requires `expected_old_watermark` to still match
-        what `get_last_scan_timestamp` returns for real at commit time, so
-        a race with another writer refuses rather than silently
-        overwriting. Successful cutover is immediately the expected cursor:
-        the new row has `watermark_advanced=1` and `safe_watermark_at`
-        set, exactly as a normal `finalize_scan_coverage` advance would
-        produce.
+        One `BEGIN IMMEDIATE` covers every gate and every write, in order:
+        the caller's lease must be the current, unexpired holder at
+        exactly `fence` (the recovery lock); every metadata field must be
+        non-blank; `accepted_new_watermark` must be timezone-aware, not in
+        the future, and strictly after `expected_old_watermark` when one is
+        given; a probe for this environment must have passed within
+        `probe_max_age_seconds` with a window of at least
+        `probe_min_window_hours`; and `expected_old_watermark` must still
+        equal the live cursor at commit time (compare-and-set, so a race
+        with another writer refuses instead of silently overwriting). Only
+        then is the scan row inserted, the cursor re-read as a
+        postcondition, and the accepted audit row appended. A refusal at
+        any gate appends a `refused` audit row in the same transaction and
+        returns `Err` — nothing else is written.
         """
-        operation = "cutover_watermark"
-
-        def _err(detail: str) -> Result[int, CoverageFinalizationError]:
-            return Err(CoverageFinalizationError(operation=operation, scan_id=-1, detail=detail))
-
         now = datetime.now(UTC)
+        created_at = now.isoformat()
+
         with self._uow.begin_immediate():
-            lease_row = self._conn.execute(
-                "SELECT owner_id, expires_at, fence FROM environment_leases WHERE environment = ?",
-                (environment,),
-            ).fetchone()
-            if (
-                lease_row is None
-                or lease_row["owner_id"] != owner_id
-                or int(lease_row["fence"]) != fence
-                or lease_row["expires_at"] is None
-                or datetime.fromisoformat(lease_row["expires_at"]) <= now
-            ):
-                return _err(
-                    f"cutover requires the current, unexpired lease for environment={environment!r}"
+            probe_run_id: int | None = None
+
+            def _refuse(
+                reason: CutoverRefusalReason, detail: str
+            ) -> Result[CutoverResult, CutoverRefusal]:
+                audit_id = self._insert_recovery_operation(
+                    environment=environment, operation="cutover",
+                    operator=operator.strip() or "<missing>",
+                    rationale=rationale.strip() or "<missing>",
+                    policy=policy, source_evidence=source_evidence,
+                    probe_run_id=probe_run_id,
+                    expected_old_watermark=expected_old_watermark,
+                    accepted_new_watermark=(
+                        accepted_new_watermark if accepted_new_watermark.tzinfo else None
+                    ),
+                    outcome="refused", detail=f"{reason}: {detail}", created_at=created_at,
                 )
+                logger.error(
+                    "Cutover refused for environment=%s (%s): %s", environment, reason, detail
+                )
+                return Err(CutoverRefusal(reason=reason, detail=detail, audit_id=audit_id))
+
+            lease_reason = self._lease_held_by(environment, owner_id, fence, now)
+            if lease_reason is not None:
+                return _refuse("lock_not_held", lease_reason)
+
+            blank = [
+                name for name, value in (
+                    ("operator", operator), ("rationale", rationale),
+                    ("policy", policy), ("source_evidence", source_evidence),
+                ) if not value.strip()
+            ]
+            if blank:
+                return _refuse("missing_metadata", f"blank metadata: {blank}")
+
+            if accepted_new_watermark.tzinfo is None:
+                return _refuse("invalid_accepted_new", "accepted-new must be timezone-aware")
+            if accepted_new_watermark > now:
+                return _refuse(
+                    "invalid_accepted_new",
+                    f"accepted-new {accepted_new_watermark.isoformat()} is in the future",
+                )
+            if expected_old_watermark is not None:
+                if expected_old_watermark.tzinfo is None:
+                    return _refuse("missing_metadata", "expected-old must be timezone-aware")
+                if accepted_new_watermark <= expected_old_watermark:
+                    return _refuse(
+                        "invalid_accepted_new",
+                        "accepted-new must move the cursor forward past expected-old",
+                    )
+
+            probe_cutoff = (now - timedelta(seconds=probe_max_age_seconds)).isoformat()
+            probe_row = self._conn.execute(
+                "SELECT id, window_hours FROM source_probe_runs "
+                "WHERE environment = ? AND passed = 1 AND completed_at IS NOT NULL "
+                "AND completed_at >= ? AND window_hours >= ? ORDER BY id DESC LIMIT 1",
+                (environment, probe_cutoff, probe_min_window_hours),
+            ).fetchone()
+            if probe_row is None:
+                return _refuse(
+                    "missing_probe",
+                    f"no passed probe with window >= {probe_min_window_hours}h completed "
+                    f"within {probe_max_age_seconds:.0f}s",
+                )
+            probe_run_id = int(probe_row["id"])
 
             current_row = self._conn.execute(
                 "SELECT safe_watermark_at FROM scans "
@@ -987,9 +1204,9 @@ class ScanStore:
                 else None
             )
             if current_watermark != expected_old_watermark:
-                return _err(
-                    f"stale expected-old watermark: expected={expected_old_watermark}, "
-                    f"actual={current_watermark}"
+                return _refuse(
+                    "stale_expected_old",
+                    f"expected={expected_old_watermark} actual={current_watermark}",
                 )
 
             cursor = self._conn.execute(
@@ -1000,17 +1217,53 @@ class ScanStore:
                 "VALUES (?, ?, ?, ?, 'complete', ?, 'recovery_cutover', 'canonical_live', ?, "
                 "'complete', 1, 1)",
                 (
-                    now.isoformat(), now.isoformat(), accepted_new_watermark.isoformat(),
+                    created_at, created_at, accepted_new_watermark.isoformat(),
                     accepted_new_watermark.isoformat(), environment, fence,
                 ),
             )
             scan_id = cursor.lastrowid
-        assert scan_id is not None
+            assert scan_id is not None
+
+            postcondition_row = self._conn.execute(
+                "SELECT safe_watermark_at FROM scans "
+                "WHERE safe_watermark_at IS NOT NULL AND environment = ? "
+                "AND role = 'canonical_live' ORDER BY id DESC LIMIT 1",
+                (environment,),
+            ).fetchone()
+            readable = (
+                datetime.fromisoformat(postcondition_row["safe_watermark_at"])
+                if postcondition_row else None
+            )
+            if readable != accepted_new_watermark:
+                # Roll the insert back by raising out of the transaction —
+                # but record the refusal first so the audit survives. This
+                # branch is unreachable with a correct read path; it exists
+                # so a regression fails closed rather than committing a
+                # cursor that is not what the operator accepted.
+                self._conn.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
+                return _refuse(
+                    "postcondition_mismatch",
+                    f"re-read cursor {readable} != accepted {accepted_new_watermark}",
+                )
+
+            audit_id = self._insert_recovery_operation(
+                environment=environment, operation="cutover",
+                operator=operator.strip(), rationale=rationale.strip(),
+                policy=policy.strip(), source_evidence=source_evidence.strip(),
+                probe_run_id=probe_run_id,
+                expected_old_watermark=expected_old_watermark,
+                accepted_new_watermark=accepted_new_watermark,
+                outcome="accepted", detail=f"scan_id={scan_id}", created_at=created_at,
+            )
+
         logger.warning(
-            "Cutover accepted for environment=%s: %s -> %s (scan #%d)",
-            environment, expected_old_watermark, accepted_new_watermark, scan_id,
+            "Cutover accepted for environment=%s: %s -> %s (scan #%d, audit #%d)",
+            environment, expected_old_watermark, accepted_new_watermark, scan_id, audit_id,
         )
-        return Ok(int(scan_id))
+        return Ok(CutoverResult(
+            scan_id=int(scan_id), probe_run_id=probe_run_id, audit_id=audit_id,
+            accepted_new_watermark=accepted_new_watermark,
+        ))
 
     # --- Source checkpoints ---
 
@@ -1024,6 +1277,15 @@ class ScanStore:
         if row is None:
             return None
         return self._row_to_checkpoint(row)
+
+    def list_source_checkpoints(self, *, active_only: bool = True) -> list[SourceCheckpoint]:
+        rows = self._conn.execute(
+            "SELECT source_key, platform, source_kind, provider_key, required, active, "
+            "checkpoint_at, bootstrapped_from_legacy FROM source_checkpoints "
+            + ("WHERE active = 1 " if active_only else "")
+            + "ORDER BY source_key"
+        ).fetchall()
+        return [self._row_to_checkpoint(row) for row in rows]
 
     @staticmethod
     def _row_to_checkpoint(row: sqlite3.Row) -> SourceCheckpoint:

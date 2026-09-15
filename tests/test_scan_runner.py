@@ -152,6 +152,9 @@ class _FakeState(AbstractContextManager["_FakeState"]):
         )
         self.reconcile_abandoned_canonical_owners = Mock(return_value=[])
         self.link_secondary_scan = Mock()
+        self.start_canonical_owner_scan = Mock(return_value=Ok(1))
+        self.release_environment_lease = Mock(return_value=True)
+        self.close = Mock()
         self.has_seen_message = Mock(return_value=False)
         self.get_last_scan_timestamp = Mock(return_value=None)
         self.load_posts = Mock()
@@ -416,7 +419,7 @@ async def test_main_loop_empty_live_scan_is_a_finalized_empty_success(
 
     await scan_runner.main_loop(args)
 
-    fake_state.start_scan.assert_called_once()
+    fake_state.start_canonical_owner_scan.assert_called_once()
     fake_state.complete_scan.assert_called_once_with(
         1, 0, 0, status="complete", overflow_count=0
     )
@@ -959,10 +962,12 @@ async def test_main_loop_passes_configured_platform_query_caps(
         api_key="neynar",
         channel_ids=None,
         max_results_per_query=11,
+        max_pages=None,
     )
     bluesky_ctor.assert_called_once_with(
         feed_uris=None,
         max_results_per_query=12,
+        max_pages=None,
     )
 
 
@@ -1815,7 +1820,7 @@ async def test_main_loop_continuous_retries_after_backoff_on_dossier_readiness_f
     # first, failed-readiness iteration never reaches the fetch/commit at
     # all.
     fetch_messages_mock.assert_awaited_once()
-    fake_state.start_scan.assert_called_once()
+    fake_state.start_canonical_owner_scan.assert_called_once()
     assert len(sleep_calls) == 2
 
 
