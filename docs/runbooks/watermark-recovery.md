@@ -61,28 +61,39 @@ tells you recovery is needed at all, and it never takes the lock.
 
 ### `scout watermark probe --environment ENV [--hours 6]`
 
-Read-only. Acquires the recovery lock, fetches from every configured
-platform at production's normal page/result limits over the last `--hours`
-(default 6, matching "six-hour probe"), and records a pass/fail diagnostic
-in `source_probe_runs` — page-ceiling hits, failure kinds, message count.
-**Never touches a `source_checkpoints` cursor.** Exits `0` on a clean
-probe, `4` (`EXIT_SOURCE_OR_PROBE_FAILURE`) if any platform failure
-occurred. A passed probe within `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS` is a
-hard prerequisite for `cutover` below — run this immediately before a
-cutover attempt, not hours earlier.
+Read-only. Acquires the recovery lock, paginates every configured source
+(each Discord channel, each Farcaster search/feed, each Bluesky
+search-per-language/feed) at production's normal page/result limits over
+the last `--hours` (default 6), and records the run in `source_probe_runs`
+with the exact window and limits it used plus per-source evidence: page
+count, how pagination terminated (`exhausted` / `since_boundary` /
+`page_ceiling` / `failure`), message count, and the failure if any. It
+also reports every *active* `source_checkpoints` row the fetch never
+reached (`unattempted_active_sources`) — a configured-but-unreachable
+source fails the probe just as a page ceiling does. **Never touches a
+`source_checkpoints` cursor.** Exits `0` only when every source was fully
+covered, `4` (`EXIT_SOURCE_OR_PROBE_FAILURE`) otherwise. A passed probe
+with a window of at least six hours, completed within
+`SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS`, is a hard prerequisite for
+`cutover` below — run this immediately before a cutover attempt, not
+hours earlier, and do not shorten `--hours` below 6 for a probe you intend
+to cut over on.
 
 ### `scout watermark backfill --environment ENV --operator NAME --rationale TEXT --hours N`
 
 **The default recovery path.** Acquires the recovery lock, reconciles any
 abandoned canonical owners in this environment, then runs a normal live
-fetch with `--hours` widening how far back it looks — through the same
+fetch with `--hours` widening how far back it looks and every source
+paginated under `SCOUT_BACKFILL_MAX_PAGES_PER_SOURCE` instead of the
+production ceiling — through the same lease-bound
 `commit_canonical_owner` → fetch → `finalize_owner` pipeline a live scan
-uses, so a clean result advances the watermark exactly as a normal scan
-would. Fetched messages are persisted as posts (recoverable via the
-existing `--rescore-failed` flag) rather than scored inline. Exits `0`
-only when the fetch had zero failures and coverage finalized `complete`;
-otherwise `4`. Every attempt is recorded in `recovery_operations` with
-`operation='backfill'`.
+uses, so a clean result advances the watermark *and every covered
+source's checkpoint* exactly as a normal scan would. Fetched messages are
+persisted as posts (recoverable via the existing `--rescore-failed` flag)
+rather than scored inline. The audit row and the command output carry the
+same per-source page/termination/failure evidence as `probe`. Exits `0`
+only when coverage finalized `complete`; otherwise `4`. Every attempt is
+recorded in `recovery_operations` with `operation='backfill'`.
 
 Prefer backfill over cutover whenever the underlying source data is still
 reachable — it costs nothing but the wider fetch, and it never accepts a
@@ -93,24 +104,30 @@ gap.
 **The accepted-gap path — use only when backfill cannot recover the gap.**
 Refuses to run without:
 
-- the recovery lock (exit `2` on contention);
-- a `source_probe_runs` row with `passed=1` completed within
-  `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS` (exit `4` if missing — run `probe`
-  first);
+- the recovery lock, still held at the expected generation and unexpired
+  at commit time (exit `2` on contention or loss);
+- a `source_probe_runs` row with `passed=1`, a window of at least six
+  hours, completed within `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS` (exit `4`
+  if missing — run `probe` first);
 - every one of `--operator`, `--rationale`, `--policy`, `--source-evidence`
-  (argparse enforces these as required; there is no way to invoke cutover
-  without them);
-- a valid `--accepted-new` timestamp, and — unless the cursor is currently
-  completely unset — an `--expected-old` timestamp that still matches the
-  live cursor at commit time (exit `3`, `EXIT_STALE_EXPECTED_OLD`, on a
-  mismatch: someone else advanced the cursor between when you observed it
-  and when you ran cutover).
+  non-blank (argparse enforces presence; the storage gate additionally
+  refuses whitespace-only values — exit `5`);
+- a timezone-aware `--accepted-new` that is not in the future and, when
+  `--expected-old` is given, strictly after it (exit `5`,
+  `EXIT_MISSING_METADATA`, otherwise — a cutover can only move the cursor
+  forward);
+- unless the cursor is currently completely unset, an `--expected-old`
+  timestamp that still matches the live cursor at commit time (exit `3`,
+  `EXIT_STALE_EXPECTED_OLD`, on a mismatch: someone else advanced the
+  cursor between when you observed it and when you ran cutover).
 
-On success, the new cursor is verified immediately readable
-(`get_last_scan_timestamp` re-read as a postcondition; exit `6` on
-mismatch, which should not happen and indicates a bug worth reporting) and
-the accepted operation is appended to `recovery_operations` with the full
-policy/evidence/probe-run linkage. `--source-evidence` should name the
+All of these gates, the cursor insert, the postcondition re-read
+(`get_last_scan_timestamp` must immediately return `--accepted-new`; exit
+`6` on mismatch, which should not happen and indicates a bug worth
+reporting), and the audit row are one database transaction: a refusal at
+any gate appends a `refused` audit row and commits nothing else; success
+appends the `accepted` row with the full policy/evidence/probe-run
+linkage. `--source-evidence` should name the
 concrete evidence a human reviewed (a platform status page, an API
 deprecation notice, a specific incident ticket) — free text, but it is the
 permanent record of *why* this gap was judged safe to accept.

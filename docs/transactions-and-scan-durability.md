@@ -307,13 +307,54 @@ which is simpler to reason about and always safe (fencing only needs
 monotonicity, not a bump on every state change).
 
 Every `scans` row snapshots the environment's fence at `start_scan()` time
-into `scans.lease_fence`. `finalize_scan_coverage` (still the sole path
-that can ever set `watermark_advanced`) re-reads the environment's
-*current* fence inside its own `begin_immediate()` and refuses to advance
-unless the scan's stored fence still matches — a worker that lost its
-lease mid-scan (renewal refused, or another worker took over after this
-worker's lease expired) can never advance the watermark even if it
-finishes processing and calls `finalize_scan_coverage` anyway.
+into `scans.lease_fence`. Both advancement-capable mutations are bound to
+the *held* lease — environment, owner_id, expected generation, and an
+unexpired `expires_at` — inside their own `begin_immediate()`, not merely
+to a matching fence number:
+
+- `start_canonical_owner_scan(environment, owner_id, fence, ...)` inserts
+  the canonical owner only if `owner_id` still holds the lease at exactly
+  `fence`, unexpired. A worker that lost its lease between acquiring it
+  and reaching the fetch gets `Err` and never becomes an owner of
+  anything.
+- `finalize_scan_coverage(..., advance_watermark=True, owner_id=...)`
+  re-reads the environment's current fence, requires the scan's stored
+  fence to match it, and then requires `owner_id` to be the current,
+  unexpired holder at that fence. A worker whose lease expired or was
+  taken over can never advance the watermark even if the fence number
+  still happens to match and it finishes processing anyway.
+  `advance_watermark=False` (a coverage read) needs no owner.
+
+In the same finalization transaction, every covered source's
+`source_checkpoints.checkpoint_at` moves to the scan's `fetch_started_at`
+— only on a newly advancing (`complete`) outcome, never backwards, never
+for a retired source. The runner derives the `required`/`covered`
+normalized source-key sets it passes in from the platform layer's
+per-source `SourceFetchOutcome` evidence (`coverage.register_source_outcomes`
+get-or-creates a cold checkpoint row for every attempted source). A
+required source the fetch did not cover is accepted as a `blocked`
+outcome only when persisted failure evidence explains it; missing
+coverage with no evidence at all is refused as a caller/evidence
+disagreement.
+
+### The heartbeat runs on a dedicated connection
+
+`main_loop` opens a second `StateManager` on the same database purely for
+the lease heartbeat (`lease.EnvironmentLeaseHandle`). Renewals are short
+compare-and-set updates on that connection; they never touch the primary
+connection, so a heartbeat can never contend with — or be blocked by — a
+scan transaction, and the primary connection never has a transaction open
+across the heartbeat's wait. The heartbeat waits on its stop event with a
+timeout rather than sleeping, so it shares no scan-cadence sleep and
+`stop()` wakes it immediately.
+
+When a renewal is refused the handle marks itself `lost`. The runner
+checks that flag at every checkpoint — before committing the canonical
+owner, after the fetch, before each mode pass, and before every post in
+`score_messages` — and raises `LeaseLostError`, which the existing
+`except Exception` handler turns into `fail_scan` evidence before
+propagating. Work stops promptly instead of running to a finalization the
+lease-bound gate would refuse anyway.
 
 ### Reconciliation only touches strictly older, non-terminal, same-environment scans
 
@@ -330,12 +371,11 @@ filtered after the fact.
 ### Commit-before-I/O and the four terminal paths
 
 `main_loop` acquires the environment lease and runs reconciliation once,
-before entering its scan loop, then renews the lease at the top of every
-iteration — a short CAS on the primary connection, never spanning an
-`await`. For a live (non-`--rescore`/`--rescore-failed`) iteration,
-`coverage.commit_canonical_owner` — a plain `start_scan(role=
-'canonical_live')` — runs and commits *before* `fetch_messages` is
-awaited. From that point on, exactly one of four things finalizes that
+before entering its scan loop, and starts the dedicated-connection
+heartbeat (see below). For a live (non-`--rescore`/`--rescore-failed`)
+iteration, `coverage.commit_canonical_owner` — the lease-bound
+`start_canonical_owner_scan` — runs and commits *before* `fetch_messages`
+is awaited. From that point on, exactly one of four things finalizes that
 scan:
 
 1. **Success with candidates.** The existing per-post durability
@@ -391,13 +431,23 @@ lock-contention refusal (`Err` from `acquire_environment_lease`) and every
 `cutover` attempt — accepted or refused — is appended to the immutable,
 trigger-guarded `recovery_operations` table before the command returns,
 so a rejected attempt is exactly as auditable as an accepted one.
-`cutover_watermark` is its own `begin_immediate()` unit: it re-validates
-the caller's lease is still the current, unexpired holder, re-reads the
-live cursor and compares it against the caller-supplied `expected_old`
-watermark (a compare-and-set against a value the caller observed
-separately, before requesting cutover — the classic TOCTOU gap this
-closes), and only then inserts the synthetic, already-`watermark_advanced
-=1` `scans` row that becomes the new cursor.
+`cutover_watermark` is one `begin_immediate()` unit covering every gate
+and every write, in order: the caller's lease must be the current,
+unexpired holder at exactly the expected generation (the recovery lock);
+operator/rationale/policy/source-evidence must be non-blank;
+`accepted_new` must be timezone-aware, not in the future, and strictly
+after `expected_old` when one is given; a `source_probe_runs` row for
+this environment must have `passed=1`, a window of at least six hours,
+and a completion within `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS`; and
+`expected_old` must still equal the live cursor at commit time (a
+compare-and-set against a value the caller observed separately — the
+classic TOCTOU gap this closes). Only then is the synthetic
+`watermark_advanced=1` `scans` row inserted, the cursor re-read as a
+postcondition, and the `accepted` audit row appended. A refusal at any
+gate appends a `refused` audit row in the same transaction and commits
+nothing else — the refusal's reason (`lock_not_held`, `missing_metadata`,
+`invalid_accepted_new`, `missing_probe`, `stale_expected_old`,
+`postcondition_mismatch`) is what the CLI maps to its exit code.
 
 ## Grade-corpus audit: read-only dry run, all-or-nothing apply
 
