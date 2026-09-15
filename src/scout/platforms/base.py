@@ -16,7 +16,7 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
-from scout.errors import OperationPhase, PlatformFetchFailure
+from scout.errors import OperationPhase, PlatformFetchFailure, SourceTermination
 from scout.result import Err, Ok, Result
 
 logger = logging.getLogger(__name__)
@@ -164,12 +164,17 @@ class PaginationResult[Item, Failure]:
     `items` accumulates across every page fetched, including the boundary
     page on early chronological termination and any pages fetched before a
     failure. `failure` is the original error from the page that failed, if
-    any — its presence does not clear `items`.
+    any — its presence does not clear `items`. `page_count` is the number
+    of page requests that returned (a failed request is counted, since it
+    was issued), and `termination` says why pagination stopped — the
+    per-source evidence a probe or coverage finalization records.
     """
 
     items: list[Item]
     page_ceiling_reached: bool
     failure: Failure | None = None
+    page_count: int = 0
+    termination: SourceTermination = "exhausted"
 
 
 async def paginate_cursor[Page, Item, Failure](
@@ -210,19 +215,25 @@ async def paginate_cursor[Page, Item, Failure](
 
     all_items: list[Item] = []
     cursor: str | None = None
+    page_count = 0
 
     for page_number in range(1, max_pages + 1):
+        page_count = page_number
         match await fetch_page(cursor=cursor, page_number=page_number):
             case Ok(page):
                 pass
             case Err(failure):
                 return PaginationResult(
-                    items=all_items, page_ceiling_reached=False, failure=failure
+                    items=all_items, page_ceiling_reached=False, failure=failure,
+                    page_count=page_count, termination="failure",
                 )
 
         items, next_cursor = extract(page)
         if not items:
-            return PaginationResult(items=all_items, page_ceiling_reached=False, failure=None)
+            return PaginationResult(
+                items=all_items, page_ceiling_reached=False, failure=None,
+                page_count=page_count, termination="exhausted",
+            )
 
         all_items.extend(items)
         cursor = next_cursor
@@ -232,11 +243,15 @@ async def paginate_cursor[Page, Item, Failure](
                 ts = timestamp_of(item)
                 if ts is not None and ts.tzinfo is not None and ts <= since:
                     return PaginationResult(
-                        items=all_items, page_ceiling_reached=False, failure=None
+                        items=all_items, page_ceiling_reached=False, failure=None,
+                        page_count=page_count, termination="since_boundary",
                     )
 
         if not cursor:
-            return PaginationResult(items=all_items, page_ceiling_reached=False, failure=None)
+            return PaginationResult(
+                items=all_items, page_ceiling_reached=False, failure=None,
+                page_count=page_count, termination="exhausted",
+            )
     else:
         if cursor:
             logger.warning(
@@ -245,6 +260,12 @@ async def paginate_cursor[Page, Item, Failure](
                 platform,
                 context,
             )
-            return PaginationResult(items=all_items, page_ceiling_reached=True, failure=None)
+            return PaginationResult(
+                items=all_items, page_ceiling_reached=True, failure=None,
+                page_count=page_count, termination="page_ceiling",
+            )
 
-    return PaginationResult(items=all_items, page_ceiling_reached=False, failure=None)
+    return PaginationResult(
+        items=all_items, page_ceiling_reached=False, failure=None,
+        page_count=page_count, termination="exhausted",
+    )

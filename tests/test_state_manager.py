@@ -442,10 +442,11 @@ class TestScanDurability:
         self, in_memory_state: StateManager
     ) -> None:
         """get_last_scan_timestamp must return safe_watermark_at, not completed_at."""
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
         scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
         in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True,
+            scan_id, environment="production", advance_watermark=True, owner_id="owner",
             coverage_classifier_version=1,
         )
         ts = in_memory_state.get_last_scan_timestamp(environment="production")
@@ -460,10 +461,11 @@ class TestScanDurability:
 
     def test_partial_scan_does_not_advance_watermark(self, in_memory_state: StateManager) -> None:
         """Partial scans must not set safe_watermark_at (watermark must not advance)."""
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
         scan1 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan1, 0, 0, status="complete")
         in_memory_state.finalize_scan_coverage(
-            scan1, environment="production", advance_watermark=True,
+            scan1, environment="production", advance_watermark=True, owner_id="owner",
             coverage_classifier_version=1,
         )
         first_watermark = in_memory_state.get_last_scan_timestamp(environment="production")
@@ -475,7 +477,7 @@ class TestScanDurability:
             operation_phase="fetch", blocks_watermark_advance=True,
         )
         in_memory_state.finalize_scan_coverage(
-            scan2, environment="production", advance_watermark=True,
+            scan2, environment="production", advance_watermark=True, owner_id="owner",
             coverage_classifier_version=1,
         )
 
@@ -483,12 +485,12 @@ class TestScanDurability:
             environment="production"
         )
         assert watermark_after_partial == first_watermark
-
     def test_failed_scan_does_not_advance_watermark(self, in_memory_state: StateManager) -> None:
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
         scan1 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan1, 0, 0, status="complete")
         in_memory_state.finalize_scan_coverage(
-            scan1, environment="production", advance_watermark=True,
+            scan1, environment="production", advance_watermark=True, owner_id="owner",
             coverage_classifier_version=1,
         )
         first_watermark = in_memory_state.get_last_scan_timestamp(environment="production")
@@ -499,7 +501,6 @@ class TestScanDurability:
         assert in_memory_state.get_last_scan_timestamp(environment="production") == (
             first_watermark
         )
-
     def test_save_fetch_failure_persists_metadata(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
         failure_id = in_memory_state.save_fetch_failure(
@@ -569,12 +570,13 @@ class TestScanDurability:
     ) -> None:
         """finalize_scan_coverage's watermark defaults to fetch_started_at."""
         explicit_fsa = datetime(2026, 6, 1, 10, 0, 0, tzinfo=UTC)
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
         scan_id = in_memory_state.start_scan(
             fetch_started_at=explicit_fsa, environment="production", run_kind="live",
         )
         in_memory_state.complete_scan(scan_id, 5, 2, status="complete")
         in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True,
+            scan_id, environment="production", advance_watermark=True, owner_id="owner",
             coverage_classifier_version=1,
         )
 

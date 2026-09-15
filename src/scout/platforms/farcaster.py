@@ -17,9 +17,17 @@ from scout.config import (
     Message,
     PublishedPost,
 )
-from scout.errors import NetworkError, PlatformFetchFailure, PlatformFetchSuccess
+from scout.errors import (
+    NetworkError,
+    PlatformFetchFailure,
+    PlatformFetchSuccess,
+    SourceFetchOutcome,
+)
 from scout.platforms.base import (
+    PaginationResult,
+    SourceDescriptor,
     classify_http_failure,
+    derive_source_key,
     paginate_cursor,
     parse_platform_ts,
     parse_retry_after,
@@ -51,6 +59,7 @@ class FarcasterScanner:
         max_results_per_query: int = 50,
         sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], datetime] = _utc_now,
+        max_pages: int | None = None,
     ) -> None:
         self.api_key = api_key
         self.channel_ids = channel_ids or []
@@ -61,6 +70,15 @@ class FarcasterScanner:
         }
         self._sleeper = sleeper
         self._clock = clock
+        # None means "production's normal limit" (FARCASTER_MAX_PAGES, read
+        # at fetch time); a bounded backfill passes its own ceiling.
+        self._max_pages_override = max_pages
+
+    @property
+    def max_pages(self) -> int:
+        if self._max_pages_override is not None:
+            return self._max_pages_override
+        return FARCASTER_MAX_PAGES
 
     async def fetch_messages(
         self,
@@ -77,76 +95,78 @@ class FarcasterScanner:
         seen_hashes: set[str] = set()
         collected: list[Message] = []
         failures: list[PlatformFetchFailure] = []
+        outcomes: list[SourceFetchOutcome] = []
         page_ceiling_reached = False
+        max_pages = self.max_pages
 
         active_queries = queries or []
         for q in active_queries:
             logger.info("Search query: %s", q)
+
+        def _record(
+            descriptor: SourceDescriptor,
+            result: PaginationResult[dict[str, object], PlatformFetchFailure],
+            context: str,
+        ) -> None:
+            nonlocal page_ceiling_reached
+            failure = result.failure
+            if failure is None and result.page_ceiling_reached:
+                page_ceiling_reached = True
+                failure = PlatformFetchFailure(
+                    platform="farcaster",
+                    kind="page_ceiling",
+                    message=f"Page ceiling reached; fetched {len(result.items)} casts",
+                    context=context,
+                    retryable=True,
+                    operation_phase="fetch",
+                    blocks_watermark_advance=True,
+                )
+            if failure is not None:
+                failures.append(failure)
+            outcomes.append(SourceFetchOutcome(
+                source_key=derive_source_key(descriptor),
+                platform=descriptor.platform,
+                source_kind=descriptor.source_kind,
+                provider_key=descriptor.provider_key,
+                page_count=result.page_count,
+                termination=result.termination,
+                message_count=len(result.items),
+                failure=failure,
+            ))
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for query in active_queries:
                     if self.channel_ids:
                         for ch_id in self.channel_ids:
-                            casts, ceiling, failure = await self._search_paginated(
-                                client, query, since, FARCASTER_MAX_PAGES, channel_id=ch_id
+                            result = await self._search_paginated_result(
+                                client, query, since, max_pages, channel_id=ch_id
                             )
-                            self._collect(casts, seen_hashes, collected, since)
-                            if failure is not None:
-                                failures.append(failure)
-                                continue
-                            if ceiling:
-                                page_ceiling_reached = True
-                                failures.append(PlatformFetchFailure(
-                                    platform="farcaster",
-                                    kind="page_ceiling",
-                                    message=f"Page ceiling reached; fetched {len(casts)} casts",
-                                    context=(
-                                        f"search: {query[:40]} in /{ch_id}"
-                                    ),
-                                    retryable=True,
-                                    operation_phase="fetch",
-                                    blocks_watermark_advance=True,
-                                ))
+                            self._collect(result.items, seen_hashes, collected, since)
+                            _record(
+                                SourceDescriptor("farcaster", "search", f"/{ch_id} {query}"),
+                                result,
+                                f"search: {query[:40]} in /{ch_id}",
+                            )
                     else:
-                        casts, ceiling, failure = await self._search_paginated(
-                            client, query, since, FARCASTER_MAX_PAGES
+                        result = await self._search_paginated_result(
+                            client, query, since, max_pages
                         )
-                        self._collect(casts, seen_hashes, collected, since)
-                        if failure is not None:
-                            failures.append(failure)
-                            continue
-                        if ceiling:
-                            page_ceiling_reached = True
-                            failures.append(PlatformFetchFailure(
-                                platform="farcaster",
-                                kind="page_ceiling",
-                                message=f"Page ceiling reached; fetched {len(casts)} casts",
-                                context=f"search: {query[:40]}",
-                                retryable=True,
-                                operation_phase="fetch",
-                                blocks_watermark_advance=True,
-                            ))
+                        self._collect(result.items, seen_hashes, collected, since)
+                        _record(
+                            SourceDescriptor("farcaster", "search", query),
+                            result,
+                            f"search: {query[:40]}",
+                        )
 
                 for ch_id in self.channel_ids:
-                    casts, ceiling, failure = await self._channel_feed_paginated(
-                        client, ch_id, FARCASTER_MAX_PAGES
+                    result = await self._channel_feed_paginated_result(client, ch_id, max_pages)
+                    self._collect(result.items, seen_hashes, collected, since)
+                    _record(
+                        SourceDescriptor("farcaster", "feed", ch_id),
+                        result,
+                        f"feed: /{ch_id}",
                     )
-                    self._collect(casts, seen_hashes, collected, since)
-                    if failure is not None:
-                        failures.append(failure)
-                        continue
-                    if ceiling:
-                        page_ceiling_reached = True
-                        failures.append(PlatformFetchFailure(
-                            platform="farcaster",
-                            kind="page_ceiling",
-                            message=f"Page ceiling reached; fetched {len(casts)} casts",
-                            context=f"feed: /{ch_id}",
-                            retryable=True,
-                            operation_phase="fetch",
-                            blocks_watermark_advance=True,
-                        ))
 
         except Exception as e:
             logger.error("Farcaster fetch failed: %s", e)
@@ -165,6 +185,7 @@ class FarcasterScanner:
             messages=collected,
             page_ceiling_reached=page_ceiling_reached,
             failures=tuple(failures),
+            source_outcomes=tuple(outcomes),
         )
 
     async def _get_with_retry(
@@ -248,13 +269,41 @@ class FarcasterScanner:
         max_pages: int,
         channel_id: str | None = None,
     ) -> tuple[list[dict[str, object]], bool, PlatformFetchFailure | None]:
-        """Paginate Neynar cast search to the since boundary or token exhaustion.
+        """Paginate Neynar cast search — (casts, page_ceiling_reached,
+        failure_or_None) view over `_search_paginated_result`."""
+        result = await self._search_paginated_result(
+            client, query, since, max_pages, channel_id=channel_id
+        )
+        return result.items, result.page_ceiling_reached, result.failure
 
-        Returns (casts, page_ceiling_reached, failure_or_None).
-        """
+    async def _channel_feed_paginated(
+        self,
+        client: httpx.AsyncClient,
+        channel_id: str,
+        max_pages: int,
+    ) -> tuple[list[dict[str, object]], bool, PlatformFetchFailure | None]:
+        """Paginate a Neynar channel feed — (casts, page_ceiling_reached,
+        failure_or_None) view over `_channel_feed_paginated_result`."""
+        result = await self._channel_feed_paginated_result(client, channel_id, max_pages)
+        return result.items, result.page_ceiling_reached, result.failure
+
+    async def _search_paginated_result(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        since: datetime | None,
+        max_pages: int,
+        channel_id: str | None = None,
+    ) -> PaginationResult[dict[str, object], PlatformFetchFailure]:
+        """Paginate Neynar cast search to the since boundary or token
+        exhaustion, returning the full PaginationResult (items, page count,
+        termination, failure)."""
         if not query.strip():
             logger.warning("Skipping empty Farcaster search query")
-            return [], False, None
+            return PaginationResult(
+                items=[], page_ceiling_reached=False, failure=None,
+                page_count=0, termination="skipped",
+            )
 
         ctx = f"search: {query[:40]}" + (f" in /{channel_id}" if channel_id else "")
 
@@ -310,22 +359,20 @@ class FarcasterScanner:
             platform="farcaster",
             context=ctx,
         )
-        return result.items, result.page_ceiling_reached, result.failure
+        return result
 
-    async def _channel_feed_paginated(
+    async def _channel_feed_paginated_result(
         self,
         client: httpx.AsyncClient,
         channel_id: str,
         max_pages: int,
-    ) -> tuple[list[dict[str, object]], bool, PlatformFetchFailure | None]:
+    ) -> PaginationResult[dict[str, object], PlatformFetchFailure]:
         """Paginate Neynar channel feed to token exhaustion or the page ceiling.
 
         Channel feeds are not guaranteed reverse-chronological, so an item at
         or before `since` cannot prove later pages hold nothing new —
         pagination never stops early on that basis. The since filter is
         applied independently to every parsed item by the caller's _collect.
-
-        Returns (casts, page_ceiling_reached, failure_or_None).
         """
         ctx = f"feed: /{channel_id}"
 
@@ -374,7 +421,7 @@ class FarcasterScanner:
             platform="farcaster",
             context=ctx,
         )
-        return result.items, result.page_ceiling_reached, result.failure
+        return result
 
     async def publish(
         self,

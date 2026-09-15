@@ -113,8 +113,10 @@ def parse_args() -> argparse.Namespace:
 
     subparsers = parser.add_subparsers(dest="subcommand")
     from scout.cli.analysis import add_analysis_parser
+    from scout.cli.watermark import add_watermark_parser
 
     add_analysis_parser(subparsers, DB_PATH)
+    add_watermark_parser(subparsers, DB_PATH)
     preflight_p = subparsers.add_parser("preflight", help="Read-only Phase 1 deployment gate")
     preflight_p.add_argument("--dossier-root", required=True)
     preflight_p.add_argument("--db-path", default=DB_PATH)
@@ -699,6 +701,10 @@ def main() -> None:
         report = run_preflight(args.db_path, args.dossier_root)
         print(json.dumps(report, indent=2, sort_keys=True))
         raise SystemExit(1 if report["errors"] else 0)
+    if args.subcommand == "watermark":
+        from scout.cli.watermark import run_watermark
+
+        raise SystemExit(run_watermark(args))
     if args.subcommand == "phase1":
         from pathlib import Path
 

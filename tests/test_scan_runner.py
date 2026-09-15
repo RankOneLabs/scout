@@ -69,12 +69,14 @@ from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
 from scout.result import Err, Ok
 from scout.scanning.author_class import AUTHOR_CLASS_RULE_VERSION
 from scout.scanning.prefilter import RoutedMessage
+from scout.scanning.runner import PlatformsFetch
 from scout.scanning.schemas import (
     DeclarativeSegment,
     ReplyCandidate,
     ResourceSegment,
     StructuredDraftOutput,
 )
+from scout.storage.scans import EnvironmentLease
 from scout.storage.state import StateManager, SurfaceRateLimitedError
 from scout.verifier import VerifyResult
 from tests.conftest import seed_phase_run_contributors
@@ -125,11 +127,35 @@ def _fake_feedback_snapshot(mode: str = "shadow") -> PersistedFeedbackSnapshot:
 class _FakeState(AbstractContextManager["_FakeState"]):
     def __init__(self, registry: RuntimeRegistry | None = None) -> None:
         self.load_runtime_registry = Mock(return_value=registry or _empty_registry())
-        self.start_scan = Mock(side_effect=AssertionError("start_scan should not be called"))
+        # The canonical live owner is now committed before any platform I/O
+        # on every live (non-rescore) invocation, including a fetch that
+        # turns out to have zero new messages — see coverage.py's
+        # commit_canonical_owner / finalize_empty_success. A fixed id is a
+        # fine default; tests asserting dossier-readiness-gated paths never
+        # reach this call at all.
+        self.start_scan = Mock(return_value=1)
         self.complete_scan = Mock()
         self.finalize_scan_coverage = Mock()
         self.save_fetch_failure = Mock()
         self.commit = Mock()
+        self.acquire_environment_lease = Mock(
+            return_value=Ok(EnvironmentLease(
+                environment="development", owner_id="fake-owner", fence=1,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            ))
+        )
+        self.renew_environment_lease = Mock(
+            return_value=Ok(EnvironmentLease(
+                environment="development", owner_id="fake-owner", fence=1,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            ))
+        )
+        self.reconcile_abandoned_canonical_owners = Mock(return_value=[])
+        self.link_secondary_scan = Mock()
+        self.start_canonical_owner_scan = Mock(return_value=Ok(1))
+        self.list_source_checkpoints = Mock(return_value=[])
+        self.release_environment_lease = Mock(return_value=True)
+        self.close = Mock()
         self.has_seen_message = Mock(return_value=False)
         self.get_last_scan_timestamp = Mock(return_value=None)
         self.load_posts = Mock()
@@ -193,7 +219,7 @@ def _configure_main_loop_score_failure(
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(
-        scan_runner, "fetch_messages", AsyncMock(return_value=([msg], []))
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([msg], []))
     )
     monkeypatch.setattr(scan_runner, "score_messages", score_messages)
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
@@ -372,24 +398,254 @@ def test_validate_config_accepts_openrouter_api_key(
 
 
 @pytest.mark.asyncio
-async def test_main_loop_skips_zero_work_live_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_main_loop_empty_live_scan_is_a_finalized_empty_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A zero-message, fully covered live fetch still commits exactly one
+    canonical owner (before the fetch) and finalizes it as an empty
+    success — it never constructs a tracer or feedback loop, and never
+    scores anything."""
     fake_state = _FakeState(registry=_empty_registry())
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
+    tracer_ctor = Mock()
+    feedback_ctor = Mock()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fetch_messages_mock)
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=fake_state))
-    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock())
-    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock())
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", tracer_ctor)
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", feedback_ctor)
 
     args = Namespace(mode="both", rescore=None, rescore_failed=None, continuous=False)
 
     await scan_runner.main_loop(args)
 
-    fake_state.start_scan.assert_not_called()
-    fake_state.complete_scan.assert_not_called()
-    fake_state.commit.assert_not_called()
+    fake_state.start_canonical_owner_scan.assert_called_once()
+    fake_state.complete_scan.assert_called_once_with(
+        1, 0, 0, status="complete", overflow_count=0
+    )
+    fake_state.finalize_scan_coverage.assert_called_once()
+    _, finalize_kwargs = fake_state.finalize_scan_coverage.call_args
+    assert finalize_kwargs["advance_watermark"] is True
+    tracer_ctor.assert_not_called()
+    feedback_ctor.assert_not_called()
     fetch_messages_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_canonical_owner_is_committed_before_platform_fetch_is_awaited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Pause the platform fetch mid-flight and observe, from a second
+    connection, that the canonical owner scan is already durably
+    committed — the acceptance criterion this cohort is named for."""
+    db_path = str(tmp_path / "pause_before_fetch.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    fetch_paused = asyncio.Event()
+    resume_fetch = asyncio.Event()
+    observed_scan_row: sqlite3.Row | None = None
+
+    async def paused_fetch(
+        *_args: object, **_kwargs: object
+    ) -> PlatformsFetch:
+        fetch_paused.set()
+        await resume_fetch.wait()
+        return PlatformsFetch([], [])
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", paused_fetch)
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    main_loop_task = asyncio.create_task(scan_runner.main_loop(args))
+
+    await fetch_paused.wait()
+    # A separate, real connection to the same file — not real_state itself,
+    # so this genuinely proves durability rather than reading uncommitted
+    # in-process state.
+    observer = StateManager(db_path=db_path, init_schema=False)
+    try:
+        observed_scan_row = observer.conn.execute(
+            "SELECT role, status, completed_at FROM scans ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        observer.close()
+
+    resume_fetch.set()
+    await main_loop_task
+    real_state.close()
+
+    assert observed_scan_row is not None
+    assert observed_scan_row["role"] == "canonical_live"
+    assert observed_scan_row["status"] is None
+    assert observed_scan_row["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_canonical_owner_finalized_interrupted_on_fetch_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A fetch exception leaves the already-committed canonical owner
+    durably terminal with blocking evidence, and never advances the
+    watermark."""
+    db_path = str(tmp_path / "fetch_exception.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    async def failing_fetch(
+        *_args: object, **_kwargs: object
+    ) -> PlatformsFetch:
+        raise RuntimeError("platform is on fire")
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", failing_fetch)
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    with pytest.raises(RuntimeError, match="platform is on fire"):
+        await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT status, safe_watermark_at, watermark_advanced FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["status"] == "failed"
+    assert scan_row["safe_watermark_at"] is None
+    assert scan_row["watermark_advanced"] == 0
+    failures = real_state.get_scan_fetch_failures(1)
+    assert any(f["blocks_watermark_advance"] for f in failures)
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_canonical_owner_finalized_interrupted_on_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Cancellation mid-fetch leaves the canonical owner durably
+    interrupted rather than orphaned with no terminal status at all."""
+    db_path = str(tmp_path / "fetch_cancelled.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    async def cancelled_fetch(
+        *_args: object, **_kwargs: object
+    ) -> PlatformsFetch:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", cancelled_fetch)
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    with pytest.raises(asyncio.CancelledError):
+        await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT status, safe_watermark_at FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["status"] == "failed"
+    assert scan_row["safe_watermark_at"] is None
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_mode_both_second_pass_is_a_linked_non_advancing_secondary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    db_path = str(tmp_path / "mode_both_linkage.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+
+    args = Namespace(mode="both", rescore=None, rescore_failed=None, continuous=False)
+    await scan_runner.main_loop(args)
+
+    # A zero-message fetch finalizes as an empty success from the first
+    # pass alone — exactly one scan row is ever created, and it is the
+    # canonical owner. --mode both's linkage is exercised when there is
+    # work to score; this covers the has-nothing-to-link case explicitly.
+    rows = real_state.conn.execute("SELECT role, canonical_scan_id FROM scans").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["role"] == "canonical_live"
+    assert rows[0]["canonical_scan_id"] is None
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_rescore_scan_role_is_rescore_not_canonical_live(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    db_path = str(tmp_path / "rescore_role.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    msg = _message("rescored-1", datetime.now(UTC))
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    real_state.load_posts = Mock(return_value=[msg])
+    real_state.keyword_prefilter_result = None
+
+    args = Namespace(mode="default", rescore="all", rescore_failed=None, continuous=False)
+    await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT role, run_kind FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["role"] == "rescore"
+    assert scan_row["run_kind"] == "rescore"
+
+    real_state.close()
 
 
 @pytest.mark.asyncio
@@ -408,10 +664,10 @@ async def test_main_loop_anchors_watermark_to_pre_fetch_time(
     async def fake_fetch(
         *_args: object,
         **_kwargs: object,
-    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+    ) -> PlatformsFetch:
         nonlocal fetch_called_at
         fetch_called_at = datetime.now(UTC)
-        return ([_message("during-fetch", fetch_called_at)], [])
+        return PlatformsFetch([_message("during-fetch", fetch_called_at)], [])
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fake_fetch)
@@ -463,7 +719,9 @@ async def test_fetch_failure_without_messages_creates_partial_scan(
     )
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [failure])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], [failure]))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
@@ -509,7 +767,9 @@ async def test_processing_failure_marks_main_loop_scan_partial(
     }
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([msg], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([msg], []))
+    )
     monkeypatch.setattr(scan_runner, "run_pipeline", AsyncMock(return_value=pipeline_result))
     monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
     monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
@@ -638,7 +898,9 @@ async def test_keyboard_interrupt_marks_active_scan_interrupted(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([msg], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([msg], []))
+    )
     monkeypatch.setattr(scan_runner, "score_messages", interrupting_score)
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
@@ -673,7 +935,7 @@ async def test_main_loop_passes_configured_platform_query_caps(
     farcaster_ctor = Mock(return_value=object())
     bluesky_ctor = Mock(return_value=object())
 
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fetch_messages_mock)
@@ -701,10 +963,12 @@ async def test_main_loop_passes_configured_platform_query_caps(
         api_key="neynar",
         channel_ids=None,
         max_results_per_query=11,
+        max_pages=None,
     )
     bluesky_ctor.assert_called_once_with(
         feed_uris=None,
         max_results_per_query=12,
+        max_pages=None,
     )
 
 
@@ -736,7 +1000,9 @@ async def test_main_loop_closes_feedback_and_tracer(
     fake_feedback = _FakeFeedback()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=fake_state))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -832,7 +1098,9 @@ async def test_overflow_messages_saved_as_unevaluated_posts(
 
     monkeypatch.setattr(scan_runner, "SCAN_MAX_NEW_MESSAGES", 1)
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=(msgs, [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch(msgs, []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1270,7 +1538,9 @@ async def test_main_loop_cleanup_emits_no_runtime_warning(
     fake_feedback = _FakeFeedback()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=fake_state))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1335,7 +1605,7 @@ async def test_fetch_failure_recorded_as_partial_scan(
     # Provide one message so the scan proceeds (not skipped as zero-work).
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
-        AsyncMock(return_value=([_message("m1", now)], [failure]))
+        AsyncMock(return_value=PlatformsFetch([_message("m1", now)], [failure]))
     )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
@@ -1393,7 +1663,9 @@ async def test_overflow_count_persisted_in_scan_row(
 
     monkeypatch.setattr(scan_runner, "SCAN_MAX_NEW_MESSAGES", 1)
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=(msgs, [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch(msgs, []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1475,7 +1747,7 @@ async def test_main_loop_one_shot_exits_on_dossier_readiness_failure(
 ) -> None:
     """One-shot mode preserves the existing terminate-before-scanning behavior."""
     fake_state = _FakeState(registry=_registry_with_unready_project())
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fetch_messages_mock)
@@ -1509,7 +1781,7 @@ async def test_main_loop_continuous_retries_after_backoff_on_dossier_readiness_f
     fake_state.load_runtime_registry = Mock(
         side_effect=[_registry_with_unready_project(), _empty_registry()]
     )
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
 
     sleep_calls: list[float] = []
 
@@ -1538,15 +1810,18 @@ async def test_main_loop_continuous_retries_after_backoff_on_dossier_readiness_f
     assert sleep_calls[0] == SCAN_INTERVAL_HOURS * 3600
     # A fresh registry/readiness pass was taken after the delay.
     assert fake_state.load_runtime_registry.call_count == 2
-    # No scan row was created on the failed iteration.
-    fake_state.start_scan.assert_not_called()
     assert any("dossier_readiness_failed" in r.message for r in caplog.records)
 
     # Second iteration's readiness (now repaired to an empty registry) makes
     # progress — exactly one platform fetch, from the second iteration only —
     # and the loop reaches the normal end-of-scan sleep instead of failing
-    # readiness again.
+    # readiness again. That second iteration's fetch is a genuine live
+    # attempt, so it commits and finalizes exactly one canonical owner
+    # (an empty success, since fetch_messages returns no messages) — the
+    # first, failed-readiness iteration never reaches the fetch/commit at
+    # all.
     fetch_messages_mock.assert_awaited_once()
+    fake_state.start_canonical_owner_scan.assert_called_once()
     assert len(sleep_calls) == 2
 
 
@@ -1693,7 +1968,7 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
     # establishes a safe watermark to anchor against.
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
-        AsyncMock(return_value=([_message("m1", datetime.now(UTC))], [])),
+        AsyncMock(return_value=PlatformsFetch([_message("m1", datetime.now(UTC))], [])),
     )
     await scan_runner.main_loop(args)
 
@@ -1713,7 +1988,7 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
     )
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
-        AsyncMock(return_value=([], [page_ceiling_failure])),
+        AsyncMock(return_value=PlatformsFetch([], [page_ceiling_failure])),
     )
     await scan_runner.main_loop(args)
 

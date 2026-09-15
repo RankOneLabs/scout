@@ -9,7 +9,7 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 44
+LATEST_SCHEMA_VERSION = 45
 
 REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS review_dispositions (
@@ -88,7 +88,9 @@ COVERAGE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS environment_leases (
         environment TEXT PRIMARY KEY,
         fence INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        owner_id TEXT,
+        expires_at TEXT
     )""",
     # One row per independently-checkpointed source, keyed by
     # scout.platforms.base.derive_source_key (decision 6). New sources start
@@ -111,6 +113,65 @@ COVERAGE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS source_checkpoints_platform_idx
         ON source_checkpoints(platform, active)""",
+)
+
+# Owned lifecycle and recovery (v45): the append-only recovery audit trail
+# for bounded backfill / controlled cutover / stale-watermark operations,
+# and the six-hour probe's persisted evidence. Shared by bootstrap and the
+# additive v45 migration; each statement executes individually so
+# executescript cannot commit the outer UoW.
+LEASE_AND_RECOVERY_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    # One row per probe run. Read-only against every active normalized
+    # source at production's normal page/result limits over a bounded
+    # recent window — never mutates a source_checkpoints cursor. A
+    # cutover's compare-and-set requires a recent passed=1 row for the same
+    # environment.
+    """CREATE TABLE IF NOT EXISTS source_probe_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        environment TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        passed INTEGER,
+        source_count INTEGER NOT NULL DEFAULT 0,
+        page_count INTEGER NOT NULL DEFAULT 0,
+        window_hours REAL NOT NULL DEFAULT 0,
+        limits_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(limits_json)),
+        detail_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(detail_json)),
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE INDEX IF NOT EXISTS source_probe_runs_environment_idx
+        ON source_probe_runs(environment, started_at)""",
+    # Append-only audit trail for recovery operations (decision 9): a
+    # bounded backfill or an accepted-gap cutover is never silent history
+    # editing — the exact policy, evidence, operator, rationale, and
+    # before/after cursor are durably recorded and immutable.
+    """CREATE TABLE IF NOT EXISTS recovery_operations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        environment TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK(operation IN ('backfill', 'cutover', 'stale_check')),
+        operator TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        policy TEXT,
+        source_evidence TEXT,
+        probe_run_id INTEGER REFERENCES source_probe_runs(id),
+        expected_old_watermark TEXT,
+        accepted_new_watermark TEXT,
+        outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'refused')),
+        detail TEXT,
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE INDEX IF NOT EXISTS recovery_operations_environment_idx
+        ON recovery_operations(environment, created_at)""",
+    """CREATE TRIGGER IF NOT EXISTS recovery_operations_no_update
+        BEFORE UPDATE ON recovery_operations BEGIN
+        SELECT RAISE(ABORT, 'recovery_operations is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS recovery_operations_no_delete
+        BEFORE DELETE ON recovery_operations BEGIN
+        SELECT RAISE(ABORT, 'recovery_operations is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS recovery_operations_no_replace
+        BEFORE INSERT ON recovery_operations
+        WHEN EXISTS (SELECT 1 FROM recovery_operations WHERE id = NEW.id)
+        BEGIN SELECT RAISE(ABORT, 'recovery_operations is immutable'); END""",
 )
 
 # Shared by bootstrap and the additive v38 migration. Each statement executes
@@ -201,7 +262,13 @@ CREATE TABLE IF NOT EXISTS scans (
     lease_fence INTEGER,
     coverage_outcome TEXT,
     watermark_advanced INTEGER NOT NULL DEFAULT 0,
-    coverage_classifier_version INTEGER
+    coverage_classifier_version INTEGER,
+    -- Owned lifecycle and recovery (v45). NULL for the canonical owner
+    -- itself; set on a linked secondary/rescore scan to the canonical_live
+    -- scan_id it is a non-advancing pass of (e.g. --mode both's second
+    -- pass), so a scan's linkage to its owner is queryable rather than
+    -- inferred from timing.
+    canonical_scan_id INTEGER REFERENCES scans(id)
 );
 
 CREATE TABLE IF NOT EXISTS parent_context_assessments (
@@ -1087,6 +1154,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(REVIEW_SCHEMA_STATEMENTS)};
 {';'.join(AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS)};
 {';'.join(COVERAGE_SCHEMA_STATEMENTS)};
+{';'.join(LEASE_AND_RECOVERY_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """
