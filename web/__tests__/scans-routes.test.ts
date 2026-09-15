@@ -277,6 +277,22 @@ beforeAll(() => {
     9, now, now, now, null, 0, 0, "interrupted", "production", "live", "canonical_live",
     null, 0, null, null
   );
+  // Scan 10: a terminal partial fetch with no counters is failure evidence,
+  // not historical empty noise.
+  insertCoverageScan.run(
+    10, now, now, now, null, 0, 0, "partial", "production", "live", "canonical_live",
+    null, 0, null, null
+  );
+  // Scan 11: a finalized empty success is meaningful coverage evidence.
+  insertCoverageScan.run(
+    11, now, now, now, now, 0, 0, "complete", "production", "live", "canonical_live",
+    "complete", 1, 1, null
+  );
+  // Scan 12: safe_watermark_at alone is not advancement provenance.
+  insertCoverageScan.run(
+    12, now, now, now, "2027-01-01T00:00:00Z", 0, 0, "complete", "production", "live", "canonical_live",
+    "blocked", 0, 1, null
+  );
   db.prepare(
     `INSERT INTO scan_fetch_failures
        (id, scan_id, platform, context, kind, message, operation_phase,
@@ -372,7 +388,9 @@ describe("scans query layer", () => {
   it("hides historical true-empty completed scans from the list", async () => {
     const { getScans } = await import("@/lib/queries");
 
-    expect(getScans().map((scan) => scan.id)).toEqual([9, 8, 7, 6, 5, 4, 3, 2]);
+    expect(getScans().map((scan) => scan.id)).toEqual([
+      12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2,
+    ]);
   });
 
   it("returns 404 for a hidden true-empty completed scan id", async () => {
@@ -380,6 +398,12 @@ describe("scans query layer", () => {
 
     const resp = await GET(makeNextRequest("http://localhost/api/scans?id=1") as never);
     expect(resp.status).toBe(404);
+  });
+
+  it.each([10, 11])("keeps meaningful zero-count scan %i visible", async (id) => {
+    const { GET } = await import("@/app/api/scans/route");
+    const resp = await GET(makeNextRequest(`http://localhost/api/scans?id=${id}`) as never);
+    expect(resp.status).toBe(200);
   });
 
   it("includes the scan's feedback snapshot summary when one is recorded", async () => {
@@ -452,6 +476,14 @@ describe("coverage and watermark facts are independent of processing status", ()
     const resp = await GET(makeNextRequest("http://localhost/api/scans?id=6") as never);
     const body = await resp.json();
     expect(body.safe_watermark_at).toBeNull();
+    expect(body.environment_watermark_at).toBe("2026-05-15T00:00:00Z");
+  });
+
+  it("ignores a safe watermark lacking advancement provenance", async () => {
+    const { GET } = await import("@/app/api/scans/route");
+    const resp = await GET(makeNextRequest("http://localhost/api/scans?id=12") as never);
+    const body = await resp.json();
+    expect(body.safe_watermark_at).toBe("2027-01-01T00:00:00Z");
     expect(body.environment_watermark_at).toBe("2026-05-15T00:00:00Z");
   });
 

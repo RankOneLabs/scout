@@ -290,24 +290,85 @@ async def _run_probe(args: argparse.Namespace) -> int:
                 window_hours=args.hours,
                 limits_json=json.dumps(_production_limits(), sort_keys=True),
             )
-            fetched = await fetch_messages(
-                discord_scanner, farcaster_scanner, bluesky_scanner, since,
-                queries=search_queries,
-            )
+            try:
+                fetched = await fetch_messages(
+                    discord_scanner, farcaster_scanner, bluesky_scanner, since,
+                    queries=search_queries,
+                )
+            except asyncio.CancelledError as exc:
+                state.complete_probe_run(
+                    probe_run_id,
+                    environment=args.environment,
+                    owner_id=lock.owner_id,
+                    fence=lock.fence,
+                    passed=False,
+                    source_count=len(active_before),
+                    page_count=0,
+                    detail_json=json.dumps({
+                        "failure": {
+                            "kind": "cancelled",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        }
+                    }, sort_keys=True),
+                )
+                raise
+            except Exception as exc:
+                completion = state.complete_probe_run(
+                    probe_run_id,
+                    environment=args.environment,
+                    owner_id=lock.owner_id,
+                    fence=lock.fence,
+                    passed=False,
+                    source_count=len(active_before),
+                    page_count=0,
+                    detail_json=json.dumps({
+                        "failure": {
+                            "kind": "fetch_error",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        }
+                    }, sort_keys=True),
+                )
+                match completion:
+                    case Err(lease_error):
+                        _print_json({
+                            "ok": False,
+                            "reason": "lock_not_held",
+                            "detail": lease_error.detail,
+                        })
+                        return EXIT_LOCK_CONTENTION
+                    case Ok():
+                        _print_json({
+                            "ok": False,
+                            "reason": "fetch_error",
+                            "detail": f"{type(exc).__name__}: {exc}",
+                            "probe_run_id": probe_run_id,
+                        })
+                        return EXIT_SOURCE_OR_PROBE_FAILURE
             # Evidence gathered after losing the lock is not this run's to
             # record: another worker may already be probing or cutting over.
             lock.handle.check()
             evidence = _source_evidence(state, fetched)
             passed = evidence.all_covered
-            state.complete_probe_run(
+            completion = state.complete_probe_run(
                 probe_run_id,
+                environment=args.environment,
+                owner_id=lock.owner_id,
+                fence=lock.fence,
                 passed=passed,
+                source_count=len(evidence.outcomes),
                 page_count=evidence.page_count,
                 detail_json=json.dumps(
                     {"message_count": len(fetched.messages), **evidence.to_json()},
                     sort_keys=True,
                 ),
             )
+            if isinstance(completion, Err):
+                _print_json({
+                    "ok": False,
+                    "reason": "lock_not_held",
+                    "detail": completion.error.detail,
+                })
+                return EXIT_LOCK_CONTENTION
             _print_json({
                 "ok": passed,
                 "probe_run_id": probe_run_id,
@@ -389,44 +450,63 @@ async def _run_backfill(args: argparse.Namespace) -> int:
                 )
                 lock.handle.check()
                 evidence = _source_evidence(state, fetched)
-                source_coverage = coverage_lifecycle.register_source_outcomes(
-                    state, fetched.source_outcomes
-                )
-                failures = [
-                    *fetched.failures,
-                    *coverage_lifecycle.unattempted_source_failures(source_coverage),
-                ]
-                unseen = [
-                    m for m in fetched.messages
-                    if not state.has_seen_message(m.platform, m.platform_id)
-                ]
-                for msg in unseen:
-                    state.save_post(msg, canonical_scan_id)
-                for failure in failures:
-                    state.save_fetch_failure(
-                        canonical_scan_id,
-                        platform=failure.platform, kind=failure.kind, message=failure.message,
-                        context=failure.context, http_status=failure.http_status,
-                        retry_after=failure.retry_after, retryable=failure.retryable,
-                        operation_phase=failure.operation_phase,
-                        blocks_watermark_advance=failure.blocks_watermark_advance,
+                # Checkpoints, posts, failure evidence, and terminal status are
+                # committed together only while this recovery owner still holds
+                # the exact lease. A takeover cannot admit stale-worker writes.
+                with state.db.begin_immediate():
+                    match state.validate_environment_lease(
+                        args.environment, lock.owner_id, lock.fence
+                    ):
+                        case Err(lease_error):
+                            raise lease_lifecycle.LeaseLostError(lease_error.detail)
+                        case Ok():
+                            pass
+                    source_coverage = coverage_lifecycle.register_source_outcomes(
+                        state, fetched.source_outcomes
                     )
-                scan_status: Literal["complete", "partial"] = (
-                    "partial" if failures else "complete"
-                )
-                state.complete_scan(
-                    canonical_scan_id, len(unseen), 0, status=scan_status, overflow_count=0,
-                )
+                    failures = [
+                        *fetched.failures,
+                        *coverage_lifecycle.unattempted_source_failures(source_coverage),
+                    ]
+                    unseen = [
+                        m for m in fetched.messages
+                        if not state.has_seen_message(m.platform, m.platform_id)
+                    ]
+                    for msg in unseen:
+                        state.save_post(msg, canonical_scan_id)
+                    for failure in failures:
+                        state.save_fetch_failure(
+                            canonical_scan_id,
+                            platform=failure.platform, kind=failure.kind,
+                            message=failure.message, context=failure.context,
+                            http_status=failure.http_status,
+                            retry_after=failure.retry_after, retryable=failure.retryable,
+                            operation_phase=failure.operation_phase,
+                            blocks_watermark_advance=failure.blocks_watermark_advance,
+                        )
+                    scan_status: Literal["complete", "partial"] = (
+                        "partial" if failures else "complete"
+                    )
+                    state.complete_scan(
+                        canonical_scan_id, len(unseen), 0,
+                        status=scan_status, overflow_count=0,
+                    )
             except BaseException as exc:
                 # The owner is already durable; make it terminal with evidence
                 # and audit the refused attempt before the lock goes away —
                 # cancellation included.
-                with suppress(Exception):
-                    coverage_lifecycle.record_interruption(
-                        state, canonical_scan_id, messages_scanned=0,
-                        error_kind="backfill_error",
-                        error_message=f"{type(exc).__name__}: {exc}",
-                    )
+                with suppress(Exception), state.db.begin_immediate():
+                    match state.validate_environment_lease(
+                        args.environment, lock.owner_id, lock.fence
+                    ):
+                        case Ok():
+                            coverage_lifecycle.record_interruption(
+                                state, canonical_scan_id, messages_scanned=0,
+                                error_kind="backfill_error",
+                                error_message=f"{type(exc).__name__}: {exc}",
+                            )
+                        case Err():
+                            pass
                 with suppress(Exception):
                     _refuse(f"backfill_error: {type(exc).__name__}: {exc}")
                 raise
@@ -525,6 +605,7 @@ def _run_cutover(args: argparse.Namespace) -> int:
                 source_evidence=args.source_evidence,
                 expected_old_watermark=expected_old, accepted_new_watermark=accepted_new,
                 probe_max_age_seconds=_config.SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS,
+                required_probe_limits=_production_limits(),
                 probe_min_window_hours=PROBE_WINDOW_HOURS,
             )
             match result:

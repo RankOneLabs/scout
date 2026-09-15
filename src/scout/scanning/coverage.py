@@ -65,14 +65,13 @@ def commit_linked_secondary(
     eligible to advance the watermark: finalize_scan_coverage only ever
     accepts role='canonical_live'."""
     role: ScanRole = "rescore" if run_kind == "rescore" else "secondary"
-    scan_id = state.start_scan(
+    return state.start_linked_secondary_scan(
         fetch_started_at=fetch_started_at,
         environment=environment,
         run_kind=run_kind,
         role=role,
+        canonical_scan_id=canonical_scan_id,
     )
-    state.link_secondary_scan(scan_id, canonical_scan_id=canonical_scan_id)
-    return scan_id
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,10 +8,12 @@ primitives this runbook operates.
 
 ## What this is, in one paragraph
 
-Scout's live watermark only ever advances through `finalize_scan_coverage`,
-gated by a fenced environment lease (see the transactions doc). When a live
-worker is down, fenced out, or repeatedly failing to cover its sources, the
-watermark stalls. **Bounded backfill is the default recovery path**: it
+Scout's live watermark normally advances through `finalize_scan_coverage`,
+gated by a fenced environment lease (see the transactions doc). Controlled
+cutover via `cutover_watermark` is the sole audited exception: it advances the
+cursor by inserting a synthetic canonical scan under the same fenced lease.
+When a live worker is down, fenced out, or repeatedly failing to cover its
+sources, the watermark stalls. **Bounded backfill is the default recovery path**: it
 re-attempts a fetch over a wider window, through the same canonical-owner
 pipeline a normal scan uses, so the watermark can advance normally once
 coverage is actually complete — no history is edited, no gap is accepted.
@@ -22,6 +24,11 @@ Every `scout watermark` command that mutates anything holds the
 environment's fenced lease as an exclusive recovery lock for the duration
 of the command, and both backfill and cutover attempts — accepted or
 refused — are appended to the immutable `recovery_operations` table.
+Probe completion and backfill checkpoint, post, failure, and terminal-status
+writes revalidate that lease inside their own storage transaction. They are
+lease-bound non-watermark evidence writes; `finalize_scan_coverage` and the
+controlled `cutover_watermark` exception remain the only fenced operations
+that can advance the watermark.
 
 None of these commands perform any host-level action on willie (the
 production host). Scout has no service manager, scheduler, or deployment tooling of its own in this
@@ -74,7 +81,8 @@ source fails the probe just as a page ceiling does. **Never touches a
 `source_checkpoints` cursor.** Exits `0` only when every source was fully
 covered, `4` (`EXIT_SOURCE_OR_PROBE_FAILURE`) otherwise. A passed probe
 with a window of at least six hours, completed within
-`SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS`, is a hard prerequisite for
+`SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS`, and recorded limits exactly matching
+the current production probe contract is a hard prerequisite for
 `cutover` below — run this immediately before a cutover attempt, not
 hours earlier, and do not shorten `--hours` below 6 for a probe you intend
 to cut over on.
@@ -107,8 +115,9 @@ Refuses to run without:
 - the recovery lock, still held at the expected generation and unexpired
   at commit time (exit `2` on contention or loss);
 - a `source_probe_runs` row with `passed=1`, a window of at least six
-  hours, completed within `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS` (exit `4`
-  if missing — run `probe` first);
+  hours, completed within `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS`, and
+  `limits_json` matching the current production limits (exit `4` if
+  missing — run `probe` first);
 - every one of `--operator`, `--rationale`, `--policy`, `--source-evidence`
   non-blank (argparse enforces presence; the storage gate additionally
   refuses whitespace-only values — exit `5`);

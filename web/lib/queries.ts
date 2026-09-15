@@ -168,10 +168,14 @@ function withWatermarkAdvancedBoolean<T extends { watermark_advanced: number }>(
 }
 
 function isHistoricalTrueEmptyCompletedScan(row: ScanWithCounts): boolean {
-  // A failed or interrupted scan (including a canonical owner reconciled
-  // at startup, which sets completed_at with zero counters) is operator
-  // evidence, never "historical empty noise" — it must stay visible.
-  if (row.status === "failed" || row.status === "interrupted") return false;
+  // Only pre-coverage completed rows can be historical empty noise. Partial,
+  // failed, and interrupted rows are operator evidence, as are zero-message
+  // scans whose finalized coverage or advancement provenance is meaningful.
+  if (
+    (row.status !== null && row.status !== "complete") ||
+    row.coverage_outcome !== null ||
+    row.watermark_advanced
+  ) return false;
   return (
     row.completed_at !== null &&
     (row.messages_scanned ?? 0) === 0 &&
@@ -326,6 +330,7 @@ export function getEnvironmentWatermarkAt(environment: string): string | null {
        FROM scans
        WHERE safe_watermark_at IS NOT NULL AND environment = ?
          AND role = 'canonical_live'
+         AND watermark_advanced = 1
        ORDER BY id DESC
        LIMIT 1`
     )

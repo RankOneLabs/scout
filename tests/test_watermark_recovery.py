@@ -4,6 +4,7 @@ and exit-code contracts."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from argparse import Namespace
@@ -12,7 +13,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 import scout.cli.watermark as watermark_cli
+from scout.config import Message
+from scout.errors import SourceFetchOutcome
+from scout.result import Err
 from scout.scanning.runner import PlatformsFetch
+from scout.storage.scans import LeaseError
 from scout.storage.state import StateManager
 
 
@@ -76,12 +81,16 @@ class TestStaleCheck:
             probe_id = state.start_probe_run(
                 "production", source_count=1, window_hours=6.0, limits_json="{}",
             )
-            state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+            state.complete_probe_run(
+                probe_id, environment="production", owner_id="owner",
+                fence=acquired.value.fence, passed=True, source_count=1,
+                page_count=1, detail_json="{}",
+            )
             state.cutover_watermark(
                 environment="production", owner_id="owner", fence=acquired.value.fence,
                 operator="steve", rationale="seed", policy="p", source_evidence="e",
                 expected_old_watermark=None, accepted_new_watermark=accepted,
-                probe_max_age_seconds=3600,
+                probe_max_age_seconds=3600, required_probe_limits={},
             )
 
         exit_code = watermark_cli.run_watermark(_stale_check_args(db_path))
@@ -98,13 +107,17 @@ class TestStaleCheck:
             probe_id = state.start_probe_run(
                 "development", source_count=1, window_hours=6.0, limits_json="{}",
             )
-            state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+            state.complete_probe_run(
+                probe_id, environment="development", owner_id="owner",
+                fence=acquired.value.fence, passed=True, source_count=1,
+                page_count=1, detail_json="{}",
+            )
             state.cutover_watermark(
                 environment="development", owner_id="owner", fence=acquired.value.fence,
                 operator="steve", rationale="seed", policy="p", source_evidence="e",
                 expected_old_watermark=None,
                 accepted_new_watermark=datetime.now(UTC) - timedelta(minutes=1),
-                probe_max_age_seconds=3600,
+                probe_max_age_seconds=3600, required_probe_limits={},
             )
 
         exit_code = watermark_cli.run_watermark(_stale_check_args(db_path))
@@ -134,6 +147,73 @@ class TestProbe:
             run = state.get_probe_run(1)
             assert run is not None
             assert run.passed is True
+
+    def test_probe_records_actual_source_count_on_a_fresh_database(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+        outcome = SourceFetchOutcome(
+            source_key="discord:channel:1", platform="discord",
+            source_kind="channel", provider_key="1", page_count=1,
+            termination="exhausted", message_count=0,
+        )
+
+        async def fake_fetch(*_args: object, **_kwargs: object):
+            return PlatformsFetch([], [], (outcome,))
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
+        assert watermark_cli.run_watermark(_probe_args(db_path)) == watermark_cli.EXIT_OK
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            run = state.get_probe_run(1)
+            assert run is not None
+            assert run.source_count == 1
+
+    def test_probe_fetch_exception_is_completed_as_failed(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+
+        async def fail_fetch(*_args: object, **_kwargs: object):
+            raise RuntimeError("provider unavailable")
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", fail_fetch)
+        assert (
+            watermark_cli.run_watermark(_probe_args(db_path))
+            == watermark_cli.EXIT_SOURCE_OR_PROBE_FAILURE
+        )
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            run = state.get_probe_run(1)
+            assert run is not None
+            assert run.completed_at is not None
+            assert run.passed is False
+            assert "provider unavailable" in run.detail_json
+
+    def test_probe_cancellation_records_evidence_before_reraising(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+
+        async def cancel_fetch(*_args: object, **_kwargs: object):
+            raise asyncio.CancelledError("operator cancelled")
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", cancel_fetch)
+        with pytest.raises(asyncio.CancelledError):
+            watermark_cli.run_watermark(_probe_args(db_path))
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            run = state.get_probe_run(1)
+            assert run is not None
+            assert run.completed_at is not None
+            assert run.passed is False
+            assert "cancelled" in run.detail_json
 
     def test_probe_never_touches_source_checkpoints(
         self, db_path: str, monkeypatch: pytest.MonkeyPatch,
@@ -236,6 +316,45 @@ class TestBackfill:
             assert row["operation"] == "backfill"
             assert row["outcome"] == "refused"
 
+    def test_backfill_does_not_persist_recovery_data_after_lease_loss(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+        message = Message(
+            platform="discord", platform_id="stale", channel_name="general",
+            channel_id="1", author_name="alice", author_id="a1",
+            content="stale worker data", created_at=datetime.now(UTC),
+            url="https://example.test/stale",
+        )
+
+        async def fake_fetch(*_args: object, **_kwargs: object):
+            return PlatformsFetch([message], [])
+
+        def reject_lease(
+            _state: StateManager, environment: str, _owner_id: str, _fence: int
+        ) -> Err[LeaseError]:
+            return Err(LeaseError(
+                operation="validate_environment_lease",
+                environment=environment,
+                detail="lease taken over",
+            ))
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
+        monkeypatch.setattr(StateManager, "validate_environment_lease", reject_lease)
+
+        with pytest.raises(watermark_cli.lease_lifecycle.LeaseLostError):
+            watermark_cli.run_watermark(_backfill_args(db_path))
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            assert state.db.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+            assert state.db.execute(
+                "SELECT COUNT(*) FROM scan_fetch_failures"
+            ).fetchone()[0] == 0
+            scan = state.db.execute("SELECT status FROM scans").fetchone()
+            assert scan["status"] is None
+
 
 class TestCutover:
     def test_cutover_without_a_recent_probe_is_refused(
@@ -258,10 +377,22 @@ class TestCutover:
         self, db_path: str, capsys: pytest.CaptureFixture,
     ) -> None:
         with StateManager(db_path=db_path, init_schema=False) as state:
-            probe_id = state.start_probe_run(
-                "production", source_count=1, window_hours=6.0, limits_json="{}",
+            lease = state.acquire_environment_lease(
+                "production", "probe-seed", ttl_seconds=300
             )
-            state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+            assert lease.value is not None
+            probe_id = state.start_probe_run(
+                "production", source_count=1, window_hours=6.0,
+                limits_json=json.dumps(watermark_cli._production_limits(), sort_keys=True),
+            )
+            state.complete_probe_run(
+                probe_id, environment="production", owner_id="probe-seed",
+                fence=lease.value.fence, passed=True, source_count=1,
+                page_count=1, detail_json="{}",
+            )
+            state.release_environment_lease(
+                "production", "probe-seed", lease.value.fence
+            )
 
         accepted = datetime.now(UTC) - timedelta(minutes=1)
         exit_code = watermark_cli.run_watermark(
@@ -281,10 +412,22 @@ class TestCutover:
 
     def test_cutover_refuses_stale_expected_old(self, db_path: str) -> None:
         with StateManager(db_path=db_path, init_schema=False) as state:
-            probe_id = state.start_probe_run(
-                "production", source_count=1, window_hours=6.0, limits_json="{}",
+            lease = state.acquire_environment_lease(
+                "production", "probe-seed", ttl_seconds=300
             )
-            state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+            assert lease.value is not None
+            probe_id = state.start_probe_run(
+                "production", source_count=1, window_hours=6.0,
+                limits_json=json.dumps(watermark_cli._production_limits(), sort_keys=True),
+            )
+            state.complete_probe_run(
+                probe_id, environment="production", owner_id="probe-seed",
+                fence=lease.value.fence, passed=True, source_count=1,
+                page_count=1, detail_json="{}",
+            )
+            state.release_environment_lease(
+                "production", "probe-seed", lease.value.fence
+            )
 
         exit_code = watermark_cli.run_watermark(
             _cutover_args(

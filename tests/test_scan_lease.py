@@ -234,12 +234,18 @@ class TestReconcileAbandonedCanonicalOwners:
 
 
 def _passed_probe(
-    state: StateManager, environment: str = "production", window_hours: float = 6.0
+    state: StateManager,
+    fence: int,
+    environment: str = "production",
+    window_hours: float = 6.0,
 ) -> int:
     probe_id = state.start_probe_run(
         environment, source_count=1, window_hours=window_hours, limits_json="{}",
     )
-    state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+    state.complete_probe_run(
+        probe_id, environment=environment, owner_id="owner-a", fence=fence,
+        passed=True, source_count=1, page_count=1, detail_json="{}",
+    )
     return probe_id
 
 
@@ -249,7 +255,7 @@ def _cutover(state: StateManager, fence: int, **overrides):
         operator="steve", rationale="accept the gap", policy="policy-v1",
         source_evidence="status page", expected_old_watermark=None,
         accepted_new_watermark=datetime.now(UTC) - timedelta(minutes=1),
-        probe_max_age_seconds=3600,
+        probe_max_age_seconds=3600, required_probe_limits={},
     )
     kwargs.update(overrides)
     return state.cutover_watermark(**kwargs)
@@ -267,7 +273,7 @@ class TestCutoverWatermark:
     ) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        _passed_probe(in_memory_state)
+        _passed_probe(in_memory_state, acquired.value.fence)
         result = _cutover(in_memory_state, acquired.value.fence + 1)
         assert isinstance(result, Err)
         assert result.error.reason == "lock_not_held"
@@ -277,7 +283,7 @@ class TestCutoverWatermark:
     def test_refuses_blank_metadata(self, in_memory_state: StateManager) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        _passed_probe(in_memory_state)
+        _passed_probe(in_memory_state, acquired.value.fence)
         result = _cutover(in_memory_state, acquired.value.fence, rationale="   ")
         assert isinstance(result, Err)
         assert result.error.reason == "missing_metadata"
@@ -285,7 +291,7 @@ class TestCutoverWatermark:
     def test_refuses_naive_or_future_accepted_new(self, in_memory_state: StateManager) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        _passed_probe(in_memory_state)
+        _passed_probe(in_memory_state, acquired.value.fence)
         naive = _cutover(
             in_memory_state, acquired.value.fence,
             accepted_new_watermark=datetime.now().replace(tzinfo=None),
@@ -300,8 +306,31 @@ class TestCutoverWatermark:
     def test_refuses_without_a_recent_six_hour_probe(self, in_memory_state: StateManager) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        _passed_probe(in_memory_state, window_hours=1.0)
+        _passed_probe(in_memory_state, acquired.value.fence, window_hours=1.0)
         result = _cutover(in_memory_state, acquired.value.fence)
+        assert isinstance(result, Err)
+        assert result.error.reason == "missing_probe"
+
+    def test_refuses_probe_with_nonproduction_limits(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        probe_id = in_memory_state.start_probe_run(
+            "production", source_count=1, window_hours=6.0,
+            limits_json='{"discord_max_pages": 999}',
+        )
+        completion = in_memory_state.complete_probe_run(
+            probe_id, environment="production", owner_id="owner-a",
+            fence=acquired.value.fence, passed=True, source_count=1,
+            page_count=1, detail_json="{}",
+        )
+        assert isinstance(completion, Ok)
+
+        result = _cutover(
+            in_memory_state, acquired.value.fence,
+            required_probe_limits={"discord_max_pages": 5},
+        )
         assert isinstance(result, Err)
         assert result.error.reason == "missing_probe"
 
@@ -310,7 +339,7 @@ class TestCutoverWatermark:
     ) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        _passed_probe(in_memory_state)
+        _passed_probe(in_memory_state, acquired.value.fence)
         result = _cutover(
             in_memory_state, acquired.value.fence,
             expected_old_watermark=datetime(2020, 1, 1, tzinfo=UTC),
@@ -324,7 +353,7 @@ class TestCutoverWatermark:
     ) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        probe_id = _passed_probe(in_memory_state)
+        probe_id = _passed_probe(in_memory_state, acquired.value.fence)
         accepted = datetime.now(UTC) - timedelta(minutes=1)
         result = _cutover(in_memory_state, acquired.value.fence, accepted_new_watermark=accepted)
         assert isinstance(result, Ok)
@@ -340,7 +369,7 @@ class TestCutoverWatermark:
     ) -> None:
         acquired = _acquire(in_memory_state, "production", "owner-a")
         assert isinstance(acquired, Ok)
-        _passed_probe(in_memory_state)
+        _passed_probe(in_memory_state, acquired.value.fence)
         first = _cutover(
             in_memory_state, acquired.value.fence,
             accepted_new_watermark=datetime.now(UTC) - timedelta(hours=2),
@@ -443,6 +472,22 @@ class TestLeaseBoundOwnerCreationAndAdvancement:
         assert isinstance(result, Ok)
         assert result.value.watermark_advanced is False
 
+    def test_finalization_cannot_omit_a_persisted_required_source(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:1", platform="discord",
+            source_kind="channel", provider_key="1",
+        )
+
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            owner_id="owner-a", coverage_classifier_version=1,
+        )
+        assert isinstance(result, Err)
+        assert "persisted active requirements" in result.error.detail
+
     def test_covered_source_checkpoints_advance_atomically_with_the_watermark(
         self, in_memory_state: StateManager
     ) -> None:
@@ -491,6 +536,10 @@ class TestLeaseBoundOwnerCreationAndAdvancement:
         self, in_memory_state: StateManager
     ) -> None:
         scan_id, _fence = self._owned_complete_scan(in_memory_state)
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:1", platform="discord",
+            source_kind="channel", provider_key="1",
+        )
         result = in_memory_state.finalize_scan_coverage(
             scan_id, environment="production", advance_watermark=True, owner_id="owner-a",
             required_source_keys=frozenset({"discord:channel:1"}),
@@ -503,11 +552,15 @@ class TestLeaseBoundOwnerCreationAndAdvancement:
 
 class TestProbeAndRecoveryAudit:
     def test_probe_run_lifecycle(self, in_memory_state: StateManager) -> None:
+        acquired = _acquire(in_memory_state, "production", "probe-owner")
+        assert isinstance(acquired, Ok)
         probe_id = in_memory_state.start_probe_run(
             "production", window_hours=6.0, limits_json="{}", source_count=3,
         )
         in_memory_state.complete_probe_run(
-            probe_id, passed=True, page_count=5, detail_json='{"ok": true}'
+            probe_id, environment="production", owner_id="probe-owner",
+            fence=acquired.value.fence, passed=True, source_count=3,
+            page_count=5, detail_json='{"ok": true}',
         )
         run = in_memory_state.get_probe_run(probe_id)
         assert run is not None
@@ -515,10 +568,16 @@ class TestProbeAndRecoveryAudit:
         assert run.page_count == 5
 
     def test_get_latest_passed_probe_respects_max_age(self, in_memory_state: StateManager) -> None:
+        acquired = _acquire(in_memory_state, "production", "probe-owner")
+        assert isinstance(acquired, Ok)
         probe_id = in_memory_state.start_probe_run(
             "production", window_hours=6.0, limits_json="{}", source_count=1,
         )
-        in_memory_state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+        in_memory_state.complete_probe_run(
+            probe_id, environment="production", owner_id="probe-owner",
+            fence=acquired.value.fence, passed=True, source_count=1,
+            page_count=1, detail_json="{}",
+        )
         assert in_memory_state.get_latest_passed_probe(
             "production", max_age_seconds=3600
         ) is not None
@@ -529,15 +588,41 @@ class TestProbeAndRecoveryAudit:
     def test_get_latest_passed_probe_ignores_failed_runs(
         self, in_memory_state: StateManager
     ) -> None:
+        acquired = _acquire(in_memory_state, "production", "probe-owner")
+        assert isinstance(acquired, Ok)
         probe_id = in_memory_state.start_probe_run(
             "production", window_hours=6.0, limits_json="{}", source_count=1,
         )
         in_memory_state.complete_probe_run(
-            probe_id, passed=False, page_count=1, detail_json="{}"
+            probe_id, environment="production", owner_id="probe-owner",
+            fence=acquired.value.fence, passed=False, source_count=1,
+            page_count=1, detail_json="{}",
         )
         assert in_memory_state.get_latest_passed_probe(
             "production", max_age_seconds=3600
         ) is None
+
+    def test_stale_owner_cannot_complete_probe_run(
+        self, in_memory_state: StateManager
+    ) -> None:
+        acquired = _acquire(in_memory_state, "production", "owner-a")
+        assert isinstance(acquired, Ok)
+        probe_id = in_memory_state.start_probe_run(
+            "production", window_hours=6.0, limits_json="{}", source_count=1,
+        )
+        in_memory_state.db.execute(
+            "UPDATE environment_leases SET expires_at = ? WHERE environment = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "production"),
+        )
+        in_memory_state.db.commit()
+
+        completion = in_memory_state.complete_probe_run(
+            probe_id, environment="production", owner_id="owner-a",
+            fence=acquired.value.fence, passed=True, source_count=1,
+            page_count=1, detail_json="{}",
+        )
+        assert isinstance(completion, Err)
+        assert in_memory_state.get_probe_run(probe_id).completed_at is None
 
     def test_recovery_operation_is_recorded_and_immutable(
         self, in_memory_state: StateManager

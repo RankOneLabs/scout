@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import datetime
 from types import TracebackType
@@ -375,6 +375,11 @@ class StateManager:
     def release_environment_lease(self, environment: str, owner_id: str, fence: int) -> bool:
         return self._scans.release_environment_lease(environment, owner_id, fence)
 
+    def validate_environment_lease(
+        self, environment: str, owner_id: str, fence: int
+    ) -> Result[None, LeaseError]:
+        return self._scans.validate_environment_lease(environment, owner_id, fence)
+
     def start_canonical_owner_scan(
         self,
         *,
@@ -396,6 +401,23 @@ class StateManager:
     def link_secondary_scan(self, scan_id: int, *, canonical_scan_id: int) -> None:
         self._scans.link_secondary_scan(scan_id, canonical_scan_id=canonical_scan_id)
 
+    def start_linked_secondary_scan(
+        self,
+        *,
+        fetch_started_at: datetime,
+        environment: str,
+        run_kind: str,
+        role: ScanRole,
+        canonical_scan_id: int,
+    ) -> int:
+        return self._scans.start_linked_secondary_scan(
+            fetch_started_at=fetch_started_at,
+            environment=environment,
+            run_kind=run_kind,
+            role=role,
+            canonical_scan_id=canonical_scan_id,
+        )
+
     # --- Six-hour probe evidence (delegates to ScanStore) ---
 
     def start_probe_run(
@@ -412,10 +434,26 @@ class StateManager:
         )
 
     def complete_probe_run(
-        self, probe_run_id: int, *, passed: bool, page_count: int, detail_json: str
-    ) -> None:
-        self._scans.complete_probe_run(
-            probe_run_id, passed=passed, page_count=page_count, detail_json=detail_json
+        self,
+        probe_run_id: int,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        passed: bool,
+        source_count: int,
+        page_count: int,
+        detail_json: str,
+    ) -> Result[None, LeaseError]:
+        return self._scans.complete_probe_run(
+            probe_run_id,
+            environment=environment,
+            owner_id=owner_id,
+            fence=fence,
+            passed=passed,
+            source_count=source_count,
+            page_count=page_count,
+            detail_json=detail_json,
         )
 
     def get_probe_run(self, probe_run_id: int) -> ProbeRunResult | None:
@@ -470,6 +508,7 @@ class StateManager:
         expected_old_watermark: datetime | None,
         accepted_new_watermark: datetime,
         probe_max_age_seconds: float,
+        required_probe_limits: Mapping[str, int],
         probe_min_window_hours: float = 6.0,
     ) -> Result[CutoverResult, CutoverRefusal]:
         return self._scans.cutover_watermark(
@@ -483,6 +522,7 @@ class StateManager:
             expected_old_watermark=expected_old_watermark,
             accepted_new_watermark=accepted_new_watermark,
             probe_max_age_seconds=probe_max_age_seconds,
+            required_probe_limits=required_probe_limits,
             probe_min_window_hours=probe_min_window_hours,
         )
 

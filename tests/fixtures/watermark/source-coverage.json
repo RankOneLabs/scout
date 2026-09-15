@@ -11,10 +11,10 @@
       "legacy_checkpoint_at": "2026-04-01T00:00:00+00:00"
     },
     {
-      "source_key": "bluesky:search:agent-building",
+      "source_key": "bluesky:search:agent-building lang=en",
       "platform": "bluesky",
       "source_kind": "search",
-      "provider_key": "agent-building",
+      "provider_key": "agent-building lang=en",
       "required": true,
       "legacy_checkpoint_at": "2026-04-01T00:00:00+00:00"
     },

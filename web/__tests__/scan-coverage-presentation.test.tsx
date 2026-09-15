@@ -245,6 +245,46 @@ describe("ScanDetailView coverage presentation", () => {
     expect(screen.getByText("bluesky:search:src-a")).toBeTruthy();
   });
 
+  it("does not render an empty source-checkpoint heading", () => {
+    render(
+      React.createElement(ScanDetailView, {
+        scan: makeScanDetail({ source_checkpoints: [] }),
+        posts: [],
+        evaluations: [],
+        postFilters: {},
+        onPostFilterChange: noop,
+      })
+    );
+    expect(screen.queryByText("Source Checkpoints")).toBeNull();
+  });
+
+  it("renders a probe without a verdict as in progress", () => {
+    render(
+      React.createElement(ScanDetailView, {
+        scan: makeScanDetail({
+          latest_probe_run: {
+            probe_run_id: 4,
+            environment: "production",
+            started_at: "2026-05-15T00:00:00Z",
+            completed_at: null,
+            passed: null,
+            source_count: 1,
+            page_count: 0,
+            window_hours: 6,
+            limits_json: "{}",
+            detail_json: "{}",
+          },
+        }),
+        posts: [],
+        evaluations: [],
+        postFilters: {},
+        onPostFilterChange: noop,
+      })
+    );
+    expect(screen.getByText(/Latest probe: in progress/)).toBeTruthy();
+    expect(screen.queryByText(/Latest probe: failed/)).toBeNull();
+  });
+
   it("judges staleness by the environment's current watermark, not the selected scan's historical one", () => {
     // An old, blocked scan (own watermark null) in an environment a later
     // scan kept fresh must not read as stale.
@@ -342,6 +382,20 @@ describe("ScanDetailView coverage presentation", () => {
 
   it("does not render the watermark/lease section for a secondary scan", () => {
     const scan = makeScanDetail({ role: "secondary", canonical_scan_id: 1 });
+    render(
+      React.createElement(ScanDetailView, {
+        scan,
+        posts: [],
+        evaluations: [],
+        postFilters: {},
+        onPostFilterChange: noop,
+      })
+    );
+    expect(screen.queryByText("Watermark, Lease & Recovery")).toBeNull();
+  });
+
+  it("does not render recovery diagnostics for a non-live canonical-role scan", () => {
+    const scan = makeScanDetail({ role: "canonical_live", run_kind: "rescore" });
     render(
       React.createElement(ScanDetailView, {
         scan,

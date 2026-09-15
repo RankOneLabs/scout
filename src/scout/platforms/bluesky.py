@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
@@ -38,6 +38,7 @@ from scout.platforms.base import (
     paginate_cursor,
     parse_platform_ts,
     parse_retry_after,
+    source_since,
 )
 from scout.platforms.dedupe import dedupe_and_filter
 from scout.result import Err, Ok, Result
@@ -307,6 +308,7 @@ class BlueskyScanner:
         self,
         since: datetime | None = None,
         queries: list[str] | None = None,
+        source_checkpoints: Mapping[str, datetime | None] | None = None,
     ) -> PlatformFetchSuccess | PlatformFetchFailure:
         """Fetch posts matching the given queries from Bluesky.
 
@@ -380,25 +382,33 @@ class BlueskyScanner:
                 langs_to_use: tuple[str | None, ...] = self.languages if self.languages else (None,)
                 for query in active_queries:
                     for lang in langs_to_use:
-                        result = await self._search_paginated_result(
-                            client, query, headers, since, max_pages, lang=lang
+                        descriptor = SourceDescriptor(
+                            "bluesky", "search", f"{query} lang={lang or 'none'}"
                         )
-                        self._collect(result.items, seen_uris, collected, since)
+                        source_boundary = source_since(
+                            descriptor, since, source_checkpoints
+                        )
+                        result = await self._search_paginated_result(
+                            client, query, headers, source_boundary, max_pages, lang=lang
+                        )
+                        self._collect(result.items, seen_uris, collected, source_boundary)
                         _record(
-                            SourceDescriptor(
-                                "bluesky", "search", f"{query} lang={lang or 'none'}"
-                            ),
+                            descriptor,
                             result,
                             f"search: {query[:40]} lang={lang or 'none'}",
                         )
 
                 for feed_uri in self.feed_uris:
+                    descriptor = SourceDescriptor("bluesky", "feed", feed_uri)
+                    source_boundary = source_since(
+                        descriptor, since, source_checkpoints
+                    )
                     result = await self._feed_paginated_result(
                         client, feed_uri, headers, max_pages
                     )
-                    self._collect(result.items, seen_uris, collected, since)
+                    self._collect(result.items, seen_uris, collected, source_boundary)
                     _record(
-                        SourceDescriptor("bluesky", "feed", feed_uri),
+                        descriptor,
                         result,
                         f"feed: {feed_uri[:50]}",
                     )

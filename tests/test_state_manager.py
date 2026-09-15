@@ -1408,11 +1408,17 @@ class TestOperatorFactReadModel:
         assert row["expires_at"] is not None
 
     def test_source_probe_runs_row_shape(self, in_memory_state: StateManager) -> None:
+        lease = in_memory_state.acquire_environment_lease(
+            "production", "probe-owner", ttl_seconds=300
+        )
+        assert lease.value is not None
         probe_id = in_memory_state.start_probe_run(
             "production", source_count=2, window_hours=6.0, limits_json="{}",
         )
         in_memory_state.complete_probe_run(
-            probe_id, passed=True, page_count=4, detail_json='{"ok": true}',
+            probe_id, environment="production", owner_id="probe-owner",
+            fence=lease.value.fence, passed=True, source_count=2,
+            page_count=4, detail_json='{"ok": true}',
         )
         row = in_memory_state.conn.execute(
             "SELECT environment, started_at, completed_at, passed, source_count, "
@@ -1439,4 +1445,3 @@ class TestOperatorFactReadModel:
         assert row["outcome"] == "accepted"
         assert row["policy"] is None
         assert row["created_at"] is not None
-

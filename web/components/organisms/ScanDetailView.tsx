@@ -237,7 +237,13 @@ function RecoveryAndStaleness({ scan }: { scan: ScanDetailWithCounts }) {
         )}
         {scan.latest_probe_run && (
           <span>
-            Latest probe: {scan.latest_probe_run.passed ? "passed" : "failed"} (
+            Latest probe:{" "}
+            {scan.latest_probe_run.passed === null
+              ? "in progress"
+              : scan.latest_probe_run.passed
+                ? "passed"
+                : "failed"}{" "}
+            (
             {scan.latest_probe_run.window_hours}h window,{" "}
             {formatTimestamp(scan.latest_probe_run.started_at)})
           </span>
@@ -436,14 +442,18 @@ export function ScanDetailView({
         );
       })()}
 
-      {scan.role === "canonical_live" && <RecoveryAndStaleness scan={scan} />}
+      {scan.role === "canonical_live" && scan.run_kind === "live" && (
+        <RecoveryAndStaleness scan={scan} />
+      )}
 
-      <div>
-        <h3 className="mb-4 text-lg font-medium text-gray-800 dark:text-gray-200">
-          Source Checkpoints
-        </h3>
-        <SourceCheckpointsTable checkpoints={scan.source_checkpoints} />
-      </div>
+      {scan.source_checkpoints.length > 0 && (
+        <div>
+          <h3 className="mb-4 text-lg font-medium text-gray-800 dark:text-gray-200">
+            Source Checkpoints
+          </h3>
+          <SourceCheckpointsTable checkpoints={scan.source_checkpoints} />
+        </div>
+      )}
 
       <div>
         <h3 className="mb-4 text-lg font-medium text-gray-800 dark:text-gray-200">Posts</h3>

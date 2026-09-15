@@ -9,7 +9,7 @@ import these primitives rather than duplicating them locally.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -129,6 +129,23 @@ def derive_source_key(descriptor: SourceDescriptor) -> str:
     source_kind = descriptor.source_kind.strip().casefold()
     provider_key = descriptor.provider_key.strip().casefold()
     return f"{platform}:{source_kind}:{provider_key}"
+
+
+def source_since(
+    descriptor: SourceDescriptor,
+    fallback: datetime | None,
+    checkpoints: Mapping[str, datetime | None] | None,
+) -> datetime | None:
+    """Resolve one source's fetch boundary.
+
+    Recovery probes/backfills omit ``checkpoints`` and deliberately use their
+    explicit uniform window. Live scans pass the checkpoint mapping: an
+    existing source resumes independently, while an absent/new source starts
+    cold instead of silently inheriting the environment-wide watermark.
+    """
+    if checkpoints is None:
+        return fallback
+    return checkpoints.get(derive_source_key(descriptor))
 
 
 def parse_retry_after(value: str, now: datetime) -> float | None:

@@ -172,7 +172,7 @@ class TestFetchMessagesIntegration:
         assert result.messages[0].platform_id == "200"  # newest first
         assert result.messages[1].platform_id == "100"
         assert channel.history_calls == [
-            {"limit": None, "after": None, "oldest_first": False}
+            {"limit": 500, "after": None, "oldest_first": False}
         ]
 
     @pytest.mark.asyncio
@@ -215,14 +215,49 @@ class TestFetchMessagesIntegration:
         assert len(result.messages) == 1
         assert result.messages[0].platform_id == "300"
         assert channel.history_calls == [
-            {"limit": None, "after": since, "oldest_first": False}
+            {"limit": 500, "after": since, "oldest_first": False}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_source_checkpoint_overrides_environment_boundary(self) -> None:
+        now = datetime.now(UTC)
+        environment_since = now - timedelta(hours=1)
+        source_checkpoint = now - timedelta(hours=3)
+        channel = _fake_channel("general", 456, [])
+        guild = _fake_guild({456: channel})
+        scanner = DiscordScanner(token="tok", server_id=123, channel_ids=[456])
+
+        with patch("scout.platforms.discord.discord.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.user = SimpleNamespace(name="Bot")
+
+            async def start_side_effect(token: str) -> None:
+                await mock_client._on_ready_handler()
+
+            def event_decorator(fn: object) -> object:
+                if hasattr(fn, "__name__") and fn.__name__ == "on_ready":
+                    mock_client._on_ready_handler = fn
+                return fn
+
+            mock_client.event = event_decorator
+            mock_client.get_guild = Mock(return_value=guild)
+            mock_client.close = AsyncMock()
+            mock_client.start = AsyncMock(side_effect=start_side_effect)
+            mock_client_cls.return_value = mock_client
+
+            await scanner.fetch_messages(
+                since=environment_since,
+                source_checkpoints={"discord:channel:456": source_checkpoint},
+            )
+
+        assert channel.history_calls == [
+            {"limit": 500, "after": source_checkpoint, "oldest_first": False}
         ]
 
     @pytest.mark.asyncio
     async def test_no_implicit_cap_returns_all_messages_after_since(self) -> None:
-        """Regression test for the implicit 100-message discord.py default:
-        history() must be called with limit=None so more than 100 messages
-        newer than since are returned in a single page, not silently truncated.
+        """The explicit request ceiling can fetch beyond discord.py's implicit
+        100-message default without becoming unbounded.
         """
         now = datetime.now(UTC)
         since = now - timedelta(hours=1)
@@ -261,13 +296,13 @@ class TestFetchMessagesIntegration:
         assert not result.page_ceiling_reached
         assert len(result.messages) == 101
         assert channel.history_calls == [
-            {"limit": None, "after": since, "oldest_first": False}
+            {"limit": 500, "after": since, "oldest_first": False}
         ]
 
     @pytest.mark.asyncio
     async def test_page_ceiling_sets_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
         now = datetime.now(UTC)
-        # Create more messages than max_messages * DISCORD_MAX_PAGES
+        # Create more messages than the configured request-sized ceiling.
         monkeypatch.setattr("scout.platforms.discord.DISCORD_MAX_PAGES", 1)
 
         # max_messages=2, max_pages=1 → ceiling at 2 messages
@@ -307,10 +342,52 @@ class TestFetchMessagesIntegration:
         assert result.failures[0].kind == "page_ceiling"
         assert result.failures[0].context == "channel:456"
         assert result.failures[0].message == (
-            "Page ceiling reached; fetched 2 total messages so far (cap 2)"
+            "Page ceiling reached for channel; examined 2 messages (cap 2)"
         )
         assert result.failures[0].operation_phase == "fetch"
         assert result.failures[0].blocks_watermark_advance is True
+
+    @pytest.mark.asyncio
+    async def test_filtered_messages_still_consume_the_request_page_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("scout.platforms.discord.DISCORD_MAX_PAGES", 1)
+        now = datetime.now(UTC)
+        messages = [
+            _fake_message(
+                str(index), "bot noise", now - timedelta(seconds=index), author_bot=True
+            )
+            for index in range(101)
+        ]
+        channel = _fake_channel("general", 456, messages)
+        guild = _fake_guild({456: channel})
+        scanner = DiscordScanner(token="tok", server_id=123, channel_ids=[456])
+
+        with patch("scout.platforms.discord.discord.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.user = SimpleNamespace(name="Bot")
+
+            async def start_side_effect(token: str) -> None:
+                await mock_client._on_ready_handler()
+
+            def event_decorator(fn: object) -> object:
+                if hasattr(fn, "__name__") and fn.__name__ == "on_ready":
+                    mock_client._on_ready_handler = fn
+                return fn
+
+            mock_client.event = event_decorator
+            mock_client.get_guild = Mock(return_value=guild)
+            mock_client.close = AsyncMock()
+            mock_client.start = AsyncMock(side_effect=start_side_effect)
+            mock_client_cls.return_value = mock_client
+
+            result = await scanner.fetch_messages()
+
+        assert isinstance(result, PlatformFetchSuccess)
+        assert result.messages == []
+        assert result.page_ceiling_reached is True
+        assert result.source_outcomes[0].page_count == 1
+        assert result.source_outcomes[0].termination == "page_ceiling"
 
     @pytest.mark.asyncio
     async def test_channel_fetch_error_returns_partial_failure(self) -> None:

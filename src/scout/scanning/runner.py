@@ -342,6 +342,7 @@ async def fetch_messages(
     bluesky_scanner: BlueskyScanner | None,
     since: datetime | None,
     queries: list[str] | None = None,
+    source_checkpoints: Mapping[str, datetime | None] | None = None,
 ) -> PlatformsFetch:
     """Fetch messages from all configured platforms.
 
@@ -388,17 +389,23 @@ async def fetch_messages(
 
     if discord_scanner:
         _absorb(
-            await discord_scanner.fetch_messages(since=since),
+            await discord_scanner.fetch_messages(
+                since=since, source_checkpoints=source_checkpoints
+            ),
             label="Discord", fallback_context="channel_history",
         )
     if farcaster_scanner:
         _absorb(
-            await farcaster_scanner.fetch_messages(since=since, queries=queries),
+            await farcaster_scanner.fetch_messages(
+                since=since, queries=queries, source_checkpoints=source_checkpoints
+            ),
             label="Farcaster", fallback_context="keyword_search",
         )
     if bluesky_scanner:
         _absorb(
-            await bluesky_scanner.fetch_messages(since=since, queries=queries),
+            await bluesky_scanner.fetch_messages(
+                since=since, queries=queries, source_checkpoints=source_checkpoints
+            ),
             label="Bluesky", fallback_context="feed_or_search",
         )
 
@@ -1459,6 +1466,12 @@ async def main_loop(args: argparse.Namespace) -> None:
                             bluesky_scanner,
                             since,
                             queries=search_queries,
+                            source_checkpoints={
+                                checkpoint.source_key: checkpoint.checkpoint_at
+                                for checkpoint in state.list_source_checkpoints(
+                                    active_only=True
+                                )
+                            },
                         )
                         all_messages = fetched.messages
                         fetch_failures = list(fetched.failures)

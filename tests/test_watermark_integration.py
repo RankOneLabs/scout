@@ -152,6 +152,16 @@ class TestLegacyProductionMigration:
             state.complete_scan(scan_id, 3, 1, status="complete")
             result = state.finalize_scan_coverage(
                 scan_id, environment=environment, advance_watermark=True, owner_id="owner",
+                required_source_keys=frozenset(
+                    source["source_key"]
+                    for source in source_coverage["sources"]
+                    if source["required"]
+                ),
+                covered_source_keys=frozenset(
+                    source["source_key"]
+                    for source in source_coverage["sources"]
+                    if source["required"]
+                ),
                 coverage_classifier_version=1,
             )
             assert isinstance(result, Ok)
@@ -297,6 +307,10 @@ class TestIntegrationMatrix:
         self, in_memory_state: StateManager
     ) -> None:
         in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        in_memory_state.ensure_source_checkpoint(
+            "bluesky:search:missing", platform="bluesky",
+            source_kind="search", provider_key="missing",
+        )
         scan_id = _eligible_scan(in_memory_state)
         result = in_memory_state.finalize_scan_coverage(
             scan_id, environment="production", advance_watermark=True, owner_id="owner",
@@ -454,11 +468,17 @@ class TestIntegrationMatrix:
     def test_six_hour_probe_evidence_is_recorded_and_retrievable(
         self, in_memory_state: StateManager
     ) -> None:
+        acquired = in_memory_state.acquire_environment_lease(
+            "production", "probe-owner", ttl_seconds=300
+        )
+        assert isinstance(acquired, Ok)
         probe_id = in_memory_state.start_probe_run(
             "production", source_count=3, window_hours=6.0, limits_json="{}",
         )
         in_memory_state.complete_probe_run(
-            probe_id, passed=True, page_count=9, detail_json='{"sources": 3}',
+            probe_id, environment="production", owner_id="probe-owner",
+            fence=acquired.value.fence, passed=True, source_count=3,
+            page_count=9, detail_json='{"sources": 3}',
         )
         probe = in_memory_state.get_latest_passed_probe("production", max_age_seconds=3600)
         assert probe is not None
@@ -471,7 +491,9 @@ class TestIntegrationMatrix:
             "production", source_count=3, window_hours=1.0, limits_json="{}",
         )
         in_memory_state.complete_probe_run(
-            short_probe_id, passed=True, page_count=3, detail_json="{}",
+            short_probe_id, environment="production", owner_id="probe-owner",
+            fence=acquired.value.fence, passed=True, source_count=3,
+            page_count=3, detail_json="{}",
         )
         # get_latest_passed_probe itself doesn't filter on window_hours —
         # that gate lives in cutover_watermark — but the row is at least
@@ -488,7 +510,11 @@ class TestIntegrationMatrix:
         probe_id = in_memory_state.start_probe_run(
             "production", source_count=1, window_hours=6.0, limits_json="{}",
         )
-        in_memory_state.complete_probe_run(probe_id, passed=True, page_count=1, detail_json="{}")
+        in_memory_state.complete_probe_run(
+            probe_id, environment="production", owner_id="owner",
+            fence=acquired.value.fence, passed=True, source_count=1,
+            page_count=1, detail_json="{}",
+        )
 
         # Someone else's cutover already moved the cursor between when this
         # caller observed expected_old and when they call cutover.
@@ -497,7 +523,7 @@ class TestIntegrationMatrix:
             operator="steve", rationale="accept the gap", policy="policy-v1",
             source_evidence="status page", expected_old_watermark=None,
             accepted_new_watermark=datetime.now(UTC) - timedelta(hours=2),
-            probe_max_age_seconds=3600,
+            probe_max_age_seconds=3600, required_probe_limits={},
         )
         assert isinstance(first, Ok)
 
@@ -507,7 +533,7 @@ class TestIntegrationMatrix:
             source_evidence="status page",
             expected_old_watermark=datetime.now(UTC) - timedelta(days=1),
             accepted_new_watermark=datetime.now(UTC) - timedelta(minutes=1),
-            probe_max_age_seconds=3600,
+            probe_max_age_seconds=3600, required_probe_limits={},
         )
         assert isinstance(stale_race, Err)
         assert stale_race.error.reason == "stale_expected_old"
@@ -569,7 +595,11 @@ class TestIntegrationMatrix:
         probe_id = in_memory_state.start_probe_run(
             "production", source_count=2, window_hours=6.0, limits_json="{}",
         )
-        in_memory_state.complete_probe_run(probe_id, passed=True, page_count=4, detail_json="{}")
+        in_memory_state.complete_probe_run(
+            probe_id, environment="production", owner_id="owner",
+            fence=acquired.value.fence, passed=True, source_count=2,
+            page_count=4, detail_json="{}",
+        )
 
         accepted_new = datetime.now(UTC) - timedelta(minutes=5)
         result = in_memory_state.cutover_watermark(
@@ -577,7 +607,7 @@ class TestIntegrationMatrix:
             operator="steve", rationale="platform outage, unrecoverable gap",
             policy="accept-gap-v1", source_evidence="platform status page incident #4821",
             expected_old_watermark=None, accepted_new_watermark=accepted_new,
-            probe_max_age_seconds=3600,
+            probe_max_age_seconds=3600, required_probe_limits={},
         )
         assert isinstance(result, Ok)
         assert result.value.accepted_new_watermark == accepted_new

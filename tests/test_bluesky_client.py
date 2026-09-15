@@ -543,6 +543,33 @@ class TestFetchMessagesErrors:
 
 class TestFetchMessagesIntegration:
     @pytest.mark.asyncio
+    async def test_search_uses_its_source_checkpoint_instead_of_global_watermark(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = datetime.now(UTC)
+        global_since = now - timedelta(hours=1)
+        source_since = now - timedelta(hours=3)
+        gap_post = _post("gap", "inside source gap", now - timedelta(hours=2), lang="en")
+        transport = _make_transport([
+            httpx.Response(200, json=SESSION_RESP),
+            httpx.Response(200, json={"posts": [gap_post], "cursor": None}),
+        ])
+        _patch_http(monkeypatch, transport)
+        monkeypatch.setattr("scout.platforms.bluesky.BLUESKY_IDENTIFIER", "user")
+        monkeypatch.setattr("scout.platforms.bluesky.BLUESKY_APP_PASSWORD", "pass")
+        monkeypatch.setattr("scout.platforms.bluesky.BLUESKY_API_URL", "https://bsky.example/xrpc")
+
+        scanner = BlueskyScanner(max_results_per_query=10, languages=("en",))
+        result = await scanner.fetch_messages(
+            since=global_since,
+            queries=["hello"],
+            source_checkpoints={"bluesky:search:hello lang=en": source_since},
+        )
+
+        assert isinstance(result, PlatformFetchSuccess)
+        assert [message.platform_id.split("/")[-1] for message in result.messages] == ["gap"]
+
+    @pytest.mark.asyncio
     async def test_executes_cartesian_product_of_queries_and_languages(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

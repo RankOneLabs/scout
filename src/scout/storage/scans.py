@@ -11,8 +11,10 @@ connection.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -619,6 +621,20 @@ class ScanStore:
             return f"lease expired at {row['expires_at']}"
         return None
 
+    def validate_environment_lease(
+        self, environment: str, owner_id: str, fence: int
+    ) -> Result[None, LeaseError]:
+        """Validate the exact, unexpired holder inside the caller's transaction."""
+        with self._uow.begin_immediate():
+            reason = self._lease_held_by(environment, owner_id, fence, datetime.now(UTC))
+            if reason is not None:
+                return Err(LeaseError(
+                    operation="validate_environment_lease",
+                    environment=environment,
+                    detail=reason,
+                ))
+        return Ok(None)
+
     def start_canonical_owner_scan(
         self,
         *,
@@ -813,11 +829,25 @@ class ScanStore:
             ).fetchall()
             blocking_failure_ids = tuple(int(r["id"]) for r in blocking_rows)
 
+            persisted_required = frozenset(
+                str(required_row["source_key"])
+                for required_row in self._conn.execute(
+                    "SELECT source_key FROM source_checkpoints "
+                    "WHERE active = 1 AND required = 1"
+                ).fetchall()
+            )
+            if required_source_keys != persisted_required:
+                return _err(
+                    "caller required-source set disagrees with persisted active requirements: "
+                    f"caller={sorted(required_source_keys)} "
+                    f"persisted={sorted(persisted_required)}"
+                )
+
             # A required source the fetch did not fully cover is only a
             # coherent claim when persisted failure evidence explains it —
             # then the outcome is simply 'blocked'. Missing coverage with no
             # evidence at all is a caller/evidence disagreement, refused.
-            missing_required = required_source_keys - covered_source_keys
+            missing_required = persisted_required - covered_source_keys
             if missing_required and not blocking_failure_ids:
                 return _err(
                     "incomplete required-source coverage without failure evidence: "
@@ -931,6 +961,45 @@ class ScanStore:
                 (canonical_scan_id, scan_id),
             )
 
+    def start_linked_secondary_scan(
+        self,
+        *,
+        fetch_started_at: datetime,
+        environment: str,
+        run_kind: str,
+        role: ScanRole,
+        canonical_scan_id: int,
+    ) -> int:
+        """Create a secondary scan with its canonical link already present."""
+        now = datetime.now(UTC).isoformat()
+        with self._uow.begin_immediate():
+            canonical = self._conn.execute(
+                "SELECT id, environment FROM scans "
+                "WHERE id = ? AND role = 'canonical_live' AND run_kind = 'live'",
+                (canonical_scan_id,),
+            ).fetchone()
+            if canonical is None or canonical["environment"] != environment:
+                raise ValueError(
+                    f"canonical scan #{canonical_scan_id} is not a live owner "
+                    f"in environment {environment!r}"
+                )
+            cursor = self._conn.execute(
+                "INSERT INTO scans "
+                "(started_at, fetch_started_at, environment, run_kind, role, "
+                "canonical_scan_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    now,
+                    fetch_started_at.isoformat(),
+                    environment,
+                    run_kind,
+                    role,
+                    canonical_scan_id,
+                ),
+            )
+            scan_id = cursor.lastrowid
+        assert scan_id is not None
+        return int(scan_id)
+
     # --- Six-hour probe evidence ---
 
     def start_probe_run(
@@ -962,21 +1031,45 @@ class ScanStore:
         self,
         probe_run_id: int,
         *,
+        environment: str,
+        owner_id: str,
+        fence: int,
         passed: bool,
+        source_count: int,
         page_count: int,
         detail_json: str,
-    ) -> None:
-        """Persist a probe run's terminal pass/fail diagnostic."""
+    ) -> Result[None, LeaseError]:
+        """Persist terminal probe evidence only while its lease is held."""
         now = datetime.now(UTC).isoformat()
-        with self._uow.begin():
+        with self._uow.begin_immediate():
+            row = self._conn.execute(
+                "SELECT environment FROM source_probe_runs WHERE id = ?",
+                (probe_run_id,),
+            ).fetchone()
+            if row is None or row["environment"] != environment:
+                return Err(LeaseError(
+                    operation="complete_probe_run",
+                    environment=environment,
+                    detail="probe run not found in the leased environment",
+                ))
+            lease_reason = self._lease_held_by(
+                environment, owner_id, fence, datetime.fromisoformat(now)
+            )
+            if lease_reason is not None:
+                return Err(LeaseError(
+                    operation="complete_probe_run",
+                    environment=environment,
+                    detail=lease_reason,
+                ))
             self._conn.execute(
                 "UPDATE source_probe_runs SET completed_at = ?, passed = ?, "
-                "page_count = ?, detail_json = ? WHERE id = ?",
-                (now, int(passed), page_count, detail_json, probe_run_id),
+                "source_count = ?, page_count = ?, detail_json = ? WHERE id = ?",
+                (now, int(passed), source_count, page_count, detail_json, probe_run_id),
             )
         logger.info(
             "Probe run #%d complete: passed=%s page_count=%d", probe_run_id, passed, page_count,
         )
+        return Ok(None)
 
     def get_probe_run(self, probe_run_id: int) -> ProbeRunResult | None:
         row = self._conn.execute(
@@ -1101,6 +1194,7 @@ class ScanStore:
         expected_old_watermark: datetime | None,
         accepted_new_watermark: datetime,
         probe_max_age_seconds: float,
+        required_probe_limits: Mapping[str, int],
         probe_min_window_hours: float = 6.0,
     ) -> Result[CutoverResult, CutoverRefusal]:
         """Atomically accept a gap: install `accepted_new_watermark` as
@@ -1178,17 +1272,25 @@ class ScanStore:
                     )
 
             probe_cutoff = (now - timedelta(seconds=probe_max_age_seconds)).isoformat()
-            probe_row = self._conn.execute(
-                "SELECT id, window_hours FROM source_probe_runs "
+            probe_rows = self._conn.execute(
+                "SELECT id, window_hours, limits_json FROM source_probe_runs "
                 "WHERE environment = ? AND passed = 1 AND completed_at IS NOT NULL "
-                "AND completed_at >= ? AND window_hours >= ? ORDER BY id DESC LIMIT 1",
+                "AND completed_at >= ? AND window_hours >= ? ORDER BY id DESC",
                 (environment, probe_cutoff, probe_min_window_hours),
-            ).fetchone()
+            ).fetchall()
+            probe_row = next(
+                (
+                    row
+                    for row in probe_rows
+                    if json.loads(row["limits_json"]) == dict(required_probe_limits)
+                ),
+                None,
+            )
             if probe_row is None:
                 return _refuse(
                     "missing_probe",
                     f"no passed probe with window >= {probe_min_window_hours}h completed "
-                    f"within {probe_max_age_seconds:.0f}s",
+                    f"within {probe_max_age_seconds:.0f}s using the required limits",
                 )
             probe_run_id = int(probe_row["id"])
 

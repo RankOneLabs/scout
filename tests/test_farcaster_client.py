@@ -443,6 +443,33 @@ class TestFetchMessagesErrors:
 
 class TestFetchMessagesIntegration:
     @pytest.mark.asyncio
+    async def test_search_uses_its_source_checkpoint_instead_of_global_watermark(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = datetime.now(UTC)
+        global_since = now - timedelta(hours=1)
+        source_since = now - timedelta(hours=3)
+        gap_cast = _cast("gap", "inside source gap", now - timedelta(hours=2))
+        transport = _make_transport([
+            httpx.Response(
+                200,
+                json={"result": {"casts": [gap_cast], "next": {"cursor": None}}},
+            ),
+        ])
+        _patch_http(monkeypatch, transport)
+        monkeypatch.setattr("scout.platforms.farcaster.NEYNAR_API_URL", "https://api.example")
+
+        scanner = FarcasterScanner(api_key="test-key", max_results_per_query=10)
+        result = await scanner.fetch_messages(
+            since=global_since,
+            queries=["hello"],
+            source_checkpoints={"farcaster:search:hello": source_since},
+        )
+
+        assert isinstance(result, PlatformFetchSuccess)
+        assert [message.platform_id for message in result.messages] == ["gap"]
+
+    @pytest.mark.asyncio
     async def test_channel_feed_paginates_past_old_item_and_since_still_excludes_it(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -836,6 +836,11 @@ class TestFinalizeScanCoverage:
         self, in_memory_state: StateManager
     ) -> None:
         scan_id = self._start_eligible_scan(in_memory_state)
+        for source_key in ("discord:channel:1", "discord:channel:2"):
+            in_memory_state.ensure_source_checkpoint(
+                source_key, platform="discord", source_kind="channel",
+                provider_key=source_key.rsplit(":", 1)[-1],
+            )
         result = in_memory_state.finalize_scan_coverage(
             scan_id,
             environment="production",
@@ -851,6 +856,10 @@ class TestFinalizeScanCoverage:
         self, in_memory_state: StateManager
     ) -> None:
         scan_id = self._start_eligible_scan(in_memory_state)
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:1", platform="discord",
+            source_kind="channel", provider_key="1",
+        )
         result = in_memory_state.finalize_scan_coverage(
             scan_id,
             environment="production",

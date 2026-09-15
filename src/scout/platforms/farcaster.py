@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import cast
 
@@ -31,6 +31,7 @@ from scout.platforms.base import (
     paginate_cursor,
     parse_platform_ts,
     parse_retry_after,
+    source_since,
 )
 from scout.platforms.dedupe import dedupe_and_filter
 from scout.result import Err, Ok, Result
@@ -84,6 +85,7 @@ class FarcasterScanner:
         self,
         since: datetime | None = None,
         queries: list[str] | None = None,
+        source_checkpoints: Mapping[str, datetime | None] | None = None,
     ) -> PlatformFetchSuccess | PlatformFetchFailure:
         """Fetch casts matching the given queries from Farcaster.
 
@@ -139,31 +141,47 @@ class FarcasterScanner:
                 for query in active_queries:
                     if self.channel_ids:
                         for ch_id in self.channel_ids:
-                            result = await self._search_paginated_result(
-                                client, query, since, max_pages, channel_id=ch_id
+                            descriptor = SourceDescriptor(
+                                "farcaster", "search", f"/{ch_id} {query}"
                             )
-                            self._collect(result.items, seen_hashes, collected, since)
+                            source_boundary = source_since(
+                                descriptor, since, source_checkpoints
+                            )
+                            result = await self._search_paginated_result(
+                                client, query, source_boundary, max_pages, channel_id=ch_id
+                            )
+                            self._collect(
+                                result.items, seen_hashes, collected, source_boundary
+                            )
                             _record(
-                                SourceDescriptor("farcaster", "search", f"/{ch_id} {query}"),
+                                descriptor,
                                 result,
                                 f"search: {query[:40]} in /{ch_id}",
                             )
                     else:
-                        result = await self._search_paginated_result(
-                            client, query, since, max_pages
+                        descriptor = SourceDescriptor("farcaster", "search", query)
+                        source_boundary = source_since(
+                            descriptor, since, source_checkpoints
                         )
-                        self._collect(result.items, seen_hashes, collected, since)
+                        result = await self._search_paginated_result(
+                            client, query, source_boundary, max_pages
+                        )
+                        self._collect(result.items, seen_hashes, collected, source_boundary)
                         _record(
-                            SourceDescriptor("farcaster", "search", query),
+                            descriptor,
                             result,
                             f"search: {query[:40]}",
                         )
 
                 for ch_id in self.channel_ids:
+                    descriptor = SourceDescriptor("farcaster", "feed", ch_id)
+                    source_boundary = source_since(
+                        descriptor, since, source_checkpoints
+                    )
                     result = await self._channel_feed_paginated_result(client, ch_id, max_pages)
-                    self._collect(result.items, seen_hashes, collected, since)
+                    self._collect(result.items, seen_hashes, collected, source_boundary)
                     _record(
-                        SourceDescriptor("farcaster", "feed", ch_id),
+                        descriptor,
                         result,
                         f"feed: /{ch_id}",
                     )
