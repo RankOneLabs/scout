@@ -150,3 +150,52 @@ permanent record of *why* this gap was judged safe to accept.
    incident tracker the deployment uses — `recovery_operations` itself is
    immutable and append-only; there is no correction or annotation command
    for an existing row.
+
+## Release-evidence checklist
+
+A passing `uv run pytest` and a clean `npm run build`/`npm test` in `web/`
+prove the repository's implementation is correct — they say nothing about
+whether a recovery was carried out safely on the production host. This
+repository has no service manager, scheduler, or deployment tooling of its
+own (see "What this is" above), so host rollout is a separate release
+gate an authorized willie operator clears manually, never inferred from
+CI or from this repository's own test results.
+
+**Release is incomplete — do not merge, deploy, or hand off as done —
+until an authorized willie operator has recorded every item below.** No
+subset stands in for the whole: a clean backup with no watermark
+confirmation, or a resumed worker with no recorded audit ID, is exactly as
+incomplete as recording nothing.
+
+1. **Verified backup.** The exact backup taken per "Prerequisites before
+   running anything here" above, confirmed restorable (not merely
+   taken) — note where it lives and how it was verified.
+2. **Worker stop or lock.** Either the live worker was stopped before the
+   recovery command ran, or it was still running and the command's own
+   lock-contention refusal (exit `2`) is the evidence it never preempted a
+   healthy worker — record which.
+3. **Deployment revision.** The exact git revision (commit SHA) running on
+   willie when the recovery command executed — `scout` has no version
+   endpoint of its own; read it from whatever deployment tooling placed
+   the code there.
+4. **The selected `recovery_operations` audit ID.** The specific `id` from
+   the immutable `recovery_operations` row this release is based on —
+   not just "a backfill ran," but the exact row, so the policy, evidence,
+   and probe linkage it carries are reviewable after the fact.
+5. **Worker resume.** Confirmation the live worker was resumed only after
+   the recovery command's own exit code was `0`, per "After a successful
+   command" step 2 above.
+6. **Two successive recent production watermarks.** Two consecutive
+   `scout watermark stale-check --environment production` observations,
+   both `stale: false`, with **both observed watermark values recorded
+   and the second strictly later than the first**. Two `stale: false`
+   readings alone can be the same watermark still sitting inside the
+   stale threshold; only a strictly advancing value proves scheduled
+   scanning resumed under the restarted worker rather than just that the
+   recovery command itself worked.
+7. **Normalized per-source fetch volume.** Each active source's recent
+   message/page volume compared against its own historical baseline (not
+   against a stale expectation the environment isolation this doc
+   describes would make comparing across environments meaningless) —
+   the confirmation that every source is being covered at its usual rate,
+   not just that the watermark cursor moved.
