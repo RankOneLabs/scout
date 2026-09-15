@@ -4,6 +4,18 @@ import type { ScanFeedbackSummary } from "@/types/feedback";
 
 export type ScanStatus = "complete" | "partial" | "failed" | "interrupted";
 
+/** A scan's role in coverage finalization. Only 'canonical_live' scans are
+ * eligible to advance the durable watermark; 'secondary' (e.g. a
+ * scoring/digest-only pass) and 'rescore' runs never do, regardless of
+ * their own processing status. */
+export type ScanRole = "canonical_live" | "secondary" | "rescore";
+
+/** Coverage outcome is independent of processing `status`: a scan can be
+ * `status: 'partial'` (degraded by non-primary enrichment) while
+ * `coverage_outcome: 'complete'` (primary coverage fully in), or vice
+ * versa — neither fact can be inferred from the other. */
+export type CoverageOutcome = "complete" | "partial" | "blocked";
+
 export interface Scan {
   id: number;
   started_at: string;
@@ -14,6 +26,15 @@ export interface Scan {
   safe_watermark_at: string | null;
   status: ScanStatus | null;
   overflow_count: number;
+  environment: string;
+  run_kind: string;
+  role: ScanRole;
+  coverage_outcome: CoverageOutcome | null;
+  watermark_advanced: boolean;
+  coverage_classifier_version: number | null;
+  // Set on a linked secondary/rescore scan to the canonical_live scan_id it
+  // is a non-advancing pass of; null for the canonical owner itself.
+  canonical_scan_id: number | null;
 }
 
 export interface ScanFetchFailure {
@@ -26,6 +47,71 @@ export interface ScanFetchFailure {
   http_status: number | null;
   retry_after: string | null;
   retryable: boolean;
+  created_at: string;
+  operation_phase: string;
+  // The failure's own persisted classification of whether it is eligible
+  // to block watermark advancement.
+  blocks_watermark_advance: boolean;
+  // Whether coverage finalization actually counted this failure among the
+  // scan's blocking set (scan_watermark_blockers) — the durable record of
+  // which references were the exact reason a scan did or did not advance.
+  blocked_watermark: boolean;
+}
+
+/** One `source_checkpoints` row — an independent per-source cursor. */
+export interface SourceCheckpoint {
+  source_key: string;
+  platform: string;
+  source_kind: string;
+  provider_key: string;
+  required: boolean;
+  active: boolean;
+  checkpoint_at: string | null;
+  bootstrapped_from_legacy: boolean;
+}
+
+/** The current holder of one environment's fenced lease, plus staleness
+ * inputs — the read-model counterpart of `scout watermark stale-check`. */
+export interface EnvironmentLease {
+  environment: string;
+  fence: number;
+  owner_id: string | null;
+  expires_at: string | null;
+  updated_at: string;
+}
+
+export type RecoveryOperationKind = "backfill" | "cutover" | "stale_check";
+export type RecoveryOperationOutcome = "accepted" | "refused";
+
+/** One append-only `recovery_operations` audit row. */
+export interface RecoveryOperation {
+  id: number;
+  environment: string;
+  operation: RecoveryOperationKind;
+  operator: string;
+  rationale: string;
+  policy: string | null;
+  source_evidence: string | null;
+  probe_run_id: number | null;
+  expected_old_watermark: string | null;
+  accepted_new_watermark: string | null;
+  outcome: RecoveryOperationOutcome;
+  detail: string | null;
+  created_at: string;
+}
+
+/** One `source_probe_runs` row — read-only six-hour-probe evidence. */
+export interface SourceProbeRun {
+  id: number;
+  environment: string;
+  started_at: string;
+  completed_at: string | null;
+  passed: boolean | null;
+  source_count: number;
+  page_count: number;
+  window_hours: number;
+  limits_json: string;
+  detail_json: string;
   created_at: string;
 }
 
@@ -224,6 +310,26 @@ export interface ScanDetailWithCounts extends ScanDetail {
   // null when no feedback snapshot was recorded for this scan (pre-cohort-2
   // scans, or a scan that failed before the snapshot write).
   feedback?: ScanFeedbackSummary | null;
+  // Current global source-checkpoint state — not scoped to this one scan
+  // (checkpoints carry no per-scan history), but the durable per-source
+  // cursor/lifecycle facts an operator needs to explain why a source did
+  // or did not advance.
+  source_checkpoints: SourceCheckpoint[];
+  // This scan's environment's current fenced lease, or null if the
+  // environment has never acquired one.
+  environment_lease: EnvironmentLease | null;
+  // The environment's *current* eligible watermark — the latest
+  // canonical-live scan that actually advanced — which is what staleness
+  // is judged against. Distinct from this scan's own safe_watermark_at,
+  // which is historical: an older or blocked scan says nothing about
+  // whether the environment is fresh now.
+  environment_watermark_at: string | null;
+  // Most recent recovery_operations rows for this scan's environment,
+  // newest first — the audit trail a release-evidence review cites.
+  recent_recovery_operations: RecoveryOperation[];
+  // The most recent source_probe_runs row for this scan's environment, if
+  // any — six-hour-probe evidence, never a mutation of any cursor.
+  latest_probe_run: SourceProbeRun | null;
 }
 
 // Trace types

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sqlite3
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from datetime import UTC, datetime
 import pytest
 
 from scout.config import Message
+from scout.result import Ok
 from scout.storage.migrations import AutonomyEventsNotEmptyError
 from scout.storage.state import (
     LATEST_SCHEMA_VERSION,
@@ -442,9 +444,14 @@ class TestScanDurability:
         self, in_memory_state: StateManager
     ) -> None:
         """get_last_scan_timestamp must return safe_watermark_at, not completed_at."""
-        scan_id = in_memory_state.start_scan()
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
-        ts = in_memory_state.get_last_scan_timestamp()
+        in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
+        ts = in_memory_state.get_last_scan_timestamp(environment="production")
         assert ts is not None
         row = in_memory_state.conn.execute(
             "SELECT safe_watermark_at, fetch_started_at FROM scans WHERE id = ?",
@@ -456,26 +463,46 @@ class TestScanDurability:
 
     def test_partial_scan_does_not_advance_watermark(self, in_memory_state: StateManager) -> None:
         """Partial scans must not set safe_watermark_at (watermark must not advance)."""
-        scan1 = in_memory_state.start_scan()
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        scan1 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan1, 0, 0, status="complete")
-        first_watermark = in_memory_state.get_last_scan_timestamp()
+        in_memory_state.finalize_scan_coverage(
+            scan1, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
+        first_watermark = in_memory_state.get_last_scan_timestamp(environment="production")
 
-        scan2 = in_memory_state.start_scan()
+        scan2 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan2, 0, 0, status="partial")
+        in_memory_state.save_fetch_failure(
+            scan_id=scan2, platform="discord", kind="network_error", message="timeout",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
+        in_memory_state.finalize_scan_coverage(
+            scan2, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
 
-        watermark_after_partial = in_memory_state.get_last_scan_timestamp()
+        watermark_after_partial = in_memory_state.get_last_scan_timestamp(
+            environment="production"
+        )
         assert watermark_after_partial == first_watermark
-
     def test_failed_scan_does_not_advance_watermark(self, in_memory_state: StateManager) -> None:
-        scan1 = in_memory_state.start_scan()
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        scan1 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan1, 0, 0, status="complete")
-        first_watermark = in_memory_state.get_last_scan_timestamp()
+        in_memory_state.finalize_scan_coverage(
+            scan1, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
+        first_watermark = in_memory_state.get_last_scan_timestamp(environment="production")
 
-        scan2 = in_memory_state.start_scan()
+        scan2 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan2, 0, 0, status="failed")
 
-        assert in_memory_state.get_last_scan_timestamp() == first_watermark
-
+        assert in_memory_state.get_last_scan_timestamp(environment="production") == (
+            first_watermark
+        )
     def test_save_fetch_failure_persists_metadata(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
         failure_id = in_memory_state.save_fetch_failure(
@@ -486,6 +513,8 @@ class TestScanDurability:
             http_status=429,
             retry_after="30",
             retryable=True,
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
         )
         assert failure_id >= 1
         row = in_memory_state.conn.execute(
@@ -508,6 +537,8 @@ class TestScanDurability:
             kind="network_error",
             message="connection timeout",
             context="channel:ai",
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
         )
         row = in_memory_state.conn.execute(
             "SELECT context FROM scan_fetch_failures WHERE id = ?", (failure_id,)
@@ -539,10 +570,17 @@ class TestScanDurability:
     def test_complete_scan_uses_fetch_started_at_as_watermark(
         self, in_memory_state: StateManager
     ) -> None:
-        """For complete scans, safe_watermark_at defaults to fetch_started_at."""
+        """finalize_scan_coverage's watermark defaults to fetch_started_at."""
         explicit_fsa = datetime(2026, 6, 1, 10, 0, 0, tzinfo=UTC)
-        scan_id = in_memory_state.start_scan(fetch_started_at=explicit_fsa)
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        scan_id = in_memory_state.start_scan(
+            fetch_started_at=explicit_fsa, environment="production", run_kind="live",
+        )
         in_memory_state.complete_scan(scan_id, 5, 2, status="complete")
+        in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
 
         row = in_memory_state.conn.execute(
             "SELECT safe_watermark_at FROM scans WHERE id = ?", (scan_id,)
@@ -1205,3 +1243,205 @@ class TestMigration33AutonomyEventsContractShape:
 # Migration 26: grade_revisions + grade_usage_overrides
 # ---------------------------------------------------------------------------
 
+
+class TestCoverageFoundationMigration:
+    """v43/v44: a production-shaped legacy database (real scan rows with
+    explicit environments, a grandfathered watermark, and a fetch failure)
+    migrated through the real MIGRATIONS chain must preserve every existing
+    id/timestamp/environment/watermark value verbatim, leave
+    foreign_key_check clean, and leave unknown-environment history
+    ineligible for a production-scoped read."""
+
+    def _build_production_shaped_db(self, db_path: str) -> None:
+        conn = _build_legacy_conn_at_version(db_path, 16)
+        conn.execute(
+            "INSERT INTO scans "
+            "(id, started_at, completed_at, fetch_started_at, safe_watermark_at, status, "
+            "environment, run_kind) VALUES "
+            "(1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:05:00+00:00', "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', 'complete', "
+            "'production', 'live')"
+        )
+        conn.execute(
+            "INSERT INTO scans "
+            "(id, started_at, completed_at, fetch_started_at, safe_watermark_at, status, "
+            "environment, run_kind) VALUES "
+            "(2, '2026-01-02T00:00:00+00:00', NULL, '2026-01-02T00:00:00+00:00', NULL, "
+            "'partial', 'production', 'live')"
+        )
+        conn.execute(
+            "INSERT INTO scans "
+            "(id, started_at, completed_at, fetch_started_at, safe_watermark_at, status, "
+            "environment, run_kind) VALUES "
+            "(3, '2026-01-03T00:00:00+00:00', '2026-01-03T00:05:00+00:00', "
+            "'2026-01-03T00:00:00+00:00', '2026-01-03T00:00:00+00:00', 'complete', "
+            "'unknown', 'unknown')"
+        )
+        conn.execute(
+            "INSERT INTO scan_fetch_failures "
+            "(scan_id, platform, context, kind, message, retryable, created_at) "
+            "VALUES (2, 'discord', 'channel:1', 'network_error', 'timeout', 1, "
+            "'2026-01-02T00:01:00+00:00')"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_migration_preserves_ids_timestamps_and_environments_verbatim(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        db_path = str(tmp_path / "prod_shaped.db")
+        self._build_production_shaped_db(db_path)
+
+        with StateManager(db_path=db_path) as state:
+            assert state.conn.execute("PRAGMA user_version").fetchone()[0] == (
+                LATEST_SCHEMA_VERSION
+            )
+            row1 = state.conn.execute(
+                "SELECT started_at, fetch_started_at, safe_watermark_at, environment, "
+                "watermark_advanced, coverage_outcome FROM scans WHERE id = 1"
+            ).fetchone()
+            assert row1["started_at"] == "2026-01-01T00:00:00+00:00"
+            assert row1["fetch_started_at"] == "2026-01-01T00:00:00+00:00"
+            assert row1["safe_watermark_at"] == "2026-01-01T00:00:00+00:00"
+            assert row1["environment"] == "production"
+            # A pre-existing non-null watermark is grandfathered as an
+            # already-advanced, complete coverage outcome (decision 5).
+            assert row1["watermark_advanced"] == 1
+            assert row1["coverage_outcome"] == "complete"
+
+            row2 = state.conn.execute(
+                "SELECT safe_watermark_at, watermark_advanced, coverage_outcome "
+                "FROM scans WHERE id = 2"
+            ).fetchone()
+            assert row2["safe_watermark_at"] is None
+            assert row2["watermark_advanced"] == 0
+            assert row2["coverage_outcome"] is None
+
+            row3 = state.conn.execute(
+                "SELECT environment FROM scans WHERE id = 3"
+            ).fetchone()
+            assert row3["environment"] == "unknown"
+
+            failure = state.conn.execute(
+                "SELECT operation_phase, blocks_watermark_advance FROM scan_fetch_failures "
+                "WHERE scan_id = 2"
+            ).fetchone()
+            assert failure["operation_phase"] == "unknown"
+            assert failure["blocks_watermark_advance"] == 1
+
+    def test_migration_leaves_foreign_key_check_clean(self, tmp_path: pathlib.Path) -> None:
+        db_path = str(tmp_path / "prod_shaped.db")
+        self._build_production_shaped_db(db_path)
+
+        with StateManager(db_path=db_path) as state:
+            violations = state.conn.execute("PRAGMA foreign_key_check").fetchall()
+        assert violations == []
+
+    def test_unknown_environment_history_is_ineligible_for_a_production_read(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        db_path = str(tmp_path / "prod_shaped.db")
+        self._build_production_shaped_db(db_path)
+
+        with StateManager(db_path=db_path) as state:
+            # Scan 3 (environment='unknown') has the latest id/timestamp of
+            # the three, but must never surface from a production-scoped read.
+            assert state.get_last_scan_timestamp(environment="production") == (
+                datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+            )
+
+
+class TestOperatorFactReadModel:
+    """The web dashboard (web/lib/queries.ts) reads scan_watermark_blockers,
+    source_checkpoints, environment_leases, source_probe_runs, and
+    recovery_operations directly via raw SQL, never through StateManager —
+    these tests pin the exact row shapes (column names, and which columns
+    are the SQLite-integer booleans the web layer must coerce) that
+    contract depends on, so a schema change that breaks it fails here
+    rather than silently in the UI."""
+
+    def test_scan_watermark_blockers_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
+        in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
+        in_memory_state.save_fetch_failure(
+            scan_id=scan_id, platform="discord", kind="page_ceiling", message="ceiling",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
+        in_memory_state.commit()
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Ok)
+        assert result.value.coverage_outcome == "blocked"
+
+        row = in_memory_state.conn.execute(
+            "SELECT scan_id, failure_id, created_at FROM scan_watermark_blockers"
+        ).fetchone()
+        assert row["scan_id"] == scan_id
+        assert row["created_at"] is not None
+
+    def test_source_checkpoints_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:123", platform="discord", source_kind="channel",
+            provider_key="123", required=True,
+        )
+        row = in_memory_state.conn.execute(
+            "SELECT source_key, platform, source_kind, provider_key, required, active, "
+            "checkpoint_at, bootstrapped_from_legacy FROM source_checkpoints "
+            "WHERE source_key = 'discord:channel:123'"
+        ).fetchone()
+        assert row["required"] in (0, 1)
+        assert row["active"] in (0, 1)
+        assert row["bootstrapped_from_legacy"] in (0, 1)
+        assert row["checkpoint_at"] is None
+
+    def test_environment_leases_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.acquire_environment_lease("production", "owner-1", ttl_seconds=300)
+        row = in_memory_state.conn.execute(
+            "SELECT environment, fence, owner_id, expires_at, updated_at "
+            "FROM environment_leases WHERE environment = 'production'"
+        ).fetchone()
+        assert row["fence"] == 1
+        assert row["owner_id"] == "owner-1"
+        assert row["expires_at"] is not None
+
+    def test_source_probe_runs_row_shape(self, in_memory_state: StateManager) -> None:
+        lease = in_memory_state.acquire_environment_lease(
+            "production", "probe-owner", ttl_seconds=300
+        )
+        assert lease.value is not None
+        probe_id = in_memory_state.start_probe_run(
+            "production", source_count=2, window_hours=6.0, limits_json="{}",
+        )
+        in_memory_state.complete_probe_run(
+            probe_id, environment="production", owner_id="probe-owner",
+            fence=lease.value.fence, passed=True, source_count=2,
+            page_count=4, detail_json='{"ok": true}',
+        )
+        row = in_memory_state.conn.execute(
+            "SELECT environment, started_at, completed_at, passed, source_count, "
+            "page_count, window_hours, limits_json, detail_json FROM source_probe_runs "
+            "WHERE id = ?",
+            (probe_id,),
+        ).fetchone()
+        assert row["passed"] == 1
+        assert row["page_count"] == 4
+        json.loads(row["limits_json"])
+        json.loads(row["detail_json"])
+
+    def test_recovery_operations_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.record_recovery_operation(
+            environment="production", operation="backfill", operator="steve",
+            rationale="recover from gap", outcome="accepted",
+        )
+        row = in_memory_state.conn.execute(
+            "SELECT environment, operation, operator, rationale, policy, source_evidence, "
+            "probe_run_id, expected_old_watermark, accepted_new_watermark, outcome, detail, "
+            "created_at FROM recovery_operations"
+        ).fetchone()
+        assert row["operation"] == "backfill"
+        assert row["outcome"] == "accepted"
+        assert row["policy"] is None
+        assert row["created_at"] is not None

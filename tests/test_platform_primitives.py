@@ -96,6 +96,64 @@ class TestClassifyHttpFailure:
         assert failure.kind == "network_error"
         assert failure.retryable is True
 
+    def test_defaults_to_fetch_phase_blocking(self) -> None:
+        """A primary-fetch HTTP failure blocks watermark advance by default."""
+        e = _status_error(500)
+        failure = classify_http_failure("bluesky", e)
+        assert failure.operation_phase == "fetch"
+        assert failure.blocks_watermark_advance is True
+
+    def test_caller_can_classify_as_non_blocking_secondary_evidence(self) -> None:
+        """A secondary-evidence lookup (e.g. Bluesky parent context) can be
+        classified as non-blocking so it never gates primary coverage."""
+        e = _status_error(500)
+        failure = classify_http_failure(
+            "bluesky", e, operation_phase="parent_lookup", blocks_watermark_advance=False
+        )
+        assert failure.operation_phase == "parent_lookup"
+        assert failure.blocks_watermark_advance is False
+
+
+# ---------------------------------------------------------------------------
+# derive_source_key / SourceDescriptor
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveSourceKey:
+    def test_independent_sources_get_distinct_keys(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("discord", "channel", "111"))
+        b = derive_source_key(SourceDescriptor("discord", "channel", "222"))
+        assert a != b
+
+    def test_key_is_deterministic_for_the_same_descriptor(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        descriptor = SourceDescriptor("farcaster", "search", "gateway rollup")
+        assert derive_source_key(descriptor) == derive_source_key(descriptor)
+
+    def test_normalization_ignores_case_and_incidental_whitespace(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("Bluesky", "Feed", " at://x/y "))
+        b = derive_source_key(SourceDescriptor("bluesky", "feed", "at://x/y"))
+        assert a == b
+
+    def test_different_platforms_never_collide_on_the_same_provider_key(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("bluesky", "search", "gateway"))
+        b = derive_source_key(SourceDescriptor("farcaster", "search", "gateway"))
+        assert a != b
+
+    def test_different_source_kinds_never_collide_on_the_same_provider_key(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("bluesky", "search", "gateway"))
+        b = derive_source_key(SourceDescriptor("bluesky", "feed", "gateway"))
+        assert a != b
+
 
 # ---------------------------------------------------------------------------
 # parse_retry_after
@@ -247,7 +305,10 @@ class TestPaginateCursor:
     @pytest.mark.asyncio
     async def test_fetch_failure_returns_accumulated_items_and_failure(self) -> None:
         page1 = _page([{"id": "a"}], "cur1")
-        failure = PlatformFetchFailure(platform="test", kind="network_error", message="boom")
+        failure = PlatformFetchFailure(
+            platform="test", kind="network_error", message="boom",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
         calls, fetch_page = _fetch_pages([Ok(page1), Err(failure)])
 
         result = await paginate_cursor(
@@ -495,3 +556,87 @@ class TestNoLocalDuplication:
         import scout.platforms.base as platform_primitives
 
         assert getattr(module, attr) is getattr(platform_primitives, attr)
+
+
+# ---------------------------------------------------------------------------
+# paginate_cursor page_count / termination evidence
+# ---------------------------------------------------------------------------
+
+
+class TestPaginationEvidence:
+    async def _run(self, pages, *, since=None, chronological=True, max_pages=10):
+        from scout.platforms.base import paginate_cursor
+        from scout.result import Err, Ok
+
+        async def fetch_page(*, cursor, page_number):
+            page = pages[page_number - 1]
+            return Err(page) if isinstance(page, str) else Ok(page)
+
+        return await paginate_cursor(
+            fetch_page=fetch_page,
+            extract=lambda page: (page["items"], page.get("next")),
+            timestamp_of=lambda item: item.get("ts"),
+            since=since,
+            max_pages=max_pages,
+            chronological=chronological,
+            platform="test",
+        )
+
+    async def test_exhausted_counts_every_page_requested(self) -> None:
+        result = await self._run([
+            {"items": [{"id": "a"}], "next": "c1"},
+            {"items": [{"id": "b"}], "next": None},
+        ])
+        assert result.page_count == 2
+        assert result.termination == "exhausted"
+
+    async def test_empty_page_terminates_exhausted_and_is_counted(self) -> None:
+        result = await self._run([{"items": [], "next": None}])
+        assert result.page_count == 1
+        assert result.termination == "exhausted"
+
+    async def test_page_ceiling_termination(self) -> None:
+        result = await self._run(
+            [{"items": [{"id": "a"}], "next": "c"}, {"items": [{"id": "b"}], "next": "c"}],
+            max_pages=2,
+        )
+        assert result.page_count == 2
+        assert result.termination == "page_ceiling"
+
+    async def test_failure_termination_counts_the_failed_request(self) -> None:
+        result = await self._run([{"items": [{"id": "a"}], "next": "c1"}, "boom"])
+        assert result.page_count == 2
+        assert result.termination == "failure"
+        assert result.failure == "boom"
+
+    async def test_since_boundary_termination(self) -> None:
+        from datetime import UTC, datetime
+
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        result = await self._run(
+            [{"items": [{"id": "old", "ts": datetime(2025, 1, 1, tzinfo=UTC)}], "next": "c1"}],
+            since=since,
+        )
+        assert result.page_count == 1
+        assert result.termination == "since_boundary"
+
+
+class TestSourceFetchOutcomeCoverage:
+    def test_only_clean_exhaustion_or_boundary_is_covered(self) -> None:
+        from scout.errors import PlatformFetchFailure, SourceFetchOutcome
+
+        def outcome(termination, failure=None):
+            return SourceFetchOutcome(
+                source_key="k", platform="p", source_kind="s", provider_key="x",
+                page_count=1, termination=termination, message_count=0, failure=failure,
+            )
+
+        assert outcome("exhausted").covered
+        assert outcome("since_boundary").covered
+        assert not outcome("page_ceiling").covered
+        assert not outcome("skipped").covered
+        failure = PlatformFetchFailure(
+            platform="p", kind="x", message="m", operation_phase="fetch",
+            blocks_watermark_advance=True,
+        )
+        assert not outcome("exhausted", failure).covered

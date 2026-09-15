@@ -3062,6 +3062,124 @@ def _migrate_to_42(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_43(conn: sqlite3.Connection) -> None:
+    """Classify fetch failures and make (scan_id, id) an FK target (v43).
+
+    Adds operation_phase/blocks_watermark_advance to scan_fetch_failures,
+    defaulting every historical row to the fail-closed "unclassified"
+    pairing ('unknown', blocking) — no historical failure is reclassified
+    as safe to ignore. SQLite cannot add a UNIQUE constraint in place, so
+    the table is rebuilt, as in migrations 17/19/20: (scan_id, id) needs an
+    explicit UNIQUE constraint (id alone is already unique, but composite
+    foreign keys require the parent columns to be covered by a constraint
+    of that exact shape) so that scan_watermark_blockers (added in v44) can
+    reference (scan_id, id) and make a cross-scan blocker reference
+    structurally impossible (decision 2).
+    """
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("ALTER TABLE scan_fetch_failures RENAME TO scan_fetch_failures_v42")
+    conn.execute("""
+        CREATE TABLE scan_fetch_failures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id INTEGER NOT NULL,
+            platform TEXT NOT NULL,
+            context TEXT,
+            kind TEXT NOT NULL,
+            message TEXT,
+            http_status INTEGER,
+            retry_after TEXT,
+            retryable INTEGER NOT NULL DEFAULT 1,
+            operation_phase TEXT NOT NULL DEFAULT 'unknown',
+            blocks_watermark_advance INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            UNIQUE (scan_id, id),
+            FOREIGN KEY (scan_id) REFERENCES scans(id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO scan_fetch_failures (
+            id, scan_id, platform, context, kind, message, http_status,
+            retry_after, retryable, operation_phase, blocks_watermark_advance,
+            created_at
+        )
+        SELECT
+            id, scan_id, platform, context, kind, message, http_status,
+            retry_after, retryable, 'unknown', 1, created_at
+        FROM scan_fetch_failures_v42
+    """)
+    conn.execute("DROP TABLE scan_fetch_failures_v42")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+
+
+def _migrate_to_44(conn: sqlite3.Connection) -> None:
+    """Durable coverage outcome, watermark-advance provenance, per-source
+    checkpoints, and the environment lease fence (v44).
+
+    scans gains role/lease_fence/coverage_outcome/watermark_advanced/
+    coverage_classifier_version via plain ALTERs — no CHECK constraints, so
+    no rebuild is needed; validity is enforced at the write boundary in
+    scans.py, consistent with this codebase's existing storage-level-
+    invariant precedent (e.g. grades). Every scan that already carries a
+    non-null safe_watermark_at is classified watermark_advanced=1,
+    coverage_outcome='complete' — a legacy-grandfathered advance — without
+    touching the stored safe_watermark_at or environment values themselves
+    (decision 5); scans without one are left uninitialized
+    (watermark_advanced=0, coverage_outcome NULL) for coverage finalization
+    to decide going forward. scan_watermark_blockers, environment_leases,
+    and source_checkpoints are created via COVERAGE_SCHEMA_STATEMENTS.
+    """
+    from scout.storage.schema import COVERAGE_SCHEMA_STATEMENTS
+
+    scan_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scans)")}
+    for col, ddl in (
+        ("role", "TEXT NOT NULL DEFAULT 'canonical_live'"),
+        ("lease_fence", "INTEGER"),
+        ("coverage_outcome", "TEXT"),
+        ("watermark_advanced", "INTEGER NOT NULL DEFAULT 0"),
+        ("coverage_classifier_version", "INTEGER"),
+    ):
+        if col not in scan_cols:
+            conn.execute(f"ALTER TABLE scans ADD COLUMN {col} {ddl}")
+
+    conn.execute(
+        "UPDATE scans SET watermark_advanced = 1, coverage_outcome = 'complete' "
+        "WHERE safe_watermark_at IS NOT NULL AND watermark_advanced = 0"
+    )
+
+    for statement in COVERAGE_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
+def _migrate_to_45(conn: sqlite3.Connection) -> None:
+    """Owned scan lifecycle and lease-based recovery (v45).
+
+    environment_leases gains owner_id/expires_at so the existing fence
+    counter also tracks who currently holds it and until when — acquire/
+    renew/takeover live in scans.py and only ever bump `fence` on a fresh
+    acquire or a takeover of an expired lease, never on renew, so
+    finalize_scan_coverage's existing fence check (decision 10) is
+    unaffected by a mid-flight heartbeat. scans gains canonical_scan_id to
+    link a secondary/rescore scan back to the canonical owner it is a
+    non-advancing pass of. source_probe_runs and recovery_operations are
+    created via LEASE_AND_RECOVERY_SCHEMA_STATEMENTS.
+    """
+    from scout.storage.schema import LEASE_AND_RECOVERY_SCHEMA_STATEMENTS
+
+    lease_cols = {row["name"] for row in conn.execute("PRAGMA table_info(environment_leases)")}
+    for col, ddl in (("owner_id", "TEXT"), ("expires_at", "TEXT")):
+        if col not in lease_cols:
+            conn.execute(f"ALTER TABLE environment_leases ADD COLUMN {col} {ddl}")
+
+    scan_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scans)")}
+    if "canonical_scan_id" not in scan_cols:
+        conn.execute(
+            "ALTER TABLE scans ADD COLUMN canonical_scan_id INTEGER REFERENCES scans(id)"
+        )
+
+    for statement in LEASE_AND_RECOVERY_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3104,4 +3222,7 @@ MIGRATIONS: dict[int, Migration] = {
     40: _migrate_to_40,
     41: _migrate_to_41,
     42: _migrate_to_42,
+    43: _migrate_to_43,
+    44: _migrate_to_44,
+    45: _migrate_to_45,
 }

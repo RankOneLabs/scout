@@ -9,14 +9,14 @@ import these primitives rather than duplicating them locally.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 import httpx
 
-from scout.errors import PlatformFetchFailure
+from scout.errors import OperationPhase, PlatformFetchFailure, SourceTermination
 from scout.result import Err, Ok, Result
 
 logger = logging.getLogger(__name__)
@@ -45,12 +45,20 @@ def classify_http_failure(
     platform: str,
     e: httpx.HTTPStatusError,
     context: str | None = None,
+    *,
+    operation_phase: OperationPhase = "fetch",
+    blocks_watermark_advance: bool = True,
 ) -> PlatformFetchFailure:
     """Classify an HTTP status error into a typed platform fetch failure.
 
     429 is retryable rate_limited, preserving Retry-After (or
     x-ratelimit-reset-after); 401/403 are non-retryable auth_error; every
-    other status is retryable network_error.
+    other status is retryable network_error. `operation_phase` and
+    `blocks_watermark_advance` default to a primary-fetch failure that
+    blocks watermark advance; callers classifying secondary evidence (e.g.
+    Bluesky parent-context lookups) pass `operation_phase="parent_lookup",
+    blocks_watermark_advance=False` so the failure is diagnosable without
+    blocking otherwise-complete primary coverage.
     """
     status = e.response.status_code
     body = e.response.text or str(e)
@@ -66,6 +74,8 @@ def classify_http_failure(
             context=context,
             retry_after=retry_after,
             retryable=True,
+            operation_phase=operation_phase,
+            blocks_watermark_advance=blocks_watermark_advance,
         )
     if status in (401, 403):
         return PlatformFetchFailure(
@@ -75,6 +85,8 @@ def classify_http_failure(
             http_status=status,
             context=context,
             retryable=False,
+            operation_phase=operation_phase,
+            blocks_watermark_advance=blocks_watermark_advance,
         )
     return PlatformFetchFailure(
         platform=platform,
@@ -83,7 +95,57 @@ def classify_http_failure(
         http_status=status,
         context=context,
         retryable=True,
+        operation_phase=operation_phase,
+        blocks_watermark_advance=blocks_watermark_advance,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDescriptor:
+    """Canonical description of one independently-checkpointed source.
+
+    `provider_key` is the raw, pre-normalization provider identifier/query/
+    feed/channel value (e.g. a Discord channel id, a Farcaster channel id or
+    search query, a Bluesky feed URI or search query). Normalization for key
+    derivation never touches provider requests — only identity.
+    """
+
+    platform: str
+    source_kind: str  # e.g. "channel", "search", "feed"
+    provider_key: str
+
+
+def derive_source_key(descriptor: SourceDescriptor) -> str:
+    """Derive a stable, deterministic source key from a canonical descriptor.
+
+    Normalizes platform, source_kind, and provider_key (strip + casefold)
+    so that equivalent descriptors — differing only in case or incidental
+    whitespace — collide on the same key, giving each configured source an
+    independent, stable checkpoint identity. Normalization changes identity
+    only; it must never be applied to the value actually sent in a provider
+    request.
+    """
+    platform = descriptor.platform.strip().casefold()
+    source_kind = descriptor.source_kind.strip().casefold()
+    provider_key = descriptor.provider_key.strip().casefold()
+    return f"{platform}:{source_kind}:{provider_key}"
+
+
+def source_since(
+    descriptor: SourceDescriptor,
+    fallback: datetime | None,
+    checkpoints: Mapping[str, datetime | None] | None,
+) -> datetime | None:
+    """Resolve one source's fetch boundary.
+
+    Recovery probes/backfills omit ``checkpoints`` and deliberately use their
+    explicit uniform window. Live scans pass the checkpoint mapping: an
+    existing source resumes independently, while an absent/new source starts
+    cold instead of silently inheriting the environment-wide watermark.
+    """
+    if checkpoints is None:
+        return fallback
+    return checkpoints.get(derive_source_key(descriptor))
 
 
 def parse_retry_after(value: str, now: datetime) -> float | None:
@@ -119,12 +181,17 @@ class PaginationResult[Item, Failure]:
     `items` accumulates across every page fetched, including the boundary
     page on early chronological termination and any pages fetched before a
     failure. `failure` is the original error from the page that failed, if
-    any — its presence does not clear `items`.
+    any — its presence does not clear `items`. `page_count` is the number
+    of page requests that returned (a failed request is counted, since it
+    was issued), and `termination` says why pagination stopped — the
+    per-source evidence a probe or coverage finalization records.
     """
 
     items: list[Item]
     page_ceiling_reached: bool
     failure: Failure | None = None
+    page_count: int = 0
+    termination: SourceTermination = "exhausted"
 
 
 async def paginate_cursor[Page, Item, Failure](
@@ -165,19 +232,25 @@ async def paginate_cursor[Page, Item, Failure](
 
     all_items: list[Item] = []
     cursor: str | None = None
+    page_count = 0
 
     for page_number in range(1, max_pages + 1):
+        page_count = page_number
         match await fetch_page(cursor=cursor, page_number=page_number):
             case Ok(page):
                 pass
             case Err(failure):
                 return PaginationResult(
-                    items=all_items, page_ceiling_reached=False, failure=failure
+                    items=all_items, page_ceiling_reached=False, failure=failure,
+                    page_count=page_count, termination="failure",
                 )
 
         items, next_cursor = extract(page)
         if not items:
-            return PaginationResult(items=all_items, page_ceiling_reached=False, failure=None)
+            return PaginationResult(
+                items=all_items, page_ceiling_reached=False, failure=None,
+                page_count=page_count, termination="exhausted",
+            )
 
         all_items.extend(items)
         cursor = next_cursor
@@ -187,11 +260,15 @@ async def paginate_cursor[Page, Item, Failure](
                 ts = timestamp_of(item)
                 if ts is not None and ts.tzinfo is not None and ts <= since:
                     return PaginationResult(
-                        items=all_items, page_ceiling_reached=False, failure=None
+                        items=all_items, page_ceiling_reached=False, failure=None,
+                        page_count=page_count, termination="since_boundary",
                     )
 
         if not cursor:
-            return PaginationResult(items=all_items, page_ceiling_reached=False, failure=None)
+            return PaginationResult(
+                items=all_items, page_ceiling_reached=False, failure=None,
+                page_count=page_count, termination="exhausted",
+            )
     else:
         if cursor:
             logger.warning(
@@ -200,6 +277,12 @@ async def paginate_cursor[Page, Item, Failure](
                 platform,
                 context,
             )
-            return PaginationResult(items=all_items, page_ceiling_reached=True, failure=None)
+            return PaginationResult(
+                items=all_items, page_ceiling_reached=True, failure=None,
+                page_count=page_count, termination="page_ceiling",
+            )
 
-    return PaginationResult(items=all_items, page_ceiling_reached=False, failure=None)
+    return PaginationResult(
+        items=all_items, page_ceiling_reached=False, failure=None,
+        page_count=page_count, termination="exhausted",
+    )

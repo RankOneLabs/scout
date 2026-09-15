@@ -189,3 +189,68 @@ def test_get_env_errors_returns_and_clears(monkeypatch: pytest.MonkeyPatch) -> N
     # A second call should return an empty list — the accumulator was cleared.
     second = get_env_errors()
     assert second == []
+
+
+class TestLeaseAndRecoveryConfig:
+    """Module-level constants computed at import time, so each test reloads
+    scout.config under a patched environment rather than monkeypatching an
+    already-evaluated module attribute."""
+
+    @pytest.fixture(autouse=True)
+    def _reload_clean_afterward(self) -> None:
+        yield
+        import importlib
+
+        import scout.config as config_module
+
+        importlib.reload(config_module)
+        get_env_errors()
+
+    def _reload(self, monkeypatch: pytest.MonkeyPatch, **env: str) -> object:
+        import importlib
+
+        import scout.config as config_module
+
+        for key in (
+            "SCOUT_LEASE_TTL_SECONDS",
+            "SCOUT_LEASE_HEARTBEAT_SECONDS",
+            "SCOUT_RECOVERY_LOCK_TTL_SECONDS",
+            "SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS",
+            "SCOUT_BACKFILL_MAX_PAGES_PER_SOURCE",
+            "SCOUT_STALE_WATERMARK_HOURS",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        return importlib.reload(config_module)
+
+    def test_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reloaded = self._reload(monkeypatch)
+        assert reloaded.SCOUT_LEASE_TTL_SECONDS == 120
+        assert reloaded.SCOUT_LEASE_HEARTBEAT_SECONDS == 30
+        assert reloaded.SCOUT_RECOVERY_LOCK_TTL_SECONDS == 1800
+        assert reloaded.SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS == 3600
+        assert reloaded.SCOUT_BACKFILL_MAX_PAGES_PER_SOURCE == 20
+        assert reloaded.SCOUT_STALE_WATERMARK_HOURS == 24
+        assert get_env_errors() == []
+
+    def test_heartbeat_too_close_to_ttl_records_an_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._reload(
+            monkeypatch,
+            SCOUT_LEASE_TTL_SECONDS="30",
+            SCOUT_LEASE_HEARTBEAT_SECONDS="20",
+        )
+        errors = get_env_errors()
+        assert any("SCOUT_LEASE_HEARTBEAT_SECONDS" in e for e in errors)
+
+    def test_heartbeat_with_room_for_two_misses_is_clean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._reload(
+            monkeypatch,
+            SCOUT_LEASE_TTL_SECONDS="120",
+            SCOUT_LEASE_HEARTBEAT_SECONDS="30",
+        )
+        assert get_env_errors() == []

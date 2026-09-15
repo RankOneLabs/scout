@@ -250,7 +250,6 @@ async def promote_negative_case(
             scan_id,
             messages_scanned=1,
             relevant_found=int(decision.status == "surfaced"),
-            advance_watermark=False,
         )
         return NegativeCasePromotionResult(
             source_grade_id=int(claim["source_grade_id"]),

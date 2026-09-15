@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Scan, ScanStatus } from "@/types/schema";
-import { formatTimestamp, formatDuration } from "@/lib/transforms";
+import { formatTimestamp, formatDuration, describeCoverage, type CoverageTone } from "@/lib/transforms";
 
 interface ScanTableProps {
   scans: Scan[];
@@ -15,6 +15,13 @@ const STATUS_STYLES: Record<ScanStatus, string> = {
   interrupted: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400",
 };
 
+const COVERAGE_TONE_STYLES: Record<CoverageTone, string> = {
+  ok: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400",
+  warn: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400",
+  danger: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400",
+  neutral: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400",
+};
+
 function StatusBadge({ status }: { status: ScanStatus | null }) {
   if (!status) return null;
   return (
@@ -22,6 +29,17 @@ function StatusBadge({ status }: { status: ScanStatus | null }) {
       className={`rounded px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[status] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"}`}
     >
       {status}
+    </span>
+  );
+}
+
+/** Coverage outcome is a distinct fact from processing `status` — this
+ * badge renders it alongside, never instead of, StatusBadge. */
+function CoverageBadge({ scan }: { scan: Pick<Scan, "coverage_outcome" | "watermark_advanced" | "role"> }) {
+  const { label, tone } = describeCoverage(scan);
+  return (
+    <span className={`rounded px-2 py-0.5 text-xs font-medium ${COVERAGE_TONE_STYLES[tone]}`}>
+      {label}
     </span>
   );
 }
@@ -38,9 +56,19 @@ function ScanCard({ scan }: { scan: Scan }) {
           {formatDuration(scan.started_at, scan.completed_at)}
         </span>
       </div>
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-1 flex flex-wrap items-center gap-2">
         <p className="text-sm text-gray-700 dark:text-gray-300">{formatTimestamp(scan.started_at)}</p>
         <StatusBadge status={scan.status} />
+        <CoverageBadge scan={scan} />
+      </div>
+      <div className="mt-1 text-xs text-gray-500 dark:text-gray-500">
+        {scan.environment}
+        {scan.canonical_scan_id !== null && (
+          <>
+            {" "}
+            &middot; canonical #{scan.canonical_scan_id}
+          </>
+        )}
       </div>
       <div className="mt-2 flex gap-4 text-xs text-gray-600 dark:text-gray-400">
         <span>{scan.messages_scanned} messages</span>
@@ -76,6 +104,8 @@ export function ScanTable({ scans }: ScanTableProps) {
             <tr>
               <th className="px-4 py-3">ID</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Coverage</th>
+              <th className="px-4 py-3">Environment</th>
               <th className="px-4 py-3">Started</th>
               <th className="px-4 py-3">Duration</th>
               <th className="px-4 py-3">Messages</th>
@@ -98,6 +128,20 @@ export function ScanTable({ scans }: ScanTableProps) {
                 </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={scan.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <CoverageBadge scan={scan} />
+                </td>
+                <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+                  {scan.environment}
+                  {scan.canonical_scan_id !== null && (
+                    <Link
+                      href={`/scans/${scan.canonical_scan_id}`}
+                      className="ml-1 text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300"
+                    >
+                      &rarr; #{scan.canonical_scan_id}
+                    </Link>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
                   {formatTimestamp(scan.started_at)}

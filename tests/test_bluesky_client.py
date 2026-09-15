@@ -543,6 +543,33 @@ class TestFetchMessagesErrors:
 
 class TestFetchMessagesIntegration:
     @pytest.mark.asyncio
+    async def test_search_uses_its_source_checkpoint_instead_of_global_watermark(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = datetime.now(UTC)
+        global_since = now - timedelta(hours=1)
+        source_since = now - timedelta(hours=3)
+        gap_post = _post("gap", "inside source gap", now - timedelta(hours=2), lang="en")
+        transport = _make_transport([
+            httpx.Response(200, json=SESSION_RESP),
+            httpx.Response(200, json={"posts": [gap_post], "cursor": None}),
+        ])
+        _patch_http(monkeypatch, transport)
+        monkeypatch.setattr("scout.platforms.bluesky.BLUESKY_IDENTIFIER", "user")
+        monkeypatch.setattr("scout.platforms.bluesky.BLUESKY_APP_PASSWORD", "pass")
+        monkeypatch.setattr("scout.platforms.bluesky.BLUESKY_API_URL", "https://bsky.example/xrpc")
+
+        scanner = BlueskyScanner(max_results_per_query=10, languages=("en",))
+        result = await scanner.fetch_messages(
+            since=global_since,
+            queries=["hello"],
+            source_checkpoints={"bluesky:search:hello lang=en": source_since},
+        )
+
+        assert isinstance(result, PlatformFetchSuccess)
+        assert [message.platform_id.split("/")[-1] for message in result.messages] == ["gap"]
+
+    @pytest.mark.asyncio
     async def test_executes_cartesian_product_of_queries_and_languages(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -915,9 +942,12 @@ class TestParentContext:
         msg = result.messages[0]
         assert msg.parent_lookup_status == "failed"
         assert msg.parent is None
-        # Child preserved; non-fatal failure emitted
-        parent_failures = [f for f in result.failures if f.kind == "parent_context"]
+        # Child preserved; one permanent, non-blocking degradation record
+        # emitted for the confirmed-missing parent (decision 9).
+        parent_failures = [f for f in result.failures if f.kind == "parent_missing"]
         assert len(parent_failures) == 1
+        assert parent_failures[0].operation_phase == "parent_lookup"
+        assert parent_failures[0].blocks_watermark_advance is False
 
     @pytest.mark.asyncio
     async def test_parent_dedup_across_shared_parent(
@@ -975,8 +1005,14 @@ class TestParentContext:
         # Child always included even when parent fetch fails
         assert len(result.messages) == 1
         assert result.messages[0].parent_lookup_status == "failed"
-        parent_failures = [f for f in result.failures if f.kind == "parent_context"]
-        assert len(parent_failures) >= 1
+        # Exactly one retryable failure for the failed chunk request itself —
+        # no per-child duplication, and no "confirmed missing" record since
+        # the request never actually succeeded (decision 9).
+        network_failures = [f for f in result.failures if f.kind == "network_error"]
+        assert len(network_failures) == 1
+        assert network_failures[0].operation_phase == "parent_lookup"
+        assert network_failures[0].blocks_watermark_advance is False
+        assert not [f for f in result.failures if f.kind == "parent_missing"]
 
     @pytest.mark.asyncio
     async def test_malformed_parent_view_skipped(

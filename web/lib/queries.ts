@@ -21,6 +21,10 @@ import {
   type NegativeGradingFilters,
   type ParentLookupStatus,
   type SourceParent,
+  type SourceCheckpoint,
+  type EnvironmentLease,
+  type RecoveryOperation,
+  type SourceProbeRun,
 } from "@/types/schema";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
 
@@ -154,7 +158,24 @@ function toSourceParent(row: {
   return { parent_lookup_status: status, parent: null };
 }
 
+/** scans.watermark_advanced is stored as SQLite INTEGER (0/1); every raw
+ * scan row read through `s.*` needs this coercion before it matches the
+ * TS `boolean` field. */
+function withWatermarkAdvancedBoolean<T extends { watermark_advanced: number }>(
+  row: T
+): Omit<T, "watermark_advanced"> & { watermark_advanced: boolean } {
+  return { ...row, watermark_advanced: row.watermark_advanced === 1 };
+}
+
 function isHistoricalTrueEmptyCompletedScan(row: ScanWithCounts): boolean {
+  // Only pre-coverage completed rows can be historical empty noise. Partial,
+  // failed, and interrupted rows are operator evidence, as are zero-message
+  // scans whose finalized coverage or advancement provenance is meaningful.
+  if (
+    (row.status !== null && row.status !== "complete") ||
+    row.coverage_outcome !== null ||
+    row.watermark_advanced
+  ) return false;
   return (
     row.completed_at !== null &&
     (row.messages_scanned ?? 0) === 0 &&
@@ -223,9 +244,9 @@ export function getScans(): ScanWithCounts[] {
       LEFT JOIN critique_counts cc ON cc.scan_id = s.id
       ORDER BY s.id DESC`
     )
-    .all() as ScanWithCounts[];
+    .all() as Array<Omit<ScanWithCounts, "watermark_advanced"> & { watermark_advanced: number }>;
 
-  return rows.filter((row) => !isHistoricalTrueEmptyCompletedScan(row));
+  return rows.map(withWatermarkAdvancedBoolean).filter((row) => !isHistoricalTrueEmptyCompletedScan(row));
 }
 
 export function getScanById(id: number): ScanDetailWithCounts | null {
@@ -246,29 +267,150 @@ export function getScanById(id: number): ScanDetailWithCounts | null {
       FROM scans s
       WHERE s.id = ?`
     )
-    .get(id) as (ScanDetail & { critique_count: number }) | undefined;
+    .get(id) as
+    | (Omit<ScanDetail, "watermark_advanced"> & { critique_count: number; watermark_advanced: number })
+    | undefined;
 
-  if (!row || isHistoricalTrueEmptyCompletedScan(row)) {
+  if (!row) {
+    return null;
+  }
+  const scanRow = withWatermarkAdvancedBoolean(row);
+  if (isHistoricalTrueEmptyCompletedScan(scanRow)) {
     return null;
   }
 
   const failureRows = db
     .prepare(
-      `SELECT id, scan_id, platform, context, kind, message,
-              http_status, retry_after, retryable, created_at
-       FROM scan_fetch_failures
-       WHERE scan_id = ?
-       ORDER BY id ASC`
+      `SELECT f.id, f.scan_id, f.platform, f.context, f.kind, f.message,
+              f.http_status, f.retry_after, f.retryable, f.created_at,
+              f.operation_phase, f.blocks_watermark_advance,
+              (swb.failure_id IS NOT NULL) AS blocked_watermark
+       FROM scan_fetch_failures f
+       LEFT JOIN scan_watermark_blockers swb
+         ON swb.scan_id = f.scan_id AND swb.failure_id = f.id
+       WHERE f.scan_id = ?
+       ORDER BY f.id ASC`
     )
-    .all(id) as Array<Omit<ScanFetchFailure, "retryable"> & { retryable: number }>;
+    .all(id) as Array<
+      Omit<ScanFetchFailure, "retryable" | "blocks_watermark_advance" | "blocked_watermark"> & {
+        retryable: number;
+        blocks_watermark_advance: number;
+        blocked_watermark: number;
+      }
+    >;
 
   const failures: ScanFetchFailure[] = failureRows.map((f) => ({
     ...f,
     retryable: f.retryable === 1,
+    blocks_watermark_advance: f.blocks_watermark_advance === 1,
+    blocked_watermark: f.blocked_watermark === 1,
   }));
 
-  const result: ScanDetailWithCounts = { ...row, failures };
+  const result: ScanDetailWithCounts = {
+    ...scanRow,
+    failures,
+    source_checkpoints: getSourceCheckpoints(),
+    environment_lease: getEnvironmentLease(scanRow.environment),
+    environment_watermark_at: getEnvironmentWatermarkAt(scanRow.environment),
+    recent_recovery_operations: getRecentRecoveryOperations(scanRow.environment),
+    latest_probe_run: getLatestProbeRun(scanRow.environment),
+  };
   return result;
+}
+
+/** The environment's current eligible watermark — mirrors
+ * ScanStore.get_last_scan_timestamp: the latest canonical-live scan that
+ * durably advanced, exact environment match, never 'unknown'. */
+export function getEnvironmentWatermarkAt(environment: string): string | null {
+  if (environment === "unknown") return null;
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT safe_watermark_at
+       FROM scans
+       WHERE safe_watermark_at IS NOT NULL AND environment = ?
+         AND role = 'canonical_live'
+         AND watermark_advanced = 1
+       ORDER BY id DESC
+       LIMIT 1`
+    )
+    .get(environment) as { safe_watermark_at: string } | undefined;
+  return row?.safe_watermark_at ?? null;
+}
+
+export function getSourceCheckpoints(): SourceCheckpoint[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT source_key, platform, source_kind, provider_key, required, active,
+              checkpoint_at, bootstrapped_from_legacy
+       FROM source_checkpoints
+       ORDER BY platform, source_key`
+    )
+    .all() as Array<
+      Omit<SourceCheckpoint, "required" | "active" | "bootstrapped_from_legacy"> & {
+        required: number;
+        active: number;
+        bootstrapped_from_legacy: number;
+      }
+    >;
+
+  return rows.map((r) => ({
+    ...r,
+    required: r.required === 1,
+    active: r.active === 1,
+    bootstrapped_from_legacy: r.bootstrapped_from_legacy === 1,
+  }));
+}
+
+export function getEnvironmentLease(environment: string): EnvironmentLease | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT environment, fence, owner_id, expires_at, updated_at
+       FROM environment_leases
+       WHERE environment = ?`
+    )
+    .get(environment) as EnvironmentLease | undefined;
+
+  return row ?? null;
+}
+
+export function getRecentRecoveryOperations(
+  environment: string,
+  limit = 5
+): RecoveryOperation[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, environment, operation, operator, rationale, policy, source_evidence,
+              probe_run_id, expected_old_watermark, accepted_new_watermark, outcome,
+              detail, created_at
+       FROM recovery_operations
+       WHERE environment = ?
+       ORDER BY id DESC
+       LIMIT ?`
+    )
+    .all(environment, limit) as RecoveryOperation[];
+
+  return rows;
+}
+
+export function getLatestProbeRun(environment: string): SourceProbeRun | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT id, environment, started_at, completed_at, passed, source_count,
+              page_count, window_hours, limits_json, detail_json, created_at
+       FROM source_probe_runs
+       WHERE environment = ?
+       ORDER BY started_at DESC, id DESC
+       LIMIT 1`
+    )
+    .get(environment) as (Omit<SourceProbeRun, "passed"> & { passed: number | null }) | undefined;
+
+  if (!row) return null;
+  return { ...row, passed: row.passed === null ? null : row.passed === 1 };
 }
 
 export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {

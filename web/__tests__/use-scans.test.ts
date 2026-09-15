@@ -16,6 +16,13 @@ function makeScan(id: number): Scan {
     safe_watermark_at: null,
     status: null,
     overflow_count: 0,
+    environment: "production",
+    run_kind: "live",
+    role: "canonical_live",
+    coverage_outcome: null,
+    watermark_advanced: false,
+    coverage_classifier_version: null,
+    canonical_scan_id: null,
   };
 }
 

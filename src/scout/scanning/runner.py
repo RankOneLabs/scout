@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,7 +61,12 @@ from scout.dossiers.resolver import (
     get_pinned_dossier_revision,
     resolve_dossier,
 )
-from scout.errors import PlatformFetchFailure, PlatformFetchSuccess
+from scout.errors import (
+    OperationPhase,
+    PlatformFetchFailure,
+    PlatformFetchSuccess,
+    SourceFetchOutcome,
+)
 from scout.grading.feedback import (
     FeedbackMode,
     PersistedFeedbackSnapshot,
@@ -83,6 +88,8 @@ from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
 from scout.result import Err, Ok
+from scout.scanning import coverage as coverage_lifecycle
+from scout.scanning import lease as lease_lifecycle
 from scout.scanning.agent import (
     PhaseRunIdentity,
     ScoutExecutionContext,
@@ -308,110 +315,102 @@ def _log_route_bundle(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class PlatformsFetch:
+    """Everything one cross-platform fetch produced: the merged messages,
+    every failure (whole-platform and per-source), and the per-source
+    outcomes coverage finalization and the probe derive their evidence
+    from. A platform that failed outright contributes a failure and no
+    outcomes — its sources were never attempted."""
+
+    messages: list[Message]
+    failures: list[PlatformFetchFailure]
+    source_outcomes: tuple[SourceFetchOutcome, ...] = ()
+
+    @property
+    def covered_source_keys(self) -> frozenset[str]:
+        return frozenset(o.source_key for o in self.source_outcomes if o.covered)
+
+    @property
+    def attempted_source_keys(self) -> frozenset[str]:
+        return frozenset(o.source_key for o in self.source_outcomes)
+
+
 async def fetch_messages(
     discord_scanner: DiscordScanner | None,
     farcaster_scanner: FarcasterScanner | None,
     bluesky_scanner: BlueskyScanner | None,
     since: datetime | None,
     queries: list[str] | None = None,
-) -> tuple[list[Message], list[PlatformFetchFailure]]:
+    source_checkpoints: Mapping[str, datetime | None] | None = None,
+) -> PlatformsFetch:
     """Fetch messages from all configured platforms.
 
-    Returns (messages, failures). Failures capture partial platform errors so
-    callers can record them as scan metadata and set an appropriate scan status.
+    Failures capture partial platform errors so callers can record them as
+    scan metadata and set an appropriate scan status; source_outcomes carry
+    the per-source page/termination evidence behind them.
     """
     messages: list[Message] = []
     failures: list[PlatformFetchFailure] = []
+    outcomes: list[SourceFetchOutcome] = []
+
+    def _absorb(
+        result: PlatformFetchSuccess | PlatformFetchFailure, *, label: str, fallback_context: str
+    ) -> None:
+        match result:
+            case PlatformFetchSuccess(
+                platform=plat,
+                messages=platform_msgs,
+                page_ceiling_reached=ceiling,
+                failures=partial_failures,
+                source_outcomes=platform_outcomes,
+            ):
+                logger.info("Fetched %d messages from %s", len(platform_msgs), label)
+                failures.extend(partial_failures)
+                outcomes.extend(platform_outcomes)
+                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
+                    logger.warning(
+                        "%s page ceiling reached — some messages may be beyond fetched pages",
+                        label,
+                    )
+                    failures.append(PlatformFetchFailure(
+                        platform=plat,
+                        kind="page_ceiling",
+                        message=f"Page ceiling reached; fetched {len(platform_msgs)} messages",
+                        context=fallback_context,
+                        retryable=True,
+                        operation_phase="fetch",
+                        blocks_watermark_advance=True,
+                    ))
+                messages.extend(platform_msgs)
+            case PlatformFetchFailure() as failure:
+                logger.error("%s fetch failed (%s): %s", label, failure.kind, failure.message)
+                failures.append(failure)
 
     if discord_scanner:
-        result = await discord_scanner.fetch_messages(since=since)
-        match result:
-            case PlatformFetchSuccess(
-                platform=plat,
-                messages=discord_msgs,
-                page_ceiling_reached=ceiling,
-                failures=partial_failures,
-            ):
-                logger.info("Fetched %d messages from Discord", len(discord_msgs))
-                failures.extend(partial_failures)
-                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
-                    logger.warning(
-                        "Discord page ceiling reached — some messages may be beyond fetched pages"
-                    )
-                    failures.append(PlatformFetchFailure(
-                        platform=plat,
-                        kind="page_ceiling",
-                        message=f"Page ceiling reached; fetched {len(discord_msgs)} messages",
-                        context="channel_history",
-                        retryable=True,
-                    ))
-                messages.extend(discord_msgs)
-            case PlatformFetchFailure() as failure:
-                logger.error(
-                    "Discord fetch failed (%s): %s", failure.kind, failure.message
-                )
-                failures.append(failure)
-
+        _absorb(
+            await discord_scanner.fetch_messages(
+                since=since, source_checkpoints=source_checkpoints
+            ),
+            label="Discord", fallback_context="channel_history",
+        )
     if farcaster_scanner:
-        result = await farcaster_scanner.fetch_messages(since=since, queries=queries)
-        match result:
-            case PlatformFetchSuccess(
-                platform=plat,
-                messages=farcaster_msgs,
-                page_ceiling_reached=ceiling,
-                failures=partial_failures,
-            ):
-                logger.info("Fetched %d casts from Farcaster", len(farcaster_msgs))
-                failures.extend(partial_failures)
-                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
-                    logger.warning(
-                        "Farcaster page ceiling reached — some casts may be beyond fetched pages"
-                    )
-                    failures.append(PlatformFetchFailure(
-                        platform=plat,
-                        kind="page_ceiling",
-                        message=f"Page ceiling reached; fetched {len(farcaster_msgs)} casts",
-                        context="keyword_search",
-                        retryable=True,
-                    ))
-                messages.extend(farcaster_msgs)
-            case PlatformFetchFailure() as failure:
-                logger.error(
-                    "Farcaster fetch failed (%s): %s", failure.kind, failure.message
-                )
-                failures.append(failure)
-
+        _absorb(
+            await farcaster_scanner.fetch_messages(
+                since=since, queries=queries, source_checkpoints=source_checkpoints
+            ),
+            label="Farcaster", fallback_context="keyword_search",
+        )
     if bluesky_scanner:
-        result = await bluesky_scanner.fetch_messages(since=since, queries=queries)
-        match result:
-            case PlatformFetchSuccess(
-                platform=plat,
-                messages=bluesky_msgs,
-                page_ceiling_reached=ceiling,
-                failures=partial_failures,
-            ):
-                logger.info("Fetched %d posts from Bluesky", len(bluesky_msgs))
-                failures.extend(partial_failures)
-                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
-                    logger.warning(
-                        "Bluesky page ceiling reached — some posts may be beyond fetched pages"
-                    )
-                    failures.append(PlatformFetchFailure(
-                        platform=plat,
-                        kind="page_ceiling",
-                        message=f"Page ceiling reached; fetched {len(bluesky_msgs)} posts",
-                        context="feed_or_search",
-                        retryable=True,
-                    ))
-                messages.extend(bluesky_msgs)
-            case PlatformFetchFailure() as failure:
-                logger.error(
-                    "Bluesky fetch failed (%s): %s", failure.kind, failure.message
-                )
-                failures.append(failure)
+        _absorb(
+            await bluesky_scanner.fetch_messages(
+                since=since, queries=queries, source_checkpoints=source_checkpoints
+            ),
+            label="Bluesky", fallback_context="feed_or_search",
+        )
 
     logger.info("Total messages across all platforms: %d", len(messages))
-    return messages, failures
+    return PlatformsFetch(messages=messages, failures=failures, source_outcomes=tuple(outcomes))
 
 
 def load_project_dossiers(
@@ -851,6 +850,7 @@ async def score_messages(
     fetch_failures: list[dict[str, object]] | None = None,
     dossier_summaries: dict[str, DossierSummary] | None = None,
     dossier_revision: str | None = None,
+    lease_check: Callable[[], None] | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
     """Score messages via Scout's phase pipeline, write digest incrementally.
 
@@ -887,6 +887,9 @@ async def score_messages(
         message: str,
         context: str | None = None,
         retryable: bool = False,
+        *,
+        operation_phase: OperationPhase = "scan",
+        blocks_watermark_advance: bool = True,
     ) -> None:
         processing_failures.append(PlatformFetchFailure(
             platform="scan_runner",
@@ -894,6 +897,8 @@ async def score_messages(
             message=message,
             context=context,
             retryable=retryable,
+            operation_phase=operation_phase,
+            blocks_watermark_advance=blocks_watermark_advance,
         ))
 
     def _record_digest_failure(message: str, context: str) -> None:
@@ -906,6 +911,8 @@ async def score_messages(
             message,
             context=context,
             retryable=False,
+            operation_phase="digest",
+            blocks_watermark_advance=False,
         )
 
     try:
@@ -953,6 +960,8 @@ async def score_messages(
     _dossiers: dict[str, DossierSummary] = dossier_summaries or {}
 
     for i, routed in enumerate(routed_candidates):
+        if lease_check is not None:
+            lease_check()
         msg = routed.message
         logger.info("Processing %d/%d: %s...", i + 1, len(routed_candidates), msg.content[:80])
 
@@ -1040,6 +1049,8 @@ async def score_messages(
                 "Unhandled scoring exception; post preserved as unevaluated",
                 context=f"{msg.platform}:{msg.platform_id}",
                 retryable=True,
+                operation_phase="scan",
+                blocks_watermark_advance=False,
             )
             logger.error(
                 "Unhandled error scoring %s; post preserved as unevaluated",
@@ -1065,6 +1076,8 @@ async def score_messages(
                     detail,
                     context=f"{msg.platform}:{msg.platform_id}:{operation}",
                     retryable=True,
+                    operation_phase="scan",
+                    blocks_watermark_advance=False,
                 )
                 continue
             case _:
@@ -1074,6 +1087,8 @@ async def score_messages(
                     "Scoring produced no output",
                     context=f"{msg.platform}:{msg.platform_id}",
                     retryable=True,
+                    operation_phase="scan",
+                    blocks_watermark_advance=False,
                 )
                 continue
 
@@ -1226,6 +1241,78 @@ async def score_messages(
     return digest, relevant_count, digest_ok, processing_failures
 
 
+def build_platform_scanners(max_pages: int | None = None) -> tuple[
+    DiscordScanner | None, FarcasterScanner | None, BlueskyScanner | None
+]:
+    """Construct every platform client whose credentials are configured.
+    Shared by main_loop and the watermark recovery CLI (probe/backfill),
+    so both read the exact same "which platforms are active" decision."""
+    discord_scanner: DiscordScanner | None = None
+    farcaster_scanner: FarcasterScanner | None = None
+    bluesky_scanner: BlueskyScanner | None = None
+    if DISCORD_BOT_TOKEN and DISCORD_SERVER_ID and DISCORD_CHANNEL_IDS:
+        discord_scanner = DiscordScanner(
+            token=DISCORD_BOT_TOKEN,
+            server_id=DISCORD_SERVER_ID,
+            channel_ids=DISCORD_CHANNEL_IDS,
+            max_messages=MAX_MESSAGES_PER_CHANNEL,
+            max_pages=max_pages,
+        )
+        logger.info("Discord scanner enabled (%d channels)", len(DISCORD_CHANNEL_IDS))
+
+    if NEYNAR_API_KEY and NEYNAR_API_URL:
+        farcaster_scanner = FarcasterScanner(
+            api_key=NEYNAR_API_KEY,
+            channel_ids=FARCASTER_CHANNEL_IDS or None,
+            max_results_per_query=FARCASTER_MAX_RESULTS_PER_QUERY,
+            max_pages=max_pages,
+        )
+        channels_info = f", channels: {FARCASTER_CHANNEL_IDS}" if FARCASTER_CHANNEL_IDS else ""
+        logger.info("Farcaster scanner enabled (keyword search%s)", channels_info)
+
+    if BLUESKY_API_URL and BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD:
+        bluesky_scanner = BlueskyScanner(
+            feed_uris=BLUESKY_FEED_URIS or None,
+            max_results_per_query=BLUESKY_MAX_RESULTS_PER_QUERY,
+            max_pages=max_pages,
+        )
+        logger.info("Bluesky scanner enabled (feeds: %d)", len(BLUESKY_FEED_URIS))
+
+    return discord_scanner, farcaster_scanner, bluesky_scanner
+
+
+def _acquire_scan_lease(
+    state: StateManager, heartbeat_state: StateManager, owner_id: str
+) -> lease_lifecycle.EnvironmentLeaseHandle | None:
+    """Acquire this environment's lease, reconcile abandoned canonical
+    owners under its fence, and start the dedicated-connection heartbeat.
+    Returns None (after logging) when another worker holds the lease."""
+    match lease_lifecycle.acquire_lease(
+        state,
+        environment=SCOUT_ENVIRONMENT,
+        owner_id=owner_id,
+        heartbeat_state=heartbeat_state,
+        ttl_seconds=_config.SCOUT_LEASE_TTL_SECONDS,
+        heartbeat_interval_seconds=_config.SCOUT_LEASE_HEARTBEAT_SECONDS,
+    ):
+        case Err(error):
+            logger.error(
+                "Could not acquire environment lease for %r: %s",
+                SCOUT_ENVIRONMENT, error.detail,
+            )
+            return None
+        case Ok(handle):
+            pass
+    reconciled = lease_lifecycle.reconcile_abandoned_owners(state, handle)
+    if reconciled:
+        logger.warning(
+            "Reconciled %d abandoned canonical owner scan(s) in environment=%r at "
+            "startup: %s", len(reconciled), SCOUT_ENVIRONMENT, reconciled,
+        )
+    handle.start_heartbeat()
+    return handle
+
+
 async def main_loop(args: argparse.Namespace) -> None:
     """Main agent loop — single scan or continuous."""
 
@@ -1236,44 +1323,45 @@ async def main_loop(args: argparse.Namespace) -> None:
         logger.error("Copy .env.example to .env and fill in your credentials")
         sys.exit(1)
 
-    discord_scanner: DiscordScanner | None = None
-    farcaster_scanner: FarcasterScanner | None = None
-    bluesky_scanner: BlueskyScanner | None = None
-
-    if DISCORD_BOT_TOKEN and DISCORD_SERVER_ID and DISCORD_CHANNEL_IDS:
-        discord_scanner = DiscordScanner(
-            token=DISCORD_BOT_TOKEN,
-            server_id=DISCORD_SERVER_ID,
-            channel_ids=DISCORD_CHANNEL_IDS,
-            max_messages=MAX_MESSAGES_PER_CHANNEL,
-        )
-        logger.info("Discord scanner enabled (%d channels)", len(DISCORD_CHANNEL_IDS))
-
-    if NEYNAR_API_KEY and NEYNAR_API_URL:
-        farcaster_scanner = FarcasterScanner(
-            api_key=NEYNAR_API_KEY,
-            channel_ids=FARCASTER_CHANNEL_IDS or None,
-            max_results_per_query=FARCASTER_MAX_RESULTS_PER_QUERY,
-        )
-        channels_info = f", channels: {FARCASTER_CHANNEL_IDS}" if FARCASTER_CHANNEL_IDS else ""
-        logger.info("Farcaster scanner enabled (keyword search%s)", channels_info)
-
-    if BLUESKY_API_URL and BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD:
-        bluesky_scanner = BlueskyScanner(
-            feed_uris=BLUESKY_FEED_URIS or None,
-            max_results_per_query=BLUESKY_MAX_RESULTS_PER_QUERY,
-        )
-        logger.info(
-            "Bluesky scanner enabled (feeds: %d)",
-            len(BLUESKY_FEED_URIS),
-        )
+    discord_scanner, farcaster_scanner, bluesky_scanner = build_platform_scanners()
 
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
     feedback: SQLiteFeedbackLoop | None = None
+    owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
+        # Heartbeat renewals run on their own connection so they can never
+        # contend with a scan transaction on the primary one.
+        heartbeat_state = StateManager(db_path=DB_PATH, init_schema=False)
+        lease_handle = _acquire_scan_lease(state, heartbeat_state, owner_id)
+        if lease_handle is None:
+            with contextlib.suppress(Exception):
+                heartbeat_state.close()
+            sys.exit(1)
+        lease_fence = lease_handle.fence
         try:
             while True:
+                if lease_handle.lost:
+                    # Another worker took this environment over. A single-shot
+                    # invocation stops; continuous mode waits out the normal
+                    # interval and tries to acquire a fresh generation.
+                    logger.error(
+                        "Lost environment lease for %r; no further scans under this owner",
+                        SCOUT_ENVIRONMENT,
+                    )
+                    await lease_handle.stop(release=False)
+                    if not args.continuous:
+                        sys.exit(1)
+                    logger.info(
+                        "Sleeping %d hours before retrying lease acquisition...",
+                        SCAN_INTERVAL_HOURS,
+                    )
+                    await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
+                    reacquired = _acquire_scan_lease(state, heartbeat_state, owner_id)
+                    if reacquired is None:
+                        continue
+                    lease_handle = reacquired
+                    lease_fence = lease_handle.fence
                 logger.info("=" * 60)
                 logger.info("Starting scan...")
                 logger.info("=" * 60)
@@ -1327,6 +1415,13 @@ async def main_loop(args: argparse.Namespace) -> None:
                     fetch_failures: list[PlatformFetchFailure] = []
                     fetch_started_at: datetime | None = None
                     advances_watermark = not args.rescore and not args.rescore_failed
+                    # The canonical live fetch-owner scan, committed and
+                    # durably visible before any platform I/O below — never
+                    # set for a --rescore/--rescore-failed invocation, which
+                    # has no live fetch and so no canonical owner.
+                    canonical_scan_id: int | None = None
+                    required_source_keys: frozenset[str] = frozenset()
+                    covered_source_keys: frozenset[str] = frozenset()
                     _overflow = 0
 
                     if args.rescore_failed:
@@ -1344,19 +1439,50 @@ async def main_loop(args: argparse.Namespace) -> None:
                         new_messages = raw_messages
                         all_unseen = raw_messages
                     else:
-                        since = state.get_last_scan_timestamp()
+                        since = state.get_last_scan_timestamp(environment=SCOUT_ENVIRONMENT)
                         if since:
                             logger.info("Scanning messages since %s", since.isoformat())
                         else:
                             logger.info("First scan — fetching recent messages")
 
+                        lease_handle.check()
                         fetch_started_at = datetime.now(UTC)
-                        all_messages, fetch_failures = await fetch_messages(
+                        # Committed and durably visible before the platform
+                        # clients are ever awaited: a crash or cancellation
+                        # during fetch still leaves a recoverable, auditable
+                        # attempt behind (decision: pre-I/O canonical owner).
+                        match coverage_lifecycle.commit_canonical_owner(
+                            state, environment=SCOUT_ENVIRONMENT, owner_id=owner_id,
+                            fence=lease_fence, fetch_started_at=fetch_started_at,
+                        ):
+                            case Ok(committed_scan_id):
+                                canonical_scan_id = committed_scan_id
+                            case Err(lease_error):
+                                raise lease_lifecycle.LeaseLostError(lease_error.detail)
+                        active_scan_id = canonical_scan_id
+                        fetched = await fetch_messages(
                             discord_scanner,
                             farcaster_scanner,
                             bluesky_scanner,
                             since,
                             queries=search_queries,
+                            source_checkpoints={
+                                checkpoint.source_key: checkpoint.checkpoint_at
+                                for checkpoint in state.list_source_checkpoints(
+                                    active_only=True
+                                )
+                            },
+                        )
+                        all_messages = fetched.messages
+                        fetch_failures = list(fetched.failures)
+                        lease_handle.check()
+                        source_coverage = coverage_lifecycle.register_source_outcomes(
+                            state, fetched.source_outcomes
+                        )
+                        required_source_keys = source_coverage.required
+                        covered_source_keys = source_coverage.covered
+                        fetch_failures.extend(
+                            coverage_lifecycle.unattempted_source_failures(source_coverage)
                         )
 
                         all_unseen = (
@@ -1391,17 +1517,41 @@ async def main_loop(args: argparse.Namespace) -> None:
                         logger.info(
                             "Skipping live scan: no valid search queries and no new messages"
                         )
+                        # A zero-message, fully covered live fetch is still a
+                        # valid advancing owner — finalize it as an empty
+                        # success without ever constructing a tracer,
+                        # feedback loop, model client, or digest.
+                        if canonical_scan_id is not None:
+                            match coverage_lifecycle.finalize_empty_success(
+                                state,
+                                canonical_scan_id,
+                                environment=SCOUT_ENVIRONMENT,
+                                owner_id=owner_id,
+                                advance_watermark=advances_watermark,
+                                required_source_keys=required_source_keys,
+                                covered_source_keys=covered_source_keys,
+                            ):
+                                case Err(finalize_error):
+                                    logger.error(
+                                        "Coverage finalization rejected empty-success scan "
+                                        "#%d: %s", canonical_scan_id, finalize_error.detail,
+                                    )
+                                case Ok():
+                                    pass
+                            active_scan_id = None
                     else:
                         if tracer is None:
                             tracer = SQLiteTracer(db_path=TRACE_DB_PATH)
                         if feedback is None:
                             feedback = SQLiteFeedbackLoop(db_path=FEEDBACK_DB_PATH)
 
+                    is_first_mode_pass = True
                     for mode_name in mode_names:
                         if skip_live_scan:
                             break
                         assert tracer is not None
                         assert feedback is not None
+                        lease_handle.check()
                         base_mode_cfg = MODES[mode_name]
                         logger.info(
                             "Running %s pass (evaluate=%s, respond=%s, critique=%s)...",
@@ -1415,11 +1565,34 @@ async def main_loop(args: argparse.Namespace) -> None:
                             if args.rescore is not None or args.rescore_failed is not None
                             else "live"
                         )
-                        scan_id = state.start_scan(
-                            fetch_started_at=fetch_started_at,
-                            environment=SCOUT_ENVIRONMENT,
-                            run_kind=run_kind,
-                        )
+                        # The first pass of a live run reuses the canonical
+                        # owner already committed before the fetch above;
+                        # --mode both's later pass(es) are linked, explicitly
+                        # non-advancing secondaries over the same fetch. A
+                        # --rescore/--rescore-failed run has no canonical
+                        # owner to link to — each pass is its own
+                        # independent, non-live 'rescore' scan.
+                        is_canonical_owner_scan = is_first_mode_pass and canonical_scan_id is not None
+                        if is_canonical_owner_scan:
+                            assert canonical_scan_id is not None
+                            scan_id = canonical_scan_id
+                        elif canonical_scan_id is not None:
+                            assert fetch_started_at is not None
+                            scan_id = coverage_lifecycle.commit_linked_secondary(
+                                state,
+                                environment=SCOUT_ENVIRONMENT,
+                                fetch_started_at=fetch_started_at,
+                                canonical_scan_id=canonical_scan_id,
+                                run_kind=run_kind,
+                            )
+                        else:
+                            scan_id = state.start_scan(
+                                fetch_started_at=fetch_started_at,
+                                environment=SCOUT_ENVIRONMENT,
+                                run_kind=run_kind,
+                                role="rescore",
+                            )
+                        is_first_mode_pass = False
                         active_scan_id = scan_id
                         active_messages_scanned = len(all_unseen)
                         active_overflow = _overflow
@@ -1435,6 +1608,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 http_status=failure.http_status,
                                 retry_after=failure.retry_after,
                                 retryable=failure.retryable,
+                                operation_phase=failure.operation_phase,
+                                blocks_watermark_advance=failure.blocks_watermark_advance,
                             )
 
                         if fetch_failures:
@@ -1571,13 +1746,32 @@ async def main_loop(args: argparse.Namespace) -> None:
                                     ),
                                     context="digest",
                                     retryable=False,
+                                    operation_phase="digest",
+                                    blocks_watermark_advance=False,
                                 )
                             state.complete_scan(
                                 scan_id, len(all_unseen), 0,
                                 status=scan_status,
                                 overflow_count=_overflow,
-                                advance_watermark=advances_watermark,
                             )
+                            if (
+                                is_canonical_owner_scan
+                                and run_kind == "live"
+                                and scan_status in ("complete", "partial")
+                            ):
+                                match coverage_lifecycle.finalize_owner(
+                                    state,
+                                    scan_id,
+                                    environment=SCOUT_ENVIRONMENT,
+                                    owner_id=owner_id,
+                                    advance_watermark=advances_watermark,
+                                    required_source_keys=required_source_keys,
+                                    covered_source_keys=covered_source_keys,
+                                ):
+                                    case Err(_error):
+                                        scan_status = "failed"
+                                    case Ok():
+                                        pass
                             if _overflow > 0:
                                 logger.info(
                                     "Scan outcome: %s | %d scanned, 0 relevant, %d overflow",
@@ -1616,6 +1810,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 fetch_failures=[_failure_to_dict(f) for f in fetch_failures],
                                 dossier_summaries=_dossier_summaries,
                                 dossier_revision=_dossier_revision,
+                                lease_check=lease_handle.check,
                             )
 
                             for failure in processing_failures:
@@ -1628,6 +1823,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                                     http_status=failure.http_status,
                                     retry_after=failure.retry_after,
                                     retryable=failure.retryable,
+                                    operation_phase=failure.operation_phase,
+                                    blocks_watermark_advance=failure.blocks_watermark_advance,
                                 )
 
                             if processing_failures:
@@ -1648,14 +1845,33 @@ async def main_loop(args: argparse.Namespace) -> None:
                                         ),
                                         context="finalize_digest",
                                         retryable=False,
+                                        operation_phase="digest",
+                                        blocks_watermark_advance=False,
                                     )
 
                             state.complete_scan(
                                 scan_id, len(all_unseen), relevant_count,
                                 status=scan_status,
                                 overflow_count=_overflow,
-                                advance_watermark=advances_watermark,
                             )
+                            if (
+                                is_canonical_owner_scan
+                                and run_kind == "live"
+                                and scan_status in ("complete", "partial")
+                            ):
+                                match coverage_lifecycle.finalize_owner(
+                                    state,
+                                    scan_id,
+                                    environment=SCOUT_ENVIRONMENT,
+                                    owner_id=owner_id,
+                                    advance_watermark=advances_watermark,
+                                    required_source_keys=required_source_keys,
+                                    covered_source_keys=covered_source_keys,
+                                ):
+                                    case Err(_error):
+                                        scan_status = "failed"
+                                    case Ok():
+                                        pass
 
                             logger.info(
                                 "Scan outcome: %s | %d scanned, %d relevant, %d overflow",
@@ -1667,6 +1883,26 @@ async def main_loop(args: argparse.Namespace) -> None:
                         await tracer.flush()
                         logger.info("Digest saved to %s", digest_path)
 
+                except asyncio.CancelledError:
+                    # CancelledError is a BaseException, not an Exception —
+                    # score_messages' own per-post handler already covers
+                    # cancellation during scoring, but a cancellation during
+                    # fetch_messages (before any post exists) would
+                    # otherwise propagate past every handler below and
+                    # leave the already-committed canonical owner with no
+                    # terminal status at all. Mirror the KeyboardInterrupt
+                    # handling and always propagate.
+                    if active_scan_id is not None:
+                        with contextlib.suppress(Exception):
+                            state.fail_scan(
+                                active_scan_id,
+                                active_messages_scanned,
+                                failure_post_id=None,
+                                error_kind="cancelled",
+                                error_message="scan cancelled",
+                            )
+                    logger.warning("Scan cancelled; completed work is preserved")
+                    raise
                 except KeyboardInterrupt:
                     if active_scan_id is not None:
                         state.complete_scan(
@@ -1703,3 +1939,12 @@ async def main_loop(args: argparse.Namespace) -> None:
                 await feedback.close()
             if tracer is not None:
                 await tracer.close()
+            # Stop the heartbeat first, then release cleanly on the primary
+            # connection (unless the lease was already lost) so an immediate
+            # re-run doesn't have to wait out the TTL/takeover path.
+            await lease_handle.stop(release=False)
+            if not lease_handle.lost:
+                with contextlib.suppress(Exception):
+                    state.release_environment_lease(SCOUT_ENVIRONMENT, owner_id, lease_fence)
+            with contextlib.suppress(Exception):
+                heartbeat_state.close()

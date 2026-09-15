@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import datetime
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 # These used to be TYPE_CHECKING-only imports from paa_declarations and
 # paa_events, deferred because paa_registry imports this module's evaluator
@@ -39,6 +39,7 @@ from scout.config import (
 )
 from scout.grading.feedback import FeedbackMode, PersistedFeedbackSnapshot, PhaseFeedbackBundle
 from scout.registry import RuntimeRegistry
+from scout.result import Result
 from scout.storage.artifacts import ArtifactStore
 from scout.storage.db import Db
 from scout.storage.evaluations import (
@@ -64,8 +65,19 @@ from scout.storage.migrations import (
 )
 from scout.storage.posts import PostStore
 from scout.storage.registry import RegistryStore
+from scout.storage.scans import CoverageFinalizationError as CoverageFinalizationError
+from scout.storage.scans import CoverageFinalizationResult as CoverageFinalizationResult
+from scout.storage.scans import CoverageOutcome as CoverageOutcome
+from scout.storage.scans import CutoverRefusal as CutoverRefusal
+from scout.storage.scans import CutoverResult as CutoverResult
+from scout.storage.scans import EnvironmentLease as EnvironmentLease
+from scout.storage.scans import LeaseError as LeaseError
+from scout.storage.scans import ProbeRunResult as ProbeRunResult
+from scout.storage.scans import ScanRole as ScanRole
 from scout.storage.scans import ScanStatus as ScanStatus
 from scout.storage.scans import ScanStore, StoredAuthorClassification
+from scout.storage.scans import SourceCheckpoint as SourceCheckpoint
+from scout.storage.scans import SourceCheckpointError as SourceCheckpointError
 from scout.storage.schema import LATEST_SCHEMA_VERSION as LATEST_SCHEMA_VERSION
 from scout.storage.schema import SCHEMA as SCHEMA
 from scout.storage.unit_of_work import UnitOfWork
@@ -274,8 +286,8 @@ class StateManager:
 
     # --- Scan (delegates to ScanStore) ---
 
-    def get_last_scan_timestamp(self) -> datetime | None:
-        return self._scans.get_last_scan_timestamp()
+    def get_last_scan_timestamp(self, *, environment: str) -> datetime | None:
+        return self._scans.get_last_scan_timestamp(environment=environment)
 
     def get_latest_completed_scan_id(self) -> int | None:
         return self._scans.get_latest_completed_scan_id()
@@ -289,9 +301,10 @@ class StateManager:
         *,
         environment: str = "development",
         run_kind: str = "live",
+        role: ScanRole = "canonical_live",
     ) -> int:
         return self._scans.start_scan(
-            fetch_started_at, environment=environment, run_kind=run_kind
+            fetch_started_at, environment=environment, run_kind=run_kind, role=role
         )
 
     def complete_scan(
@@ -299,20 +312,274 @@ class StateManager:
         scan_id: int,
         messages_scanned: int,
         relevant_found: int,
+        *,
         status: ScanStatus = "complete",
-        safe_watermark_at: datetime | None = None,
         overflow_count: int = 0,
-        advance_watermark: bool = True,
     ) -> None:
         self._scans.complete_scan(
             scan_id,
             messages_scanned,
             relevant_found,
-            status,
-            safe_watermark_at,
-            overflow_count,
-            advance_watermark,
+            status=status,
+            overflow_count=overflow_count,
         )
+
+    def finalize_scan_coverage(
+        self,
+        scan_id: int,
+        *,
+        environment: str,
+        advance_watermark: bool,
+        owner_id: str | None = None,
+        required_source_keys: frozenset[str] = frozenset(),
+        covered_source_keys: frozenset[str] = frozenset(),
+        coverage_classifier_version: int,
+        expected_coverage_outcome: CoverageOutcome | None = None,
+    ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
+        return self._scans.finalize_scan_coverage(
+            scan_id,
+            environment=environment,
+            advance_watermark=advance_watermark,
+            owner_id=owner_id,
+            required_source_keys=required_source_keys,
+            covered_source_keys=covered_source_keys,
+            coverage_classifier_version=coverage_classifier_version,
+            expected_coverage_outcome=expected_coverage_outcome,
+        )
+
+    def mark_coverage_finalization_failed(self, scan_id: int, *, detail: str) -> None:
+        self._scans.mark_coverage_finalization_failed(scan_id, detail=detail)
+
+    def get_environment_lease_fence(self, environment: str) -> int:
+        return self._scans.get_environment_lease_fence(environment)
+
+    def bump_environment_lease_fence(self, environment: str) -> int:
+        return self._scans.bump_environment_lease_fence(environment)
+
+    # --- Environment lease (delegates to ScanStore) ---
+
+    def acquire_environment_lease(
+        self, environment: str, owner_id: str, *, ttl_seconds: float
+    ) -> Result[EnvironmentLease, LeaseError]:
+        return self._scans.acquire_environment_lease(
+            environment, owner_id, ttl_seconds=ttl_seconds
+        )
+
+    def renew_environment_lease(
+        self, environment: str, owner_id: str, fence: int, *, ttl_seconds: float
+    ) -> Result[EnvironmentLease, LeaseError]:
+        return self._scans.renew_environment_lease(
+            environment, owner_id, fence, ttl_seconds=ttl_seconds
+        )
+
+    def release_environment_lease(self, environment: str, owner_id: str, fence: int) -> bool:
+        return self._scans.release_environment_lease(environment, owner_id, fence)
+
+    def validate_environment_lease(
+        self, environment: str, owner_id: str, fence: int
+    ) -> Result[None, LeaseError]:
+        return self._scans.validate_environment_lease(environment, owner_id, fence)
+
+    def start_canonical_owner_scan(
+        self,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        fetch_started_at: datetime,
+    ) -> Result[int, LeaseError]:
+        return self._scans.start_canonical_owner_scan(
+            environment=environment, owner_id=owner_id, fence=fence,
+            fetch_started_at=fetch_started_at,
+        )
+
+    def reconcile_abandoned_canonical_owners(
+        self, environment: str, current_fence: int
+    ) -> list[int]:
+        return self._scans.reconcile_abandoned_canonical_owners(environment, current_fence)
+
+    def link_secondary_scan(self, scan_id: int, *, canonical_scan_id: int) -> None:
+        self._scans.link_secondary_scan(scan_id, canonical_scan_id=canonical_scan_id)
+
+    def start_linked_secondary_scan(
+        self,
+        *,
+        fetch_started_at: datetime,
+        environment: str,
+        run_kind: str,
+        role: ScanRole,
+        canonical_scan_id: int,
+    ) -> int:
+        return self._scans.start_linked_secondary_scan(
+            fetch_started_at=fetch_started_at,
+            environment=environment,
+            run_kind=run_kind,
+            role=role,
+            canonical_scan_id=canonical_scan_id,
+        )
+
+    # --- Six-hour probe evidence (delegates to ScanStore) ---
+
+    def start_probe_run(
+        self,
+        environment: str,
+        *,
+        source_count: int,
+        window_hours: float,
+        limits_json: str,
+    ) -> int:
+        return self._scans.start_probe_run(
+            environment, source_count=source_count, window_hours=window_hours,
+            limits_json=limits_json,
+        )
+
+    def complete_probe_run(
+        self,
+        probe_run_id: int,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        passed: bool,
+        source_count: int,
+        page_count: int,
+        detail_json: str,
+    ) -> Result[None, LeaseError]:
+        return self._scans.complete_probe_run(
+            probe_run_id,
+            environment=environment,
+            owner_id=owner_id,
+            fence=fence,
+            passed=passed,
+            source_count=source_count,
+            page_count=page_count,
+            detail_json=detail_json,
+        )
+
+    def get_probe_run(self, probe_run_id: int) -> ProbeRunResult | None:
+        return self._scans.get_probe_run(probe_run_id)
+
+    def get_latest_passed_probe(
+        self, environment: str, *, max_age_seconds: float
+    ) -> ProbeRunResult | None:
+        return self._scans.get_latest_passed_probe(environment, max_age_seconds=max_age_seconds)
+
+    # --- Recovery audit (delegates to ScanStore) ---
+
+    def record_recovery_operation(
+        self,
+        *,
+        environment: str,
+        operation: Literal["backfill", "cutover", "stale_check"],
+        operator: str,
+        rationale: str,
+        policy: str | None = None,
+        source_evidence: str | None = None,
+        probe_run_id: int | None = None,
+        expected_old_watermark: datetime | None = None,
+        accepted_new_watermark: datetime | None = None,
+        outcome: Literal["accepted", "refused"],
+        detail: str | None = None,
+    ) -> int:
+        return self._scans.record_recovery_operation(
+            environment=environment,
+            operation=operation,
+            operator=operator,
+            rationale=rationale,
+            policy=policy,
+            source_evidence=source_evidence,
+            probe_run_id=probe_run_id,
+            expected_old_watermark=expected_old_watermark,
+            accepted_new_watermark=accepted_new_watermark,
+            outcome=outcome,
+            detail=detail,
+        )
+
+    def cutover_watermark(
+        self,
+        *,
+        environment: str,
+        owner_id: str,
+        fence: int,
+        operator: str,
+        rationale: str,
+        policy: str,
+        source_evidence: str,
+        expected_old_watermark: datetime | None,
+        accepted_new_watermark: datetime,
+        probe_max_age_seconds: float,
+        required_probe_limits: Mapping[str, int],
+        probe_min_window_hours: float = 6.0,
+    ) -> Result[CutoverResult, CutoverRefusal]:
+        return self._scans.cutover_watermark(
+            environment=environment,
+            owner_id=owner_id,
+            fence=fence,
+            operator=operator,
+            rationale=rationale,
+            policy=policy,
+            source_evidence=source_evidence,
+            expected_old_watermark=expected_old_watermark,
+            accepted_new_watermark=accepted_new_watermark,
+            probe_max_age_seconds=probe_max_age_seconds,
+            required_probe_limits=required_probe_limits,
+            probe_min_window_hours=probe_min_window_hours,
+        )
+
+    def get_source_checkpoint(self, source_key: str) -> SourceCheckpoint | None:
+        return self._scans.get_source_checkpoint(source_key)
+
+    def list_source_checkpoints(self, *, active_only: bool = True) -> list[SourceCheckpoint]:
+        return self._scans.list_source_checkpoints(active_only=active_only)
+
+    def ensure_source_checkpoint(
+        self,
+        source_key: str,
+        *,
+        platform: str,
+        source_kind: str,
+        provider_key: str,
+        required: bool = True,
+    ) -> SourceCheckpoint:
+        return self._scans.ensure_source_checkpoint(
+            source_key,
+            platform=platform,
+            source_kind=source_kind,
+            provider_key=provider_key,
+            required=required,
+        )
+
+    def bootstrap_legacy_source_checkpoint(
+        self,
+        source_key: str,
+        *,
+        platform: str,
+        source_kind: str,
+        provider_key: str,
+        legacy_checkpoint_at: datetime,
+        required: bool = True,
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        return self._scans.bootstrap_legacy_source_checkpoint(
+            source_key,
+            platform=platform,
+            source_kind=source_kind,
+            provider_key=provider_key,
+            legacy_checkpoint_at=legacy_checkpoint_at,
+            required=required,
+        )
+
+    def retire_source_checkpoint(self, source_key: str) -> bool:
+        return self._scans.retire_source_checkpoint(source_key)
+
+    def reactivate_source_checkpoint(
+        self, source_key: str, *, reset: bool = False
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        return self._scans.reactivate_source_checkpoint(source_key, reset=reset)
+
+    def update_source_checkpoint(
+        self, source_key: str, *, checkpoint_at: datetime
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        return self._scans.update_source_checkpoint(source_key, checkpoint_at=checkpoint_at)
 
     def save_fetch_failure(
         self,
@@ -324,9 +591,13 @@ class StateManager:
         http_status: int | None = None,
         retry_after: str | None = None,
         retryable: bool = True,
+        *,
+        operation_phase: str,
+        blocks_watermark_advance: bool,
     ) -> int:
         return self._scans.save_fetch_failure(
-            scan_id, platform, kind, message, context, http_status, retry_after, retryable
+            scan_id, platform, kind, message, context, http_status, retry_after, retryable,
+            operation_phase=operation_phase, blocks_watermark_advance=blocks_watermark_advance,
         )
 
     def fail_scan(
@@ -356,6 +627,8 @@ class StateManager:
                 "http_status": f.http_status,
                 "retry_after": f.retry_after,
                 "retryable": f.retryable,
+                "operation_phase": f.operation_phase,
+                "blocks_watermark_advance": f.blocks_watermark_advance,
             }
             for f in self._scans.get_scan_fetch_failures(scan_id)
         ]

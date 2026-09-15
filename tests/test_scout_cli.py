@@ -115,3 +115,106 @@ class TestFeedbackBatchArgParsing:
         args = scout_cli.parse_args()
         assert args.format == "json"
         assert args.out == "report.json"
+
+
+class TestWatermarkArgParsing:
+    def test_probe_requires_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv", ["scout", "watermark", "probe", "--environment", "production"],
+        )
+        args = scout_cli.parse_args()
+        assert args.subcommand == "watermark"
+        assert args.watermark_command == "probe"
+        assert args.environment == "production"
+        assert args.hours == 6.0
+
+    def test_stale_check_hours_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["scout", "watermark", "stale-check", "--environment", "production", "--hours", "12"],
+        )
+        args = scout_cli.parse_args()
+        assert args.watermark_command == "stale-check"
+        assert args.hours == 12.0
+
+    def test_backfill_requires_operator_rationale_and_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "scout", "watermark", "backfill", "--environment", "production",
+                "--operator", "steve", "--rationale", "page ceiling hit", "--hours", "24",
+            ],
+        )
+        args = scout_cli.parse_args()
+        assert args.watermark_command == "backfill"
+        assert args.operator == "steve"
+        assert args.rationale == "page ceiling hit"
+        assert args.hours == 24.0
+
+    def test_cutover_requires_full_audit_metadata(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "scout", "watermark", "cutover", "--environment", "production",
+                "--operator", "steve", "--rationale", "accepted gap after outage",
+                "--policy", "gap-acceptance-v1", "--source-evidence", "platform status page",
+                "--accepted-new", "2026-01-01T00:00:00+00:00",
+                "--expected-old", "2025-12-31T00:00:00+00:00",
+            ],
+        )
+        args = scout_cli.parse_args()
+        assert args.watermark_command == "cutover"
+        assert args.policy == "gap-acceptance-v1"
+        assert args.source_evidence == "platform status page"
+        assert args.accepted_new == "2026-01-01T00:00:00+00:00"
+        assert args.expected_old == "2025-12-31T00:00:00+00:00"
+
+    def test_cutover_missing_required_metadata_exits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "scout", "watermark", "cutover", "--environment", "production",
+                "--operator", "steve", "--rationale", "r",
+                "--accepted-new", "2026-01-01T00:00:00+00:00",
+            ],
+        )
+        with pytest.raises(SystemExit):
+            scout_cli.parse_args()
+
+
+    def test_backfill_rejects_a_non_positive_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "scout", "watermark", "backfill", "--environment", "production",
+                "--operator", "steve", "--rationale", "r", "--hours", "-1",
+            ],
+        )
+        with pytest.raises(SystemExit):
+            scout_cli.parse_args()
+
+    def test_probe_rejects_a_zero_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["scout", "watermark", "probe", "--environment", "production", "--hours", "0"],
+        )
+        with pytest.raises(SystemExit):
+            scout_cli.parse_args()
