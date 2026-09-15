@@ -187,6 +187,44 @@ if SCOUT_ENVIRONMENT not in {"development", "test", "production"}:
 # value.
 SCOUT_BUILD_SHA: str = os.getenv("SCOUT_BUILD_SHA", "").strip()
 
+# --- Owned scan lifecycle and lease-based recovery ---
+# TTL a canonical live owner's environment lease is granted for on acquire,
+# and extended to on each heartbeat renewal. Must be >= 5; a shorter TTL
+# would make a normal fetch/scan pause look indistinguishable from a dead
+# worker.
+SCOUT_LEASE_TTL_SECONDS: float = _env_min_int("SCOUT_LEASE_TTL_SECONDS", 120, 5)
+# Interval between heartbeat renewals of an already-acquired lease. Must be
+# comfortably shorter than SCOUT_LEASE_TTL_SECONDS (validated below) so a
+# single missed renewal never lets the lease expire out from under a live
+# worker.
+SCOUT_LEASE_HEARTBEAT_SECONDS: float = _env_min_int("SCOUT_LEASE_HEARTBEAT_SECONDS", 30, 5)
+if SCOUT_LEASE_HEARTBEAT_SECONDS * 3 > SCOUT_LEASE_TTL_SECONDS:
+    _env_errors.append(
+        "SCOUT_LEASE_HEARTBEAT_SECONDS must leave room for at least 2 missed "
+        "heartbeats within SCOUT_LEASE_TTL_SECONDS"
+    )
+# TTL of the exclusive recovery lock a bounded-backfill or controlled-cutover
+# operation holds — a separate, longer-lived lease acquisition against the
+# same environment lease primitive, held for the duration of one recovery
+# operator invocation.
+SCOUT_RECOVERY_LOCK_TTL_SECONDS: float = _env_min_int(
+    "SCOUT_RECOVERY_LOCK_TTL_SECONDS", 1800, 60
+)
+# How recent a passed six-hour probe must be to gate a controlled cutover.
+SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS: float = _env_min_int(
+    "SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS", 3600, 60
+)
+# Bounded-backfill page ceiling per source, independent of the platform
+# client's own normal per-scan page limits — caps how far a single backfill
+# invocation can walk back.
+SCOUT_BACKFILL_MAX_PAGES_PER_SOURCE: int = _env_min_int(
+    "SCOUT_BACKFILL_MAX_PAGES_PER_SOURCE", 20, 1
+)
+# A canonical live watermark older than this is reported stale by
+# `scout watermark stale-check`. Exact-environment scoped only — never
+# compares against another environment's cursor.
+SCOUT_STALE_WATERMARK_HOURS: float = _env_min_int("SCOUT_STALE_WATERMARK_HOURS", 24, 1)
+
 # --- evaluation-feedback/v1 ---
 # Selection window, cap, and rendering budgets for the phase-specific
 # feedback snapshot built once per scan (see grading/feedback.py).
