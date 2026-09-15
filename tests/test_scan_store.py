@@ -550,7 +550,8 @@ class TestFinalizeScanCoverage:
         scan_id = self._start_eligible_scan(in_memory_state)
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -578,7 +579,8 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -603,7 +605,8 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -619,7 +622,8 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -640,7 +644,8 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -654,7 +659,8 @@ class TestFinalizeScanCoverage:
     def test_rejects_failed_status(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, status="failed")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "status" in result.error.detail
@@ -662,7 +668,8 @@ class TestFinalizeScanCoverage:
     def test_rejects_interrupted_status(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, status="interrupted")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
 
@@ -672,7 +679,8 @@ class TestFinalizeScanCoverage:
         )
         in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "role" in result.error.detail
@@ -683,7 +691,8 @@ class TestFinalizeScanCoverage:
         )
         in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
 
@@ -691,7 +700,8 @@ class TestFinalizeScanCoverage:
         scan_id = in_memory_state.start_scan(environment="production", run_kind="human_positive")
         in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "run kind" in result.error.detail
@@ -699,7 +709,8 @@ class TestFinalizeScanCoverage:
     def test_rejects_unknown_environment(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, environment="unknown")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="unknown", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="unknown", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "environment" in result.error.detail
@@ -707,7 +718,8 @@ class TestFinalizeScanCoverage:
     def test_rejects_environment_mismatch(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, environment="production")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="development", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="development", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
 
@@ -717,7 +729,8 @@ class TestFinalizeScanCoverage:
         in_memory_state.bump_environment_lease_fence("production")
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "lease fence" in result.error.detail
@@ -726,7 +739,8 @@ class TestFinalizeScanCoverage:
         future = datetime.now(UTC) + timedelta(hours=1)
         scan_id = self._start_eligible_scan(in_memory_state, fetch_started_at=future)
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "future" in result.error.detail
@@ -790,7 +804,8 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(result, Ok)
 
@@ -808,10 +823,12 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         first = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         second = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
         )
         assert isinstance(first, Ok) and isinstance(second, Ok)
         rows = in_memory_state.conn.execute(
