@@ -3150,6 +3150,36 @@ def _migrate_to_44(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_45(conn: sqlite3.Connection) -> None:
+    """Owned scan lifecycle and lease-based recovery (v45).
+
+    environment_leases gains owner_id/expires_at so the existing fence
+    counter also tracks who currently holds it and until when — acquire/
+    renew/takeover live in scans.py and only ever bump `fence` on a fresh
+    acquire or a takeover of an expired lease, never on renew, so
+    finalize_scan_coverage's existing fence check (decision 10) is
+    unaffected by a mid-flight heartbeat. scans gains canonical_scan_id to
+    link a secondary/rescore scan back to the canonical owner it is a
+    non-advancing pass of. source_probe_runs and recovery_operations are
+    created via LEASE_AND_RECOVERY_SCHEMA_STATEMENTS.
+    """
+    from scout.storage.schema import LEASE_AND_RECOVERY_SCHEMA_STATEMENTS
+
+    lease_cols = {row["name"] for row in conn.execute("PRAGMA table_info(environment_leases)")}
+    for col, ddl in (("owner_id", "TEXT"), ("expires_at", "TEXT")):
+        if col not in lease_cols:
+            conn.execute(f"ALTER TABLE environment_leases ADD COLUMN {col} {ddl}")
+
+    scan_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scans)")}
+    if "canonical_scan_id" not in scan_cols:
+        conn.execute(
+            "ALTER TABLE scans ADD COLUMN canonical_scan_id INTEGER REFERENCES scans(id)"
+        )
+
+    for statement in LEASE_AND_RECOVERY_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3194,4 +3224,5 @@ MIGRATIONS: dict[int, Migration] = {
     42: _migrate_to_42,
     43: _migrate_to_43,
     44: _migrate_to_44,
+    45: _migrate_to_45,
 }
