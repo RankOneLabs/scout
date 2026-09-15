@@ -2,7 +2,16 @@ import type {
   PostWithEvaluation,
   DraftWithContext,
   TraceSpan,
+  Scan,
+  ScanFetchFailure,
 } from "@/types/schema";
+
+// Mirrors scout.config.SCOUT_STALE_WATERMARK_HOURS's default (the env var
+// itself is a Python-process setting; the web read model has no access to
+// it, so the default is duplicated here for display purposes only — an
+// operator running with a non-default SCOUT_STALE_WATERMARK_HOURS should
+// treat this badge as advisory and defer to `scout watermark stale-check`).
+export const DEFAULT_STALE_WATERMARK_HOURS = 24;
 
 export type ScoreTier = "high" | "medium" | "low";
 
@@ -154,4 +163,80 @@ export function buildSpanTree(spans: TraceSpan[]): SpanTreeNode[] {
   }
 
   return buildNodes(null);
+}
+
+// Coverage / watermark presentation selectors
+//
+// Processing `status` and `coverage_outcome` are independently-persisted
+// facts (decision: neither can be inferred from the other) — these
+// selectors read both without collapsing one into the other, so a
+// non-blocking degraded scan (`status: 'partial'`, watermark still
+// advanced) and a fully-processed but coverage-blocked scan
+// (`status: 'complete'`, `coverage_outcome: 'blocked'`) render distinctly.
+
+export type CoverageTone = "ok" | "warn" | "danger" | "neutral";
+
+export interface CoverageDescription {
+  label: string;
+  tone: CoverageTone;
+}
+
+/** Describe a scan's coverage/watermark outcome, independent of its
+ * processing `status`. Only `role: 'canonical_live'` scans ever advance
+ * the watermark — a secondary/rescore scan's `coverage_outcome` is
+ * whatever its own read (if any) derived, never a watermark decision. */
+export function describeCoverage(
+  scan: Pick<Scan, "coverage_outcome" | "watermark_advanced" | "role">
+): CoverageDescription {
+  if (scan.role !== "canonical_live") {
+    return { label: scan.role === "rescore" ? "rescore (never advances)" : "secondary (never advances)", tone: "neutral" };
+  }
+  if (scan.coverage_outcome === null) {
+    return { label: "coverage not yet finalized", tone: "neutral" };
+  }
+  if (scan.coverage_outcome === "blocked") {
+    return { label: "coverage blocked", tone: "danger" };
+  }
+  if (scan.coverage_outcome === "complete" && scan.watermark_advanced) {
+    return { label: "watermark advanced", tone: "ok" };
+  }
+  // coverage_outcome is 'complete'/'partial' but watermark_advanced is
+  // false — a coverage read that was never asked to advance the cursor
+  // (e.g. a re-run of finalize_scan_coverage with advance_watermark=False).
+  return { label: `coverage ${scan.coverage_outcome} (not advanced)`, tone: "warn" };
+}
+
+/** True when a scan's processing degraded (`status: 'partial'`) for a
+ * reason that never blocked watermark advancement — permanent
+ * non-primary enrichment failure (e.g. parent-lookup) rather than a
+ * primary-source coverage blocker. */
+export function isNonBlockingDegradation(scan: Pick<Scan, "status" | "watermark_advanced">): boolean {
+  return scan.status === "partial" && scan.watermark_advanced;
+}
+
+/** Split a scan's fetch failures into the exact set coverage finalization
+ * counted as blocking (durably recorded in scan_watermark_blockers) and
+ * the remainder — non-blocking evidence, most commonly permanent parent
+ * enrichment degradation (`operation_phase: 'parent_lookup'`). */
+export function partitionFailuresByBlocking(failures: ScanFetchFailure[]): {
+  blocking: ScanFetchFailure[];
+  nonBlocking: ScanFetchFailure[];
+} {
+  return {
+    blocking: failures.filter((f) => f.blocked_watermark),
+    nonBlocking: failures.filter((f) => !f.blocked_watermark),
+  };
+}
+
+/** Whether an environment's watermark is stale against a fixed threshold —
+ * the display-layer counterpart of `scout watermark stale-check`. A null
+ * watermark (never advanced) is always stale. */
+export function isWatermarkStale(
+  watermarkAt: string | null,
+  nowIso: string,
+  staleAfterHours: number = DEFAULT_STALE_WATERMARK_HOURS
+): boolean {
+  if (!watermarkAt) return true;
+  const ageMs = parseUtc(nowIso).getTime() - parseUtc(watermarkAt).getTime();
+  return ageMs > staleAfterHours * 60 * 60 * 1000;
 }
