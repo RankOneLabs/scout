@@ -2086,7 +2086,7 @@ class TestEvaluationIdentityGating:
         )
         eval2_id = state.save_evaluation(result2, post_id, scan2)
         draft2_id = state.save_draft(post_id, eval2_id, "gateway", "Draft from scan2", scan2)
-        state.complete_scan(scan2, 1, 1, advance_watermark=False)
+        state.complete_scan(scan2, 1, 1)
 
         return {
             "post_id": post_id,

@@ -61,7 +61,7 @@ from scout.dossiers.resolver import (
     get_pinned_dossier_revision,
     resolve_dossier,
 )
-from scout.errors import PlatformFetchFailure, PlatformFetchSuccess
+from scout.errors import OperationPhase, PlatformFetchFailure, PlatformFetchSuccess
 from scout.grading.feedback import (
     FeedbackMode,
     PersistedFeedbackSnapshot,
@@ -344,6 +344,8 @@ async def fetch_messages(
                         message=f"Page ceiling reached; fetched {len(discord_msgs)} messages",
                         context="channel_history",
                         retryable=True,
+                        operation_phase="fetch",
+                        blocks_watermark_advance=True,
                     ))
                 messages.extend(discord_msgs)
             case PlatformFetchFailure() as failure:
@@ -373,6 +375,8 @@ async def fetch_messages(
                         message=f"Page ceiling reached; fetched {len(farcaster_msgs)} casts",
                         context="keyword_search",
                         retryable=True,
+                        operation_phase="fetch",
+                        blocks_watermark_advance=True,
                     ))
                 messages.extend(farcaster_msgs)
             case PlatformFetchFailure() as failure:
@@ -402,6 +406,8 @@ async def fetch_messages(
                         message=f"Page ceiling reached; fetched {len(bluesky_msgs)} posts",
                         context="feed_or_search",
                         retryable=True,
+                        operation_phase="fetch",
+                        blocks_watermark_advance=True,
                     ))
                 messages.extend(bluesky_msgs)
             case PlatformFetchFailure() as failure:
@@ -887,6 +893,9 @@ async def score_messages(
         message: str,
         context: str | None = None,
         retryable: bool = False,
+        *,
+        operation_phase: OperationPhase = "scan",
+        blocks_watermark_advance: bool = True,
     ) -> None:
         processing_failures.append(PlatformFetchFailure(
             platform="scan_runner",
@@ -894,6 +903,8 @@ async def score_messages(
             message=message,
             context=context,
             retryable=retryable,
+            operation_phase=operation_phase,
+            blocks_watermark_advance=blocks_watermark_advance,
         ))
 
     def _record_digest_failure(message: str, context: str) -> None:
@@ -906,6 +917,8 @@ async def score_messages(
             message,
             context=context,
             retryable=False,
+            operation_phase="digest",
+            blocks_watermark_advance=False,
         )
 
     try:
@@ -1040,6 +1053,8 @@ async def score_messages(
                 "Unhandled scoring exception; post preserved as unevaluated",
                 context=f"{msg.platform}:{msg.platform_id}",
                 retryable=True,
+                operation_phase="scan",
+                blocks_watermark_advance=False,
             )
             logger.error(
                 "Unhandled error scoring %s; post preserved as unevaluated",
@@ -1065,6 +1080,8 @@ async def score_messages(
                     detail,
                     context=f"{msg.platform}:{msg.platform_id}:{operation}",
                     retryable=True,
+                    operation_phase="scan",
+                    blocks_watermark_advance=False,
                 )
                 continue
             case _:
@@ -1074,6 +1091,8 @@ async def score_messages(
                     "Scoring produced no output",
                     context=f"{msg.platform}:{msg.platform_id}",
                     retryable=True,
+                    operation_phase="scan",
+                    blocks_watermark_advance=False,
                 )
                 continue
 
@@ -1344,7 +1363,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                         new_messages = raw_messages
                         all_unseen = raw_messages
                     else:
-                        since = state.get_last_scan_timestamp()
+                        since = state.get_last_scan_timestamp(environment=SCOUT_ENVIRONMENT)
                         if since:
                             logger.info("Scanning messages since %s", since.isoformat())
                         else:
@@ -1435,6 +1454,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 http_status=failure.http_status,
                                 retry_after=failure.retry_after,
                                 retryable=failure.retryable,
+                                operation_phase=failure.operation_phase,
+                                blocks_watermark_advance=failure.blocks_watermark_advance,
                             )
 
                         if fetch_failures:
@@ -1571,13 +1592,21 @@ async def main_loop(args: argparse.Namespace) -> None:
                                     ),
                                     context="digest",
                                     retryable=False,
+                                    operation_phase="digest",
+                                    blocks_watermark_advance=False,
                                 )
                             state.complete_scan(
                                 scan_id, len(all_unseen), 0,
                                 status=scan_status,
                                 overflow_count=_overflow,
-                                advance_watermark=advances_watermark,
                             )
+                            if scan_status in ("complete", "partial"):
+                                state.finalize_scan_coverage(
+                                    scan_id,
+                                    environment=SCOUT_ENVIRONMENT,
+                                    advance_watermark=advances_watermark,
+                                    coverage_classifier_version=1,
+                                )
                             if _overflow > 0:
                                 logger.info(
                                     "Scan outcome: %s | %d scanned, 0 relevant, %d overflow",
@@ -1628,6 +1657,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                                     http_status=failure.http_status,
                                     retry_after=failure.retry_after,
                                     retryable=failure.retryable,
+                                    operation_phase=failure.operation_phase,
+                                    blocks_watermark_advance=failure.blocks_watermark_advance,
                                 )
 
                             if processing_failures:
@@ -1648,14 +1679,22 @@ async def main_loop(args: argparse.Namespace) -> None:
                                         ),
                                         context="finalize_digest",
                                         retryable=False,
+                                        operation_phase="digest",
+                                        blocks_watermark_advance=False,
                                     )
 
                             state.complete_scan(
                                 scan_id, len(all_unseen), relevant_count,
                                 status=scan_status,
                                 overflow_count=_overflow,
-                                advance_watermark=advances_watermark,
                             )
+                            if scan_status in ("complete", "partial"):
+                                state.finalize_scan_coverage(
+                                    scan_id,
+                                    environment=SCOUT_ENVIRONMENT,
+                                    advance_watermark=advances_watermark,
+                                    coverage_classifier_version=1,
+                                )
 
                             logger.info(
                                 "Scan outcome: %s | %d scanned, %d relevant, %d overflow",

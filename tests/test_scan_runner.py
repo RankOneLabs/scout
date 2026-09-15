@@ -127,6 +127,7 @@ class _FakeState(AbstractContextManager["_FakeState"]):
         self.load_runtime_registry = Mock(return_value=registry or _empty_registry())
         self.start_scan = Mock(side_effect=AssertionError("start_scan should not be called"))
         self.complete_scan = Mock()
+        self.finalize_scan_coverage = Mock()
         self.save_fetch_failure = Mock()
         self.commit = Mock()
         self.has_seen_message = Mock(return_value=False)
@@ -457,6 +458,8 @@ async def test_fetch_failure_without_messages_creates_partial_scan(
         message="missing channel access",
         context="channel:123",
         retryable=False,
+        operation_phase="fetch",
+        blocks_watermark_advance=True,
     )
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
@@ -529,11 +532,15 @@ async def test_processing_failure_marks_main_loop_scan_partial(
     ).fetchone()
     assert scan_row is not None
     assert scan_row["status"] == "partial"
-    assert scan_row["safe_watermark_at"] is None
+    # Decision 4: a scoring failure is non-primary enrichment and never
+    # blocks coverage — the scan's processing status stays 'partial' but
+    # its primary coverage is still complete, so the watermark still moves.
+    assert scan_row["safe_watermark_at"] is not None
     failures = real_state.get_scan_fetch_failures(scan_row["id"])
     assert len(failures) == 1
     assert failures[0]["kind"] == "scoring_error"
     assert failures[0]["context"] == "bluesky:agent:score"
+    assert failures[0]["blocks_watermark_advance"] is False
 
     real_state.close()
 
@@ -1316,6 +1323,8 @@ async def test_fetch_failure_recorded_as_partial_scan(
         http_status=429,
         retry_after="30",
         retryable=True,
+        operation_phase="fetch",
+        blocks_watermark_advance=True,
     )
 
     fake_tracer = _FakeTracer()
@@ -1688,7 +1697,7 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
     )
     await scan_runner.main_loop(args)
 
-    first_watermark = real_state.get_last_scan_timestamp()
+    first_watermark = real_state.get_last_scan_timestamp(environment=config.SCOUT_ENVIRONMENT)
     assert first_watermark is not None
 
     # Second scan: only a page_ceiling failure, no messages — some upstream
@@ -1699,6 +1708,8 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
         message="Page ceiling reached; fetched 50 messages",
         context="channel_history",
         retryable=True,
+        operation_phase="fetch",
+        blocks_watermark_advance=True,
     )
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
@@ -1719,7 +1730,9 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
 
     # The next scan reuses the first scan's safe boundary — the page-ceiling
     # scan's null watermark is skipped entirely by get_last_scan_timestamp.
-    assert real_state.get_last_scan_timestamp() == first_watermark
+    assert real_state.get_last_scan_timestamp(
+        environment=config.SCOUT_ENVIRONMENT
+    ) == first_watermark
 
     real_state.close()
 

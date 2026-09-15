@@ -305,7 +305,10 @@ class TestPaginateCursor:
     @pytest.mark.asyncio
     async def test_fetch_failure_returns_accumulated_items_and_failure(self) -> None:
         page1 = _page([{"id": "a"}], "cur1")
-        failure = PlatformFetchFailure(platform="test", kind="network_error", message="boom")
+        failure = PlatformFetchFailure(
+            platform="test", kind="network_error", message="boom",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
         calls, fetch_page = _fetch_pages([Ok(page1), Err(failure)])
 
         result = await paginate_cursor(
