@@ -406,21 +406,15 @@ class ScanStore:
 
     # --- Watermark advance ---
 
-    def advance_watermark(
-        self, scan_id: int, *, now: datetime | None = None
-    ) -> Result[datetime, WatermarkAdvanceError]:
+    def advance_watermark(self, scan_id: int) -> Result[datetime, WatermarkAdvanceError]:
         """Advance scan_id's durable watermark from its own stored
         fetch_started_at — the single candidate timestamp (decision 3).
 
-        Required-keyword-only surface: there is no caller-supplied override
-        timestamp and no fallback to "now" when fetch_started_at is
-        missing — either the scan's own recorded fetch start is used
-        verbatim, or the call fails closed with Err rather than fabricate a
-        chronology. `now` is accepted only so tests can freeze "the current
-        time" for the future-timestamp guard callers may layer on top; it
-        does not participate in choosing the watermark value itself.
+        Takes no timestamp of any kind: there is no caller-supplied override
+        and no fallback to "now" when fetch_started_at is missing — either
+        the scan's own recorded fetch start is used verbatim, or the call
+        fails closed with `Err` rather than fabricate a chronology.
         """
-        del now  # not used to derive the watermark; see docstring.
         operation = "advance_watermark"
         with self._uow.begin_immediate():
             row = self._conn.execute(

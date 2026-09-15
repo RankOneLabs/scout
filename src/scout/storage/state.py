@@ -322,10 +322,8 @@ class StateManager:
             advance_watermark=advance_watermark,
         )
 
-    def advance_watermark(
-        self, scan_id: int, *, now: datetime | None = None
-    ) -> Result[datetime, WatermarkAdvanceError]:
-        return self._scans.advance_watermark(scan_id, now=now)
+    def advance_watermark(self, scan_id: int) -> Result[datetime, WatermarkAdvanceError]:
+        return self._scans.advance_watermark(scan_id)
 
     def finalize_scan_coverage(
         self,
