@@ -1205,3 +1205,110 @@ class TestMigration33AutonomyEventsContractShape:
 # Migration 26: grade_revisions + grade_usage_overrides
 # ---------------------------------------------------------------------------
 
+
+class TestCoverageFoundationMigration:
+    """v43/v44: a production-shaped legacy database (real scan rows with
+    explicit environments, a grandfathered watermark, and a fetch failure)
+    migrated through the real MIGRATIONS chain must preserve every existing
+    id/timestamp/environment/watermark value verbatim, leave
+    foreign_key_check clean, and leave unknown-environment history
+    ineligible for a production-scoped read."""
+
+    def _build_production_shaped_db(self, db_path: str) -> None:
+        conn = _build_legacy_conn_at_version(db_path, 16)
+        conn.execute(
+            "INSERT INTO scans "
+            "(id, started_at, completed_at, fetch_started_at, safe_watermark_at, status, "
+            "environment, run_kind) VALUES "
+            "(1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:05:00+00:00', "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', 'complete', "
+            "'production', 'live')"
+        )
+        conn.execute(
+            "INSERT INTO scans "
+            "(id, started_at, completed_at, fetch_started_at, safe_watermark_at, status, "
+            "environment, run_kind) VALUES "
+            "(2, '2026-01-02T00:00:00+00:00', NULL, '2026-01-02T00:00:00+00:00', NULL, "
+            "'partial', 'production', 'live')"
+        )
+        conn.execute(
+            "INSERT INTO scans "
+            "(id, started_at, completed_at, fetch_started_at, safe_watermark_at, status, "
+            "environment, run_kind) VALUES "
+            "(3, '2026-01-03T00:00:00+00:00', '2026-01-03T00:05:00+00:00', "
+            "'2026-01-03T00:00:00+00:00', '2026-01-03T00:00:00+00:00', 'complete', "
+            "'unknown', 'unknown')"
+        )
+        conn.execute(
+            "INSERT INTO scan_fetch_failures "
+            "(scan_id, platform, context, kind, message, retryable, created_at) "
+            "VALUES (2, 'discord', 'channel:1', 'network_error', 'timeout', 1, "
+            "'2026-01-02T00:01:00+00:00')"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_migration_preserves_ids_timestamps_and_environments_verbatim(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        db_path = str(tmp_path / "prod_shaped.db")
+        self._build_production_shaped_db(db_path)
+
+        with StateManager(db_path=db_path) as state:
+            assert state.conn.execute("PRAGMA user_version").fetchone()[0] == (
+                LATEST_SCHEMA_VERSION
+            )
+            row1 = state.conn.execute(
+                "SELECT started_at, fetch_started_at, safe_watermark_at, environment, "
+                "watermark_advanced, coverage_outcome FROM scans WHERE id = 1"
+            ).fetchone()
+            assert row1["started_at"] == "2026-01-01T00:00:00+00:00"
+            assert row1["fetch_started_at"] == "2026-01-01T00:00:00+00:00"
+            assert row1["safe_watermark_at"] == "2026-01-01T00:00:00+00:00"
+            assert row1["environment"] == "production"
+            # A pre-existing non-null watermark is grandfathered as an
+            # already-advanced, complete coverage outcome (decision 5).
+            assert row1["watermark_advanced"] == 1
+            assert row1["coverage_outcome"] == "complete"
+
+            row2 = state.conn.execute(
+                "SELECT safe_watermark_at, watermark_advanced, coverage_outcome "
+                "FROM scans WHERE id = 2"
+            ).fetchone()
+            assert row2["safe_watermark_at"] is None
+            assert row2["watermark_advanced"] == 0
+            assert row2["coverage_outcome"] is None
+
+            row3 = state.conn.execute(
+                "SELECT environment FROM scans WHERE id = 3"
+            ).fetchone()
+            assert row3["environment"] == "unknown"
+
+            failure = state.conn.execute(
+                "SELECT operation_phase, blocks_watermark_advance FROM scan_fetch_failures "
+                "WHERE scan_id = 2"
+            ).fetchone()
+            assert failure["operation_phase"] == "unknown"
+            assert failure["blocks_watermark_advance"] == 1
+
+    def test_migration_leaves_foreign_key_check_clean(self, tmp_path: pathlib.Path) -> None:
+        db_path = str(tmp_path / "prod_shaped.db")
+        self._build_production_shaped_db(db_path)
+
+        with StateManager(db_path=db_path) as state:
+            violations = state.conn.execute("PRAGMA foreign_key_check").fetchall()
+        assert violations == []
+
+    def test_unknown_environment_history_is_ineligible_for_a_production_read(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        db_path = str(tmp_path / "prod_shaped.db")
+        self._build_production_shaped_db(db_path)
+
+        with StateManager(db_path=db_path) as state:
+            # Scan 3 (environment='unknown') has the latest id/timestamp of
+            # the three, but must never surface from a production-scoped read.
+            assert state.get_last_scan_timestamp(environment="production") == (
+                datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+            )
+
