@@ -1247,16 +1247,12 @@ async def score_messages(
     return digest, relevant_count, digest_ok, processing_failures
 
 
-async def main_loop(args: argparse.Namespace) -> None:
-    """Main agent loop — single scan or continuous."""
-
-    errors = validate_config()
-    if errors:
-        for e in errors:
-            logger.error("Config error: %s", e)
-        logger.error("Copy .env.example to .env and fill in your credentials")
-        sys.exit(1)
-
+def build_platform_scanners() -> tuple[
+    DiscordScanner | None, FarcasterScanner | None, BlueskyScanner | None
+]:
+    """Construct every platform client whose credentials are configured.
+    Shared by main_loop and the watermark recovery CLI (probe/backfill),
+    so both read the exact same "which platforms are active" decision."""
     discord_scanner: DiscordScanner | None = None
     farcaster_scanner: FarcasterScanner | None = None
     bluesky_scanner: BlueskyScanner | None = None
@@ -1284,10 +1280,22 @@ async def main_loop(args: argparse.Namespace) -> None:
             feed_uris=BLUESKY_FEED_URIS or None,
             max_results_per_query=BLUESKY_MAX_RESULTS_PER_QUERY,
         )
-        logger.info(
-            "Bluesky scanner enabled (feeds: %d)",
-            len(BLUESKY_FEED_URIS),
-        )
+        logger.info("Bluesky scanner enabled (feeds: %d)", len(BLUESKY_FEED_URIS))
+
+    return discord_scanner, farcaster_scanner, bluesky_scanner
+
+
+async def main_loop(args: argparse.Namespace) -> None:
+    """Main agent loop — single scan or continuous."""
+
+    errors = validate_config()
+    if errors:
+        for e in errors:
+            logger.error("Config error: %s", e)
+        logger.error("Copy .env.example to .env and fill in your credentials")
+        sys.exit(1)
+
+    discord_scanner, farcaster_scanner, bluesky_scanner = build_platform_scanners()
 
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
