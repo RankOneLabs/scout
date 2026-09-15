@@ -24,9 +24,17 @@ from scout.config import (
     SourceAuthor,
     SourceParent,
 )
-from scout.errors import NetworkError, PlatformFetchFailure, PlatformFetchSuccess
+from scout.errors import (
+    NetworkError,
+    PlatformFetchFailure,
+    PlatformFetchSuccess,
+    SourceFetchOutcome,
+)
 from scout.platforms.base import (
+    PaginationResult,
+    SourceDescriptor,
     classify_http_failure,
+    derive_source_key,
     paginate_cursor,
     parse_platform_ts,
     parse_retry_after,
@@ -177,6 +185,7 @@ class BlueskyScanner:
         languages: Sequence[str] | None = None,
         sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], datetime] = _utc_now,
+        max_pages: int | None = None,
     ) -> None:
         self.feed_uris = feed_uris or []
         self.max_results = max_results_per_query
@@ -188,6 +197,15 @@ class BlueskyScanner:
         )
         self._sleeper = sleeper
         self._clock = clock
+        # None means "production's normal limit" (BLUESKY_MAX_PAGES, read at
+        # fetch time); a bounded backfill passes its own ceiling.
+        self._max_pages_override = max_pages
+
+    @property
+    def max_pages(self) -> int:
+        if self._max_pages_override is not None:
+            return self._max_pages_override
+        return BLUESKY_MAX_PAGES
 
     async def _create_session(
         self,
@@ -304,11 +322,48 @@ class BlueskyScanner:
         collected: list[Message] = []
         raw_by_uri: dict[str, dict[str, object]] = {}
         failures: list[PlatformFetchFailure] = []
+        outcomes: list[SourceFetchOutcome] = []
         page_ceiling_reached = False
+        max_pages = self.max_pages
 
         active_queries = queries or []
         for q in active_queries:
             logger.info("Bluesky search query: %s", q)
+
+        def _record(
+            descriptor: SourceDescriptor,
+            result: PaginationResult[dict[str, object], PlatformFetchFailure],
+            context: str,
+        ) -> None:
+            nonlocal page_ceiling_reached
+            for p in result.items:
+                uri = str(p.get("uri", ""))
+                if uri:
+                    raw_by_uri[uri] = p
+            failure = result.failure
+            if failure is None and result.page_ceiling_reached:
+                page_ceiling_reached = True
+                failure = PlatformFetchFailure(
+                    platform="bluesky",
+                    kind="page_ceiling",
+                    message=f"Page ceiling reached; fetched {len(result.items)} posts",
+                    context=context,
+                    retryable=True,
+                    operation_phase="fetch",
+                    blocks_watermark_advance=True,
+                )
+            if failure is not None:
+                failures.append(failure)
+            outcomes.append(SourceFetchOutcome(
+                source_key=derive_source_key(descriptor),
+                platform=descriptor.platform,
+                source_kind=descriptor.source_kind,
+                provider_key=descriptor.provider_key,
+                page_count=result.page_count,
+                termination=result.termination,
+                message_count=len(result.items),
+                failure=failure,
+            ))
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -325,52 +380,28 @@ class BlueskyScanner:
                 langs_to_use: tuple[str | None, ...] = self.languages if self.languages else (None,)
                 for query in active_queries:
                     for lang in langs_to_use:
-                        posts, ceiling, failure = await self._search_paginated(
-                            client, query, headers, since, BLUESKY_MAX_PAGES, lang=lang
+                        result = await self._search_paginated_result(
+                            client, query, headers, since, max_pages, lang=lang
                         )
-                        self._collect(posts, seen_uris, collected, since)
-                        for p in posts:
-                            uri = str(p.get("uri", ""))
-                            if uri:
-                                raw_by_uri[uri] = p
-                        if failure is not None:
-                            failures.append(failure)
-                            continue
-                        if ceiling:
-                            page_ceiling_reached = True
-                            failures.append(PlatformFetchFailure(
-                                platform="bluesky",
-                                kind="page_ceiling",
-                                message=f"Page ceiling reached; fetched {len(posts)} posts",
-                                context=f"search: {query[:40]} lang={lang or 'none'}",
-                                retryable=True,
-                                operation_phase="fetch",
-                                blocks_watermark_advance=True,
-                            ))
+                        self._collect(result.items, seen_uris, collected, since)
+                        _record(
+                            SourceDescriptor(
+                                "bluesky", "search", f"{query} lang={lang or 'none'}"
+                            ),
+                            result,
+                            f"search: {query[:40]} lang={lang or 'none'}",
+                        )
 
                 for feed_uri in self.feed_uris:
-                    posts, ceiling, failure = await self._feed_paginated(
-                        client, feed_uri, headers, BLUESKY_MAX_PAGES
+                    result = await self._feed_paginated_result(
+                        client, feed_uri, headers, max_pages
                     )
-                    self._collect(posts, seen_uris, collected, since)
-                    for p in posts:
-                        uri = str(p.get("uri", ""))
-                        if uri:
-                            raw_by_uri[uri] = p
-                    if failure is not None:
-                        failures.append(failure)
-                        continue
-                    if ceiling:
-                        page_ceiling_reached = True
-                        failures.append(PlatformFetchFailure(
-                            platform="bluesky",
-                            kind="page_ceiling",
-                            message=f"Page ceiling reached; fetched {len(posts)} posts",
-                            context=f"feed: {feed_uri[:50]}",
-                            retryable=True,
-                            operation_phase="fetch",
-                            blocks_watermark_advance=True,
-                        ))
+                    self._collect(result.items, seen_uris, collected, since)
+                    _record(
+                        SourceDescriptor("bluesky", "feed", feed_uri),
+                        result,
+                        f"feed: {feed_uri[:50]}",
+                    )
 
                 # Resolve immediate-parent context for reply posts.
                 if collected:
@@ -396,6 +427,7 @@ class BlueskyScanner:
             messages=collected,
             page_ceiling_reached=page_ceiling_reached,
             failures=tuple(failures),
+            source_outcomes=tuple(outcomes),
         )
 
     async def _attach_parent_context(
@@ -687,14 +719,43 @@ class BlueskyScanner:
         max_pages: int,
         lang: str | None = None,
     ) -> tuple[list[dict[str, object]], bool, PlatformFetchFailure | None]:
-        """Paginate searchPosts for one query-language pair to the since
-        boundary or cursor exhaustion.
+        """Paginate searchPosts — (posts, page_ceiling_reached,
+        failure_or_None) view over `_search_paginated_result`."""
+        result = await self._search_paginated_result(
+            client, query, headers, since, max_pages, lang=lang
+        )
+        return result.items, result.page_ceiling_reached, result.failure
 
-        Returns (posts, page_ceiling_reached, failure_or_None).
-        """
+    async def _feed_paginated(
+        self,
+        client: httpx.AsyncClient,
+        feed_uri: str,
+        headers: dict[str, str],
+        max_pages: int,
+    ) -> tuple[list[dict[str, object]], bool, PlatformFetchFailure | None]:
+        """Paginate getFeed — (posts, page_ceiling_reached, failure_or_None)
+        view over `_feed_paginated_result`."""
+        result = await self._feed_paginated_result(client, feed_uri, headers, max_pages)
+        return result.items, result.page_ceiling_reached, result.failure
+
+    async def _search_paginated_result(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        headers: dict[str, str],
+        since: datetime | None,
+        max_pages: int,
+        lang: str | None = None,
+    ) -> PaginationResult[dict[str, object], PlatformFetchFailure]:
+        """Paginate searchPosts for one query-language pair to the since
+        boundary or cursor exhaustion, returning the full PaginationResult
+        (items, page count, termination, failure)."""
         if not query.strip():
             logger.warning("Skipping empty Bluesky search query")
-            return [], False, None
+            return PaginationResult(
+                items=[], page_ceiling_reached=False, failure=None,
+                page_count=0, termination="skipped",
+            )
 
         context = f"search: {query[:40]} lang={lang or 'none'}"
 
@@ -746,23 +807,21 @@ class BlueskyScanner:
             platform="bluesky",
             context=context,
         )
-        return result.items, result.page_ceiling_reached, result.failure
+        return result
 
-    async def _feed_paginated(
+    async def _feed_paginated_result(
         self,
         client: httpx.AsyncClient,
         feed_uri: str,
         headers: dict[str, str],
         max_pages: int,
-    ) -> tuple[list[dict[str, object]], bool, PlatformFetchFailure | None]:
+    ) -> PaginationResult[dict[str, object], PlatformFetchFailure]:
         """Paginate getFeed to cursor exhaustion or the page ceiling.
 
         Custom/hot/relevance feeds are not guaranteed reverse-chronological,
         so an item at or before `since` cannot prove later pages hold nothing
         new — pagination never stops early on that basis. The since filter is
         applied independently to every parsed item by the caller's _collect.
-
-        Returns (posts, page_ceiling_reached, failure_or_None).
         """
         context = f"feed: {feed_uri[:50]}"
 
@@ -821,7 +880,7 @@ class BlueskyScanner:
             platform="bluesky",
             context=context,
         )
-        return result.items, result.page_ceiling_reached, result.failure
+        return result
 
     async def publish(
         self,

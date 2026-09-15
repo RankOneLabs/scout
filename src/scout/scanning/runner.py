@@ -61,7 +61,12 @@ from scout.dossiers.resolver import (
     get_pinned_dossier_revision,
     resolve_dossier,
 )
-from scout.errors import OperationPhase, PlatformFetchFailure, PlatformFetchSuccess
+from scout.errors import (
+    OperationPhase,
+    PlatformFetchFailure,
+    PlatformFetchSuccess,
+    SourceFetchOutcome,
+)
 from scout.grading.feedback import (
     FeedbackMode,
     PersistedFeedbackSnapshot,
@@ -310,116 +315,95 @@ def _log_route_bundle(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class PlatformsFetch:
+    """Everything one cross-platform fetch produced: the merged messages,
+    every failure (whole-platform and per-source), and the per-source
+    outcomes coverage finalization and the probe derive their evidence
+    from. A platform that failed outright contributes a failure and no
+    outcomes — its sources were never attempted."""
+
+    messages: list[Message]
+    failures: list[PlatformFetchFailure]
+    source_outcomes: tuple[SourceFetchOutcome, ...] = ()
+
+    @property
+    def covered_source_keys(self) -> frozenset[str]:
+        return frozenset(o.source_key for o in self.source_outcomes if o.covered)
+
+    @property
+    def attempted_source_keys(self) -> frozenset[str]:
+        return frozenset(o.source_key for o in self.source_outcomes)
+
+
 async def fetch_messages(
     discord_scanner: DiscordScanner | None,
     farcaster_scanner: FarcasterScanner | None,
     bluesky_scanner: BlueskyScanner | None,
     since: datetime | None,
     queries: list[str] | None = None,
-) -> tuple[list[Message], list[PlatformFetchFailure]]:
+) -> PlatformsFetch:
     """Fetch messages from all configured platforms.
 
-    Returns (messages, failures). Failures capture partial platform errors so
-    callers can record them as scan metadata and set an appropriate scan status.
+    Failures capture partial platform errors so callers can record them as
+    scan metadata and set an appropriate scan status; source_outcomes carry
+    the per-source page/termination evidence behind them.
     """
     messages: list[Message] = []
     failures: list[PlatformFetchFailure] = []
+    outcomes: list[SourceFetchOutcome] = []
+
+    def _absorb(
+        result: PlatformFetchSuccess | PlatformFetchFailure, *, label: str, fallback_context: str
+    ) -> None:
+        match result:
+            case PlatformFetchSuccess(
+                platform=plat,
+                messages=platform_msgs,
+                page_ceiling_reached=ceiling,
+                failures=partial_failures,
+                source_outcomes=platform_outcomes,
+            ):
+                logger.info("Fetched %d messages from %s", len(platform_msgs), label)
+                failures.extend(partial_failures)
+                outcomes.extend(platform_outcomes)
+                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
+                    logger.warning(
+                        "%s page ceiling reached — some messages may be beyond fetched pages",
+                        label,
+                    )
+                    failures.append(PlatformFetchFailure(
+                        platform=plat,
+                        kind="page_ceiling",
+                        message=f"Page ceiling reached; fetched {len(platform_msgs)} messages",
+                        context=fallback_context,
+                        retryable=True,
+                        operation_phase="fetch",
+                        blocks_watermark_advance=True,
+                    ))
+                messages.extend(platform_msgs)
+            case PlatformFetchFailure() as failure:
+                logger.error("%s fetch failed (%s): %s", label, failure.kind, failure.message)
+                failures.append(failure)
 
     if discord_scanner:
-        result = await discord_scanner.fetch_messages(since=since)
-        match result:
-            case PlatformFetchSuccess(
-                platform=plat,
-                messages=discord_msgs,
-                page_ceiling_reached=ceiling,
-                failures=partial_failures,
-            ):
-                logger.info("Fetched %d messages from Discord", len(discord_msgs))
-                failures.extend(partial_failures)
-                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
-                    logger.warning(
-                        "Discord page ceiling reached — some messages may be beyond fetched pages"
-                    )
-                    failures.append(PlatformFetchFailure(
-                        platform=plat,
-                        kind="page_ceiling",
-                        message=f"Page ceiling reached; fetched {len(discord_msgs)} messages",
-                        context="channel_history",
-                        retryable=True,
-                        operation_phase="fetch",
-                        blocks_watermark_advance=True,
-                    ))
-                messages.extend(discord_msgs)
-            case PlatformFetchFailure() as failure:
-                logger.error(
-                    "Discord fetch failed (%s): %s", failure.kind, failure.message
-                )
-                failures.append(failure)
-
+        _absorb(
+            await discord_scanner.fetch_messages(since=since),
+            label="Discord", fallback_context="channel_history",
+        )
     if farcaster_scanner:
-        result = await farcaster_scanner.fetch_messages(since=since, queries=queries)
-        match result:
-            case PlatformFetchSuccess(
-                platform=plat,
-                messages=farcaster_msgs,
-                page_ceiling_reached=ceiling,
-                failures=partial_failures,
-            ):
-                logger.info("Fetched %d casts from Farcaster", len(farcaster_msgs))
-                failures.extend(partial_failures)
-                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
-                    logger.warning(
-                        "Farcaster page ceiling reached — some casts may be beyond fetched pages"
-                    )
-                    failures.append(PlatformFetchFailure(
-                        platform=plat,
-                        kind="page_ceiling",
-                        message=f"Page ceiling reached; fetched {len(farcaster_msgs)} casts",
-                        context="keyword_search",
-                        retryable=True,
-                        operation_phase="fetch",
-                        blocks_watermark_advance=True,
-                    ))
-                messages.extend(farcaster_msgs)
-            case PlatformFetchFailure() as failure:
-                logger.error(
-                    "Farcaster fetch failed (%s): %s", failure.kind, failure.message
-                )
-                failures.append(failure)
-
+        _absorb(
+            await farcaster_scanner.fetch_messages(since=since, queries=queries),
+            label="Farcaster", fallback_context="keyword_search",
+        )
     if bluesky_scanner:
-        result = await bluesky_scanner.fetch_messages(since=since, queries=queries)
-        match result:
-            case PlatformFetchSuccess(
-                platform=plat,
-                messages=bluesky_msgs,
-                page_ceiling_reached=ceiling,
-                failures=partial_failures,
-            ):
-                logger.info("Fetched %d posts from Bluesky", len(bluesky_msgs))
-                failures.extend(partial_failures)
-                if ceiling and not any(f.kind == "page_ceiling" for f in partial_failures):
-                    logger.warning(
-                        "Bluesky page ceiling reached — some posts may be beyond fetched pages"
-                    )
-                    failures.append(PlatformFetchFailure(
-                        platform=plat,
-                        kind="page_ceiling",
-                        message=f"Page ceiling reached; fetched {len(bluesky_msgs)} posts",
-                        context="feed_or_search",
-                        retryable=True,
-                        operation_phase="fetch",
-                        blocks_watermark_advance=True,
-                    ))
-                messages.extend(bluesky_msgs)
-            case PlatformFetchFailure() as failure:
-                logger.error(
-                    "Bluesky fetch failed (%s): %s", failure.kind, failure.message
-                )
-                failures.append(failure)
+        _absorb(
+            await bluesky_scanner.fetch_messages(since=since, queries=queries),
+            label="Bluesky", fallback_context="feed_or_search",
+        )
 
     logger.info("Total messages across all platforms: %d", len(messages))
-    return messages, failures
+    return PlatformsFetch(messages=messages, failures=failures, source_outcomes=tuple(outcomes))
 
 
 def load_project_dossiers(
@@ -1436,13 +1420,15 @@ async def main_loop(args: argparse.Namespace) -> None:
                             state, environment=SCOUT_ENVIRONMENT, fetch_started_at=fetch_started_at,
                         )
                         active_scan_id = canonical_scan_id
-                        all_messages, fetch_failures = await fetch_messages(
+                        fetched = await fetch_messages(
                             discord_scanner,
                             farcaster_scanner,
                             bluesky_scanner,
                             since,
                             queries=search_queries,
                         )
+                        all_messages = fetched.messages
+                        fetch_failures = list(fetched.failures)
 
                         all_unseen = (
                             [

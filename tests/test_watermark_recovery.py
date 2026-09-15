@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 import scout.cli.watermark as watermark_cli
+from scout.scanning.runner import PlatformsFetch
 from scout.storage.state import StateManager
 
 
@@ -103,7 +104,7 @@ class TestProbe:
         monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
 
         async def fake_fetch(*_args: object, **_kwargs: object):
-            return [], []
+            return PlatformsFetch([], [])
 
         monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
 
@@ -124,7 +125,7 @@ class TestProbe:
         monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
 
         async def fake_fetch(*_args: object, **_kwargs: object):
-            return [], []
+            return PlatformsFetch([], [])
 
         monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
 
@@ -147,7 +148,7 @@ class TestProbe:
         monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
 
         async def fake_fetch(*_args: object, **_kwargs: object):
-            return [], []
+            return PlatformsFetch([], [])
 
         monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
         watermark_cli.run_watermark(_probe_args(db_path))
@@ -166,7 +167,7 @@ class TestBackfill:
         monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
 
         async def fake_fetch(*_args: object, **_kwargs: object):
-            return [], []
+            return PlatformsFetch([], [])
 
         monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
 
@@ -182,7 +183,7 @@ class TestBackfill:
         monkeypatch.setattr(watermark_cli, "build_platform_scanners", lambda: (None, None, None))
 
         async def fake_fetch(*_args: object, **_kwargs: object):
-            return [], []
+            return PlatformsFetch([], [])
 
         monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
         watermark_cli.run_watermark(_backfill_args(db_path, rationale="filling a known gap"))

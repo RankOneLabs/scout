@@ -69,6 +69,7 @@ from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
 from scout.result import Err, Ok
 from scout.scanning.author_class import AUTHOR_CLASS_RULE_VERSION
 from scout.scanning.prefilter import RoutedMessage
+from scout.scanning.runner import PlatformsFetch
 from scout.scanning.schemas import (
     DeclarativeSegment,
     ReplyCandidate,
@@ -214,7 +215,7 @@ def _configure_main_loop_score_failure(
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(
-        scan_runner, "fetch_messages", AsyncMock(return_value=([msg], []))
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([msg], []))
     )
     monkeypatch.setattr(scan_runner, "score_messages", score_messages)
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
@@ -401,7 +402,7 @@ async def test_main_loop_empty_live_scan_is_a_finalized_empty_success(
     success — it never constructs a tracer or feedback loop, and never
     scores anything."""
     fake_state = _FakeState(registry=_empty_registry())
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
     tracer_ctor = Mock()
     feedback_ctor = Mock()
 
@@ -447,10 +448,10 @@ async def test_canonical_owner_is_committed_before_platform_fetch_is_awaited(
 
     async def paused_fetch(
         *_args: object, **_kwargs: object
-    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+    ) -> PlatformsFetch:
         fetch_paused.set()
         await resume_fetch.wait()
-        return ([], [])
+        return PlatformsFetch([], [])
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", paused_fetch)
@@ -502,7 +503,7 @@ async def test_canonical_owner_finalized_interrupted_on_fetch_exception(
 
     async def failing_fetch(
         *_args: object, **_kwargs: object
-    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+    ) -> PlatformsFetch:
         raise RuntimeError("platform is on fire")
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
@@ -546,7 +547,7 @@ async def test_canonical_owner_finalized_interrupted_on_cancellation(
 
     async def cancelled_fetch(
         *_args: object, **_kwargs: object
-    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+    ) -> PlatformsFetch:
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
@@ -584,7 +585,9 @@ async def test_mode_both_second_pass_is_a_linked_non_advancing_secondary(
     state_cm.__exit__ = Mock(return_value=False)
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
@@ -657,10 +660,10 @@ async def test_main_loop_anchors_watermark_to_pre_fetch_time(
     async def fake_fetch(
         *_args: object,
         **_kwargs: object,
-    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+    ) -> PlatformsFetch:
         nonlocal fetch_called_at
         fetch_called_at = datetime.now(UTC)
-        return ([_message("during-fetch", fetch_called_at)], [])
+        return PlatformsFetch([_message("during-fetch", fetch_called_at)], [])
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fake_fetch)
@@ -712,7 +715,9 @@ async def test_fetch_failure_without_messages_creates_partial_scan(
     )
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [failure])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], [failure]))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
@@ -758,7 +763,9 @@ async def test_processing_failure_marks_main_loop_scan_partial(
     }
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([msg], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([msg], []))
+    )
     monkeypatch.setattr(scan_runner, "run_pipeline", AsyncMock(return_value=pipeline_result))
     monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
     monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
@@ -887,7 +894,9 @@ async def test_keyboard_interrupt_marks_active_scan_interrupted(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([msg], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([msg], []))
+    )
     monkeypatch.setattr(scan_runner, "score_messages", interrupting_score)
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
@@ -922,7 +931,7 @@ async def test_main_loop_passes_configured_platform_query_caps(
     farcaster_ctor = Mock(return_value=object())
     bluesky_ctor = Mock(return_value=object())
 
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fetch_messages_mock)
@@ -985,7 +994,9 @@ async def test_main_loop_closes_feedback_and_tracer(
     fake_feedback = _FakeFeedback()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=fake_state))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1081,7 +1092,9 @@ async def test_overflow_messages_saved_as_unevaluated_posts(
 
     monkeypatch.setattr(scan_runner, "SCAN_MAX_NEW_MESSAGES", 1)
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=(msgs, [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch(msgs, []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1519,7 +1532,9 @@ async def test_main_loop_cleanup_emits_no_runtime_warning(
     fake_feedback = _FakeFeedback()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=fake_state))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1584,7 +1599,7 @@ async def test_fetch_failure_recorded_as_partial_scan(
     # Provide one message so the scan proceeds (not skipped as zero-work).
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
-        AsyncMock(return_value=([_message("m1", now)], [failure]))
+        AsyncMock(return_value=PlatformsFetch([_message("m1", now)], [failure]))
     )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
@@ -1642,7 +1657,9 @@ async def test_overflow_count_persisted_in_scan_row(
 
     monkeypatch.setattr(scan_runner, "SCAN_MAX_NEW_MESSAGES", 1)
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
-    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=(msgs, [])))
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch(msgs, []))
+    )
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
     monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=fake_tracer))
     monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=fake_feedback))
@@ -1724,7 +1741,7 @@ async def test_main_loop_one_shot_exits_on_dossier_readiness_failure(
 ) -> None:
     """One-shot mode preserves the existing terminate-before-scanning behavior."""
     fake_state = _FakeState(registry=_registry_with_unready_project())
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fetch_messages_mock)
@@ -1758,7 +1775,7 @@ async def test_main_loop_continuous_retries_after_backoff_on_dossier_readiness_f
     fake_state.load_runtime_registry = Mock(
         side_effect=[_registry_with_unready_project(), _empty_registry()]
     )
-    fetch_messages_mock = AsyncMock(return_value=([], []))
+    fetch_messages_mock = AsyncMock(return_value=PlatformsFetch([], []))
 
     sleep_calls: list[float] = []
 
@@ -1945,7 +1962,7 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
     # establishes a safe watermark to anchor against.
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
-        AsyncMock(return_value=([_message("m1", datetime.now(UTC))], [])),
+        AsyncMock(return_value=PlatformsFetch([_message("m1", datetime.now(UTC))], [])),
     )
     await scan_runner.main_loop(args)
 
@@ -1965,7 +1982,7 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
     )
     monkeypatch.setattr(
         scan_runner, "fetch_messages",
-        AsyncMock(return_value=([], [page_ceiling_failure])),
+        AsyncMock(return_value=PlatformsFetch([], [page_ceiling_failure])),
     )
     await scan_runner.main_loop(args)
 

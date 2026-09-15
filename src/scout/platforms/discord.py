@@ -9,7 +9,16 @@ from datetime import UTC, datetime
 import discord
 
 from scout.config import DISCORD_MAX_PAGES, Message
-from scout.errors import PlatformFetchFailure, PlatformFetchSuccess
+from scout.errors import (
+    PlatformFetchFailure,
+    PlatformFetchSuccess,
+    SourceFetchOutcome,
+    SourceTermination,
+)
+from scout.platforms.base import SourceDescriptor, derive_source_key
+
+# discord.py fetches channel history in 100-message requests.
+_DISCORD_HISTORY_PAGE_SIZE = 100
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +36,21 @@ class DiscordScanner:
         server_id: int,
         channel_ids: Sequence[int],
         max_messages: int = 200,
+        max_pages: int | None = None,
     ) -> None:
         self.token = token
         self.server_id = server_id
         self.channel_ids = channel_ids
         self.max_messages = max_messages
+        # None means "production's normal limit" (DISCORD_MAX_PAGES, read at
+        # fetch time); a bounded backfill passes its own ceiling.
+        self._max_pages_override = max_pages
+
+    @property
+    def max_pages(self) -> int:
+        if self._max_pages_override is not None:
+            return self._max_pages_override
+        return DISCORD_MAX_PAGES
 
     async def fetch_messages(
         self,
@@ -50,12 +69,33 @@ class DiscordScanner:
         intents.message_content = True
         client = discord.Client(intents=intents)
 
-        max_total = self.max_messages * DISCORD_MAX_PAGES
+        max_total = self.max_messages * self.max_pages
         collected: list[Message] = []
         failures: list[PlatformFetchFailure] = []
+        outcomes: list[SourceFetchOutcome] = []
         seen_ids: set[str] = set()
         fetch_error: BaseException | None = None
         page_ceiling_reached = False
+
+        def _outcome(
+            ch_id: int,
+            count: int,
+            termination: SourceTermination,
+            failure: PlatformFetchFailure | None,
+        ) -> SourceFetchOutcome:
+            # discord.py's channel.history walks 100-message pages under
+            # the hood; one "page" here is one such request-sized chunk.
+            descriptor = SourceDescriptor("discord", "channel", str(ch_id))
+            return SourceFetchOutcome(
+                source_key=derive_source_key(descriptor),
+                platform=descriptor.platform,
+                source_kind=descriptor.source_kind,
+                provider_key=descriptor.provider_key,
+                page_count=max(1, -(-count // _DISCORD_HISTORY_PAGE_SIZE)),
+                termination=termination,
+                message_count=count,
+                failure=failure,
+            )
 
         @client.event
         async def on_ready() -> None:
@@ -85,6 +125,7 @@ class DiscordScanner:
                             continue
 
                         count = 0
+                        channel_termination: SourceTermination = "exhausted"
                         # limit=None removes discord.py's default 100-message
                         # truncation; after=since moves the strict boundary to
                         # Discord (an exclusive lower bound) while oldest_first=
@@ -95,6 +136,7 @@ class DiscordScanner:
                         ):
                             if len(collected) >= max_total:
                                 page_ceiling_reached = True
+                                channel_termination = "page_ceiling"
                                 failures.append(PlatformFetchFailure(
                                     platform="discord",
                                     kind="page_ceiling",
@@ -141,10 +183,14 @@ class DiscordScanner:
                             count += 1
 
                         logger.info("Fetched %d messages from #%s", count, channel.name)
+                        outcomes.append(_outcome(
+                            ch_id, count, channel_termination,
+                            failures[-1] if channel_termination == "page_ceiling" else None,
+                        ))
 
                     except discord.Forbidden as e:
                         logger.warning("No access to channel %d, skipping", ch_id)
-                        failures.append(PlatformFetchFailure(
+                        failure = PlatformFetchFailure(
                             platform="discord",
                             kind="auth_error",
                             message=str(e) or f"No access to channel {ch_id}",
@@ -152,10 +198,12 @@ class DiscordScanner:
                             retryable=False,
                             operation_phase="fetch",
                             blocks_watermark_advance=True,
-                        ))
+                        )
+                        failures.append(failure)
+                        outcomes.append(_outcome(ch_id, 0, "failure", failure))
                     except discord.NotFound as e:
                         logger.warning("Channel %d not found, skipping", ch_id)
-                        failures.append(PlatformFetchFailure(
+                        failure = PlatformFetchFailure(
                             platform="discord",
                             kind="config_error",
                             message=str(e) or f"Channel {ch_id} not found",
@@ -163,10 +211,12 @@ class DiscordScanner:
                             retryable=False,
                             operation_phase="fetch",
                             blocks_watermark_advance=True,
-                        ))
+                        )
+                        failures.append(failure)
+                        outcomes.append(_outcome(ch_id, 0, "failure", failure))
                     except Exception as e:
                         logger.error("Error fetching channel %d: %s", ch_id, e)
-                        failures.append(PlatformFetchFailure(
+                        failure = PlatformFetchFailure(
                             platform="discord",
                             kind="unexpected",
                             message=str(e),
@@ -174,7 +224,9 @@ class DiscordScanner:
                             retryable=True,
                             operation_phase="fetch",
                             blocks_watermark_advance=True,
-                        ))
+                        )
+                        failures.append(failure)
+                        outcomes.append(_outcome(ch_id, 0, "failure", failure))
 
             except Exception as e:
                 fetch_error = e
@@ -228,4 +280,5 @@ class DiscordScanner:
             messages=collected,
             page_ceiling_reached=page_ceiling_reached,
             failures=tuple(failures),
+            source_outcomes=tuple(outcomes),
         )

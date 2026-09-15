@@ -70,6 +70,37 @@ class PlatformFetchFailure:
     retryable: bool = True
 
 
+# How one source's pagination ended. Only 'exhausted' and 'since_boundary'
+# mean the source was fully covered for the requested window; the other
+# values always coincide with a blocking PlatformFetchFailure for that
+# source.
+SourceTermination = Literal[
+    "exhausted", "since_boundary", "page_ceiling", "failure", "skipped"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFetchOutcome:
+    """Per-source evidence from one platform fetch: how many pages one
+    independently-checkpointed source consumed, how its pagination ended,
+    and the failure (if any) that ended it. `source_key` is
+    scout.platforms.base.derive_source_key of the source's descriptor.
+    `covered` is the only field coverage finalization consumes."""
+
+    source_key: str
+    platform: str
+    source_kind: str
+    provider_key: str
+    page_count: int
+    termination: SourceTermination
+    message_count: int
+    failure: PlatformFetchFailure | None = None
+
+    @property
+    def covered(self) -> bool:
+        return self.failure is None and self.termination in ("exhausted", "since_boundary")
+
+
 @dataclass(frozen=True)
 class PlatformFetchSuccess:
     """A platform fetch completed. messages may be empty for a valid empty window."""
@@ -79,3 +110,4 @@ class PlatformFetchSuccess:
     context: str | None = None
     page_ceiling_reached: bool = False
     failures: tuple[PlatformFetchFailure, ...] = field(default_factory=tuple)
+    source_outcomes: tuple[SourceFetchOutcome, ...] = field(default_factory=tuple)

@@ -137,10 +137,11 @@ async def _run_probe(args: argparse.Namespace) -> int:
             since = datetime.now(UTC) - timedelta(hours=args.hours)
 
             probe_run_id = state.start_probe_run(args.environment, source_count=source_count)
-            messages, failures = await fetch_messages(
+            fetched = await fetch_messages(
                 discord_scanner, farcaster_scanner, bluesky_scanner, since,
                 queries=search_queries,
             )
+            messages, failures = fetched.messages, list(fetched.failures)
             passed = not failures
             # fetch_messages' PlatformFetchSuccess/Failure contract does not
             # currently expose a raw per-source page count (only whether a
@@ -224,10 +225,11 @@ async def _run_backfill(args: argparse.Namespace) -> int:
             canonical_scan_id = coverage_lifecycle.commit_canonical_owner(
                 state, environment=args.environment, fetch_started_at=fetch_started_at,
             )
-            messages, failures = await fetch_messages(
+            fetched = await fetch_messages(
                 discord_scanner, farcaster_scanner, bluesky_scanner, since,
                 queries=search_queries,
             )
+            messages, failures = fetched.messages, list(fetched.failures)
             unseen = [
                 m for m in messages if not state.has_seen_message(m.platform, m.platform_id)
             ]
