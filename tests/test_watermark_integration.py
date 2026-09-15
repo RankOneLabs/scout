@@ -181,10 +181,15 @@ class TestLegacyProductionMigration:
 
             state.commit()
             for source in source_coverage["sources"]:
-                reread = state.get_source_checkpoint(source["source_key"])
-                assert reread is not None
-                expected = datetime.fromisoformat(source["legacy_checkpoint_at"])
-                assert reread.checkpoint_at == expected
+                # The raw stored TEXT, not a parsed datetime: an equivalent
+                # but re-spelled timestamp would round-trip through
+                # fromisoformat unnoticed, which is exactly what this test
+                # exists to rule out.
+                raw = state.conn.execute(
+                    "SELECT checkpoint_at FROM source_checkpoints WHERE source_key = ?",
+                    (source["source_key"],),
+                ).fetchone()["checkpoint_at"]
+                assert raw == source["legacy_checkpoint_at"]
 
     def test_bootstrap_is_one_time_only(
         self, tmp_path: Path, source_coverage: SourceCoverageFixture

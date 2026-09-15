@@ -1,6 +1,6 @@
 {
   "environment": "production",
-  "description": "Grandfathered per-source cursor values an operator recorded from the legacy single-cursor watermark immediately before the durable per-source checkpoint system (source_checkpoints) existed. Used to bootstrap tests/fixtures/watermark/legacy-production.db's checkpoints and to assert the bootstrap preserves each timestamp byte-for-byte.",
+  "description": "Grandfathered per-source cursor values an operator recorded from the legacy single-cursor watermark immediately before the durable per-source checkpoint system (source_checkpoints) existed. Used to bootstrap tests/fixtures/watermark/legacy-production.db's checkpoints and to assert the stored source_checkpoints.checkpoint_at TEXT equals each value byte-for-byte. Values are in Python's canonical datetime.isoformat() spelling (no microseconds when zero), because that is the exact form bootstrap_legacy_source_checkpoint persists.",
   "sources": [
     {
       "source_key": "discord:channel:912233445566",
@@ -8,7 +8,7 @@
       "source_kind": "channel",
       "provider_key": "912233445566",
       "required": true,
-      "legacy_checkpoint_at": "2026-04-01T00:00:00.000000+00:00"
+      "legacy_checkpoint_at": "2026-04-01T00:00:00+00:00"
     },
     {
       "source_key": "bluesky:search:agent-building",
@@ -16,7 +16,7 @@
       "source_kind": "search",
       "provider_key": "agent-building",
       "required": true,
-      "legacy_checkpoint_at": "2026-04-01T00:00:00.000000+00:00"
+      "legacy_checkpoint_at": "2026-04-01T00:00:00+00:00"
     },
     {
       "source_key": "farcaster:feed:trending",
@@ -24,7 +24,7 @@
       "source_kind": "feed",
       "provider_key": "trending",
       "required": false,
-      "legacy_checkpoint_at": "2026-03-15T12:30:00.000000+00:00"
+      "legacy_checkpoint_at": "2026-03-15T12:30:00+00:00"
     }
   ]
 }
