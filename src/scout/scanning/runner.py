@@ -83,6 +83,8 @@ from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
 from scout.result import Err, Ok
+from scout.scanning import coverage as coverage_lifecycle
+from scout.scanning import lease as lease_lifecycle
 from scout.scanning.agent import (
     PhaseRunIdentity,
     ScoutExecutionContext,
@@ -1290,9 +1292,52 @@ async def main_loop(args: argparse.Namespace) -> None:
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
     feedback: SQLiteFeedbackLoop | None = None
+    owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
+        lease_result = state.acquire_environment_lease(
+            SCOUT_ENVIRONMENT, owner_id, ttl_seconds=_config.SCOUT_LEASE_TTL_SECONDS,
+        )
+        match lease_result:
+            case Err(error):
+                logger.error(
+                    "Could not acquire environment lease for %r: %s",
+                    SCOUT_ENVIRONMENT, error.detail,
+                )
+                sys.exit(1)
+            case Ok(held):
+                lease_fence = held.fence
+        reconciled = state.reconcile_abandoned_canonical_owners(SCOUT_ENVIRONMENT, lease_fence)
+        if reconciled:
+            logger.warning(
+                "Reconciled %d abandoned canonical owner scan(s) in environment=%r at "
+                "startup: %s", len(reconciled), SCOUT_ENVIRONMENT, reconciled,
+            )
         try:
             while True:
+                # Every heartbeat renewal is a short compare-and-set on this
+                # same connection, checkpointed at the top of each scan
+                # iteration rather than via a background task — no
+                # transaction is ever open across it. A lost lease here
+                # means another worker has taken over this environment;
+                # single-shot invocations stop rather than risk advancing
+                # a watermark that would immediately be fenced out anyway.
+                renewal = state.renew_environment_lease(
+                    SCOUT_ENVIRONMENT, owner_id, lease_fence,
+                    ttl_seconds=_config.SCOUT_LEASE_TTL_SECONDS,
+                )
+                if isinstance(renewal, Err):
+                    logger.error(
+                        "Lost environment lease for %r before starting scan: %s",
+                        SCOUT_ENVIRONMENT, renewal.error.detail,
+                    )
+                    if not args.continuous:
+                        sys.exit(1)
+                    logger.info(
+                        "Sleeping %d hours before retrying lease acquisition...",
+                        SCAN_INTERVAL_HOURS,
+                    )
+                    await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
+                    continue
                 logger.info("=" * 60)
                 logger.info("Starting scan...")
                 logger.info("=" * 60)
@@ -1346,6 +1391,11 @@ async def main_loop(args: argparse.Namespace) -> None:
                     fetch_failures: list[PlatformFetchFailure] = []
                     fetch_started_at: datetime | None = None
                     advances_watermark = not args.rescore and not args.rescore_failed
+                    # The canonical live fetch-owner scan, committed and
+                    # durably visible before any platform I/O below — never
+                    # set for a --rescore/--rescore-failed invocation, which
+                    # has no live fetch and so no canonical owner.
+                    canonical_scan_id: int | None = None
                     _overflow = 0
 
                     if args.rescore_failed:
@@ -1370,6 +1420,14 @@ async def main_loop(args: argparse.Namespace) -> None:
                             logger.info("First scan — fetching recent messages")
 
                         fetch_started_at = datetime.now(UTC)
+                        # Committed and durably visible before the platform
+                        # clients are ever awaited: a crash or cancellation
+                        # during fetch still leaves a recoverable, auditable
+                        # attempt behind (decision: pre-I/O canonical owner).
+                        canonical_scan_id = coverage_lifecycle.commit_canonical_owner(
+                            state, environment=SCOUT_ENVIRONMENT, fetch_started_at=fetch_started_at,
+                        )
+                        active_scan_id = canonical_scan_id
                         all_messages, fetch_failures = await fetch_messages(
                             discord_scanner,
                             farcaster_scanner,
@@ -1410,12 +1468,32 @@ async def main_loop(args: argparse.Namespace) -> None:
                         logger.info(
                             "Skipping live scan: no valid search queries and no new messages"
                         )
+                        # A zero-message, fully covered live fetch is still a
+                        # valid advancing owner — finalize it as an empty
+                        # success without ever constructing a tracer,
+                        # feedback loop, model client, or digest.
+                        if canonical_scan_id is not None:
+                            match coverage_lifecycle.finalize_empty_success(
+                                state,
+                                canonical_scan_id,
+                                environment=SCOUT_ENVIRONMENT,
+                                advance_watermark=advances_watermark,
+                            ):
+                                case Err(finalize_error):
+                                    logger.error(
+                                        "Coverage finalization rejected empty-success scan "
+                                        "#%d: %s", canonical_scan_id, finalize_error.detail,
+                                    )
+                                case Ok():
+                                    pass
+                            active_scan_id = None
                     else:
                         if tracer is None:
                             tracer = SQLiteTracer(db_path=TRACE_DB_PATH)
                         if feedback is None:
                             feedback = SQLiteFeedbackLoop(db_path=FEEDBACK_DB_PATH)
 
+                    is_first_mode_pass = True
                     for mode_name in mode_names:
                         if skip_live_scan:
                             break
@@ -1434,11 +1512,34 @@ async def main_loop(args: argparse.Namespace) -> None:
                             if args.rescore is not None or args.rescore_failed is not None
                             else "live"
                         )
-                        scan_id = state.start_scan(
-                            fetch_started_at=fetch_started_at,
-                            environment=SCOUT_ENVIRONMENT,
-                            run_kind=run_kind,
-                        )
+                        # The first pass of a live run reuses the canonical
+                        # owner already committed before the fetch above;
+                        # --mode both's later pass(es) are linked, explicitly
+                        # non-advancing secondaries over the same fetch. A
+                        # --rescore/--rescore-failed run has no canonical
+                        # owner to link to — each pass is its own
+                        # independent, non-live 'rescore' scan.
+                        is_canonical_owner_scan = is_first_mode_pass and canonical_scan_id is not None
+                        if is_canonical_owner_scan:
+                            assert canonical_scan_id is not None
+                            scan_id = canonical_scan_id
+                        elif canonical_scan_id is not None:
+                            assert fetch_started_at is not None
+                            scan_id = coverage_lifecycle.commit_linked_secondary(
+                                state,
+                                environment=SCOUT_ENVIRONMENT,
+                                fetch_started_at=fetch_started_at,
+                                canonical_scan_id=canonical_scan_id,
+                                run_kind=run_kind,
+                            )
+                        else:
+                            scan_id = state.start_scan(
+                                fetch_started_at=fetch_started_at,
+                                environment=SCOUT_ENVIRONMENT,
+                                run_kind=run_kind,
+                                role="rescore",
+                            )
+                        is_first_mode_pass = False
                         active_scan_id = scan_id
                         active_messages_scanned = len(all_unseen)
                         active_overflow = _overflow
@@ -1600,17 +1701,18 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 status=scan_status,
                                 overflow_count=_overflow,
                             )
-                            if run_kind == "live" and scan_status in ("complete", "partial"):
-                                match state.finalize_scan_coverage(
+                            if (
+                                is_canonical_owner_scan
+                                and run_kind == "live"
+                                and scan_status in ("complete", "partial")
+                            ):
+                                match coverage_lifecycle.finalize_owner(
+                                    state,
                                     scan_id,
                                     environment=SCOUT_ENVIRONMENT,
                                     advance_watermark=advances_watermark,
-                                    coverage_classifier_version=1,
                                 ):
-                                    case Err(error):
-                                        state.mark_coverage_finalization_failed(
-                                            scan_id, detail=error.detail,
-                                        )
+                                    case Err(_error):
                                         scan_status = "failed"
                                     case Ok():
                                         pass
@@ -1695,17 +1797,18 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 status=scan_status,
                                 overflow_count=_overflow,
                             )
-                            if run_kind == "live" and scan_status in ("complete", "partial"):
-                                match state.finalize_scan_coverage(
+                            if (
+                                is_canonical_owner_scan
+                                and run_kind == "live"
+                                and scan_status in ("complete", "partial")
+                            ):
+                                match coverage_lifecycle.finalize_owner(
+                                    state,
                                     scan_id,
                                     environment=SCOUT_ENVIRONMENT,
                                     advance_watermark=advances_watermark,
-                                    coverage_classifier_version=1,
                                 ):
-                                    case Err(error):
-                                        state.mark_coverage_finalization_failed(
-                                            scan_id, detail=error.detail,
-                                        )
+                                    case Err(_error):
                                         scan_status = "failed"
                                     case Ok():
                                         pass
@@ -1756,3 +1859,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                 await feedback.close()
             if tracer is not None:
                 await tracer.close()
+            # Best-effort: release cleanly so an immediate re-run of this
+            # process doesn't have to wait out the TTL/takeover path. A
+            # failure here just means the lease expires normally.
+            with contextlib.suppress(Exception):
+                state.release_environment_lease(SCOUT_ENVIRONMENT, owner_id, lease_fence)

@@ -75,7 +75,7 @@ class EnvironmentLeaseHandle:
         return self._lost.is_set()
 
     def start_heartbeat(self) -> None:
-        """Begin periodic renewal. Idempotent: a second call is a no-op."""
+        """Kick off periodic renewal. Idempotent: a second call is a no-op."""
         if self._heartbeat_task is not None:
             return
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())

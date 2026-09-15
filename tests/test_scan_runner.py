@@ -75,6 +75,7 @@ from scout.scanning.schemas import (
     ResourceSegment,
     StructuredDraftOutput,
 )
+from scout.storage.scans import EnvironmentLease
 from scout.storage.state import StateManager, SurfaceRateLimitedError
 from scout.verifier import VerifyResult
 from tests.conftest import seed_phase_run_contributors
@@ -125,11 +126,31 @@ def _fake_feedback_snapshot(mode: str = "shadow") -> PersistedFeedbackSnapshot:
 class _FakeState(AbstractContextManager["_FakeState"]):
     def __init__(self, registry: RuntimeRegistry | None = None) -> None:
         self.load_runtime_registry = Mock(return_value=registry or _empty_registry())
-        self.start_scan = Mock(side_effect=AssertionError("start_scan should not be called"))
+        # The canonical live owner is now committed before any platform I/O
+        # on every live (non-rescore) invocation, including a fetch that
+        # turns out to have zero new messages — see coverage.py's
+        # commit_canonical_owner / finalize_empty_success. A fixed id is a
+        # fine default; tests asserting dossier-readiness-gated paths never
+        # reach this call at all.
+        self.start_scan = Mock(return_value=1)
         self.complete_scan = Mock()
         self.finalize_scan_coverage = Mock()
         self.save_fetch_failure = Mock()
         self.commit = Mock()
+        self.acquire_environment_lease = Mock(
+            return_value=Ok(EnvironmentLease(
+                environment="development", owner_id="fake-owner", fence=1,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            ))
+        )
+        self.renew_environment_lease = Mock(
+            return_value=Ok(EnvironmentLease(
+                environment="development", owner_id="fake-owner", fence=1,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            ))
+        )
+        self.reconcile_abandoned_canonical_owners = Mock(return_value=[])
+        self.link_secondary_scan = Mock()
         self.has_seen_message = Mock(return_value=False)
         self.get_last_scan_timestamp = Mock(return_value=None)
         self.load_posts = Mock()
@@ -372,23 +393,37 @@ def test_validate_config_accepts_openrouter_api_key(
 
 
 @pytest.mark.asyncio
-async def test_main_loop_skips_zero_work_live_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_main_loop_empty_live_scan_is_a_finalized_empty_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A zero-message, fully covered live fetch still commits exactly one
+    canonical owner (before the fetch) and finalizes it as an empty
+    success — it never constructs a tracer or feedback loop, and never
+    scores anything."""
     fake_state = _FakeState(registry=_empty_registry())
     fetch_messages_mock = AsyncMock(return_value=([], []))
+    tracer_ctor = Mock()
+    feedback_ctor = Mock()
 
     monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
     monkeypatch.setattr(scan_runner, "fetch_messages", fetch_messages_mock)
     monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=fake_state))
-    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock())
-    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock())
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", tracer_ctor)
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", feedback_ctor)
 
     args = Namespace(mode="both", rescore=None, rescore_failed=None, continuous=False)
 
     await scan_runner.main_loop(args)
 
-    fake_state.start_scan.assert_not_called()
-    fake_state.complete_scan.assert_not_called()
-    fake_state.commit.assert_not_called()
+    fake_state.start_scan.assert_called_once()
+    fake_state.complete_scan.assert_called_once_with(
+        1, 0, 0, status="complete", overflow_count=0
+    )
+    fake_state.finalize_scan_coverage.assert_called_once()
+    _, finalize_kwargs = fake_state.finalize_scan_coverage.call_args
+    assert finalize_kwargs["advance_watermark"] is True
+    tracer_ctor.assert_not_called()
+    feedback_ctor.assert_not_called()
     fetch_messages_mock.assert_awaited_once()
 
 
@@ -1538,15 +1573,18 @@ async def test_main_loop_continuous_retries_after_backoff_on_dossier_readiness_f
     assert sleep_calls[0] == SCAN_INTERVAL_HOURS * 3600
     # A fresh registry/readiness pass was taken after the delay.
     assert fake_state.load_runtime_registry.call_count == 2
-    # No scan row was created on the failed iteration.
-    fake_state.start_scan.assert_not_called()
     assert any("dossier_readiness_failed" in r.message for r in caplog.records)
 
     # Second iteration's readiness (now repaired to an empty registry) makes
     # progress — exactly one platform fetch, from the second iteration only —
     # and the loop reaches the normal end-of-scan sleep instead of failing
-    # readiness again.
+    # readiness again. That second iteration's fetch is a genuine live
+    # attempt, so it commits and finalizes exactly one canonical owner
+    # (an empty success, since fetch_messages returns no messages) — the
+    # first, failed-readiness iteration never reaches the fetch/commit at
+    # all.
     fetch_messages_mock.assert_awaited_once()
+    fake_state.start_scan.assert_called_once()
     assert len(sleep_calls) == 2
 
 
