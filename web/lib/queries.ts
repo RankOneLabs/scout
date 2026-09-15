@@ -168,6 +168,10 @@ function withWatermarkAdvancedBoolean<T extends { watermark_advanced: number }>(
 }
 
 function isHistoricalTrueEmptyCompletedScan(row: ScanWithCounts): boolean {
+  // A failed or interrupted scan (including a canonical owner reconciled
+  // at startup, which sets completed_at with zero counters) is operator
+  // evidence, never "historical empty noise" — it must stay visible.
+  if (row.status === "failed" || row.status === "interrupted") return false;
   return (
     row.completed_at !== null &&
     (row.messages_scanned ?? 0) === 0 &&
@@ -303,10 +307,30 @@ export function getScanById(id: number): ScanDetailWithCounts | null {
     failures,
     source_checkpoints: getSourceCheckpoints(),
     environment_lease: getEnvironmentLease(scanRow.environment),
+    environment_watermark_at: getEnvironmentWatermarkAt(scanRow.environment),
     recent_recovery_operations: getRecentRecoveryOperations(scanRow.environment),
     latest_probe_run: getLatestProbeRun(scanRow.environment),
   };
   return result;
+}
+
+/** The environment's current eligible watermark — mirrors
+ * ScanStore.get_last_scan_timestamp: the latest canonical-live scan that
+ * durably advanced, exact environment match, never 'unknown'. */
+export function getEnvironmentWatermarkAt(environment: string): string | null {
+  if (environment === "unknown") return null;
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT safe_watermark_at
+       FROM scans
+       WHERE safe_watermark_at IS NOT NULL AND environment = ?
+         AND role = 'canonical_live'
+       ORDER BY id DESC
+       LIMIT 1`
+    )
+    .get(environment) as { safe_watermark_at: string } | undefined;
+  return row?.safe_watermark_at ?? null;
 }
 
 export function getSourceCheckpoints(): SourceCheckpoint[] {

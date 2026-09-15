@@ -10,6 +10,7 @@ import {
   isNonBlockingDegradation,
   partitionFailuresByBlocking,
   isWatermarkStale,
+  isLeaseHeld,
 } from "@/lib/transforms";
 import type { Scan, ScanDetailWithCounts, ScanFetchFailure } from "@/types/schema";
 
@@ -71,6 +72,7 @@ function makeScanDetail(overrides: Partial<ScanDetailWithCounts> = {}): ScanDeta
     failures: [],
     source_checkpoints: [],
     environment_lease: null,
+    environment_watermark_at: "2026-05-15T00:00:00+00:00",
     recent_recovery_operations: [],
     latest_probe_run: null,
     ...overrides,
@@ -102,20 +104,35 @@ describe("describeCoverage", () => {
 });
 
 describe("partitionFailuresByBlocking", () => {
-  it("separates the exact blocking set from non-blocking degradation", () => {
+  it("separates counted blockers, unadjudicated blocking-eligible failures, and non-blocking degradation", () => {
     const blocking = makeFailure({ id: 1, blocked_watermark: true });
+    // Blocking-eligible but never counted: the scan's finalization never
+    // ran (failed/interrupted), so no scan_watermark_blockers row exists.
+    const eligibleUncounted = makeFailure({
+      id: 3,
+      kind: "abandoned_owner",
+      blocks_watermark_advance: true,
+      blocked_watermark: false,
+    });
     const nonBlocking = makeFailure({
       id: 2,
       operation_phase: "parent_lookup",
       blocks_watermark_advance: false,
       blocked_watermark: false,
     });
-    const { blocking: blockingOut, nonBlocking: nonBlockingOut } = partitionFailuresByBlocking([
-      blocking,
-      nonBlocking,
-    ]);
-    expect(blockingOut.map((f) => f.id)).toEqual([1]);
-    expect(nonBlockingOut.map((f) => f.id)).toEqual([2]);
+    const out = partitionFailuresByBlocking([blocking, eligibleUncounted, nonBlocking]);
+    expect(out.blocking.map((f) => f.id)).toEqual([1]);
+    expect(out.eligibleUncounted.map((f) => f.id)).toEqual([3]);
+    expect(out.nonBlocking.map((f) => f.id)).toEqual([2]);
+  });
+});
+
+describe("isLeaseHeld", () => {
+  it("treats a lingering owner_id on an expired lease as not held", () => {
+    const lease = { owner_id: "owner-1", expires_at: "2026-05-15T00:00:00Z" };
+    expect(isLeaseHeld(lease, "2026-05-14T23:00:00Z")).toBe(true);
+    expect(isLeaseHeld(lease, "2026-05-15T00:00:01Z")).toBe(false);
+    expect(isLeaseHeld({ owner_id: null, expires_at: null }, "2026-05-14T23:00:00Z")).toBe(false);
   });
 });
 
@@ -228,10 +245,56 @@ describe("ScanDetailView coverage presentation", () => {
     expect(screen.getByText("bluesky:search:src-a")).toBeTruthy();
   });
 
-  it("marks a canonical_live scan's watermark stale when past the threshold", () => {
-    const scan = makeScanDetail({
+  it("judges staleness by the environment's current watermark, not the selected scan's historical one", () => {
+    // An old, blocked scan (own watermark null) in an environment a later
+    // scan kept fresh must not read as stale.
+    const freshEnv = makeScanDetail({
       role: "canonical_live",
-      safe_watermark_at: "2000-01-01T00:00:00Z",
+      coverage_outcome: "blocked",
+      watermark_advanced: false,
+      safe_watermark_at: null,
+      environment_watermark_at: new Date().toISOString(),
+    });
+    const { unmount } = render(
+      React.createElement(ScanDetailView, {
+        scan: freshEnv,
+        posts: [],
+        evaluations: [],
+        postFilters: {},
+        onPostFilterChange: noop,
+      })
+    );
+    expect(screen.getByText("fresh")).toBeTruthy();
+    unmount();
+
+    // And a scan whose own watermark is recent does not mask a stale
+    // environment cursor.
+    const staleEnv = makeScanDetail({
+      role: "canonical_live",
+      safe_watermark_at: new Date().toISOString(),
+      environment_watermark_at: "2000-01-01T00:00:00Z",
+    });
+    render(
+      React.createElement(ScanDetailView, {
+        scan: staleEnv,
+        posts: [],
+        evaluations: [],
+        postFilters: {},
+        onPostFilterChange: noop,
+      })
+    );
+    expect(screen.getByText("stale")).toBeTruthy();
+  });
+
+  it("renders an expired lease as expired, not held, even with a lingering owner_id", () => {
+    const scan = makeScanDetail({
+      environment_lease: {
+        environment: "production",
+        fence: 3,
+        owner_id: "owner-1",
+        expires_at: "2000-01-01T00:00:00Z",
+        updated_at: "2000-01-01T00:00:00Z",
+      },
     });
     render(
       React.createElement(ScanDetailView, {
@@ -242,7 +305,39 @@ describe("ScanDetailView coverage presentation", () => {
         onPostFilterChange: noop,
       })
     );
-    expect(screen.getByText("stale")).toBeTruthy();
+    expect(screen.getByText(/expired \(last held by owner-1\)/)).toBeTruthy();
+    expect(screen.queryByText(/^Lease: fence 3, held by/)).toBeNull();
+  });
+
+  it("shows an interrupted owner's blocking-eligible failure as unadjudicated, not as non-blocking degradation", () => {
+    const scan = makeScanDetail({
+      id: 9,
+      status: "interrupted",
+      coverage_outcome: null,
+      watermark_advanced: false,
+      safe_watermark_at: null,
+      failures: [
+        makeFailure({
+          id: 1003,
+          kind: "abandoned_owner",
+          operation_phase: "scan",
+          blocks_watermark_advance: true,
+          blocked_watermark: false,
+        }),
+      ],
+    });
+    render(
+      React.createElement(ScanDetailView, {
+        scan,
+        posts: [],
+        evaluations: [],
+        postFilters: {},
+        onPostFilterChange: noop,
+      })
+    );
+    expect(screen.getByText(/Blocking-eligible Failures \(1\)/)).toBeTruthy();
+    expect(screen.queryByText(/Non-blocking Degradation/)).toBeNull();
+    expect(screen.queryByText(/^Blocking Failures/)).toBeNull();
   });
 
   it("does not render the watermark/lease section for a secondary scan", () => {

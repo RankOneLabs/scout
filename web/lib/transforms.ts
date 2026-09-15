@@ -214,18 +214,48 @@ export function isNonBlockingDegradation(scan: Pick<Scan, "status" | "watermark_
   return scan.status === "partial" && scan.watermark_advanced;
 }
 
-/** Split a scan's fetch failures into the exact set coverage finalization
- * counted as blocking (durably recorded in scan_watermark_blockers) and
- * the remainder — non-blocking evidence, most commonly permanent parent
- * enrichment degradation (`operation_phase: 'parent_lookup'`). */
+export type FailureBlockingClass = "blocking" | "eligible_uncounted" | "non_blocking";
+
+/** How one fetch failure relates to the watermark decision:
+ * - `blocking` — coverage finalization ran and counted it (a
+ *   scan_watermark_blockers row exists): the exact reason coverage blocked.
+ * - `eligible_uncounted` — classified as blocking-eligible, but no
+ *   blocker row exists because finalization never ran or was refused
+ *   (failed/interrupted scan, stale fence, …). It is *not* non-blocking;
+ *   it simply was never adjudicated.
+ * - `non_blocking` — permanent non-primary degradation (e.g.
+ *   `operation_phase: 'parent_lookup'`) that never blocks by design. */
+export function classifyFailureBlocking(f: ScanFetchFailure): FailureBlockingClass {
+  if (f.blocked_watermark) return "blocking";
+  if (f.blocks_watermark_advance) return "eligible_uncounted";
+  return "non_blocking";
+}
+
+/** Split a scan's fetch failures by classifyFailureBlocking. A missing
+ * blocker link is never on its own read as "non-blocking" — that would
+ * mislabel a failed scan's primary failure as harmless degradation. */
 export function partitionFailuresByBlocking(failures: ScanFetchFailure[]): {
   blocking: ScanFetchFailure[];
+  eligibleUncounted: ScanFetchFailure[];
   nonBlocking: ScanFetchFailure[];
 } {
   return {
-    blocking: failures.filter((f) => f.blocked_watermark),
-    nonBlocking: failures.filter((f) => !f.blocked_watermark),
+    blocking: failures.filter((f) => classifyFailureBlocking(f) === "blocking"),
+    eligibleUncounted: failures.filter((f) => classifyFailureBlocking(f) === "eligible_uncounted"),
+    nonBlocking: failures.filter((f) => classifyFailureBlocking(f) === "non_blocking"),
   };
+}
+
+/** Whether a lease row currently confers ownership: it needs a holder and
+ * an unexpired expiry. environment_leases rows are not cleared on expiry —
+ * a stale owner_id lingers until takeover or release — so owner_id alone
+ * is not evidence the lease is held. */
+export function isLeaseHeld(
+  lease: { owner_id: string | null; expires_at: string | null },
+  nowIso: string
+): boolean {
+  if (!lease.owner_id || !lease.expires_at) return false;
+  return parseUtc(lease.expires_at).getTime() > parseUtc(nowIso).getTime();
 }
 
 /** Whether an environment's watermark is stale against a fixed threshold —

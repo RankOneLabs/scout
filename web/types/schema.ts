@@ -318,6 +318,12 @@ export interface ScanDetailWithCounts extends ScanDetail {
   // This scan's environment's current fenced lease, or null if the
   // environment has never acquired one.
   environment_lease: EnvironmentLease | null;
+  // The environment's *current* eligible watermark — the latest
+  // canonical-live scan that actually advanced — which is what staleness
+  // is judged against. Distinct from this scan's own safe_watermark_at,
+  // which is historical: an older or blocked scan says nothing about
+  // whether the environment is fresh now.
+  environment_watermark_at: string | null;
   // Most recent recovery_operations rows for this scan's environment,
   // newest first — the audit trail a release-evidence review cites.
   recent_recovery_operations: RecoveryOperation[];

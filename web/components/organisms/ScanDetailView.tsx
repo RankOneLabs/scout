@@ -32,6 +32,7 @@ import {
   describeCoverage,
   partitionFailuresByBlocking,
   isWatermarkStale,
+  isLeaseHeld,
   type CoverageTone,
 } from "@/lib/transforms";
 
@@ -196,9 +197,22 @@ function RecoveryOperationRow({ op }: { op: RecoveryOperation }) {
   );
 }
 
+function describeLease(
+  lease: NonNullable<ScanDetailWithCounts["environment_lease"]>,
+  nowIso: string
+): string {
+  if (isLeaseHeld(lease, nowIso)) return `held by ${lease.owner_id}`;
+  if (lease.owner_id) return `expired (last held by ${lease.owner_id})`;
+  return "unheld";
+}
+
 function RecoveryAndStaleness({ scan }: { scan: ScanDetailWithCounts }) {
   const lease = scan.environment_lease;
-  const stale = isWatermarkStale(scan.safe_watermark_at, new Date().toISOString());
+  const nowIso = new Date().toISOString();
+  // Staleness is a property of the environment's *current* watermark, not
+  // of this scan's historical one — an old or blocked scan is not evidence
+  // the environment is stale now.
+  const stale = isWatermarkStale(scan.environment_watermark_at, nowIso);
   return (
     <div className="space-y-3">
       <h3 className="text-lg font-medium text-gray-800 dark:text-gray-200">
@@ -206,16 +220,19 @@ function RecoveryAndStaleness({ scan }: { scan: ScanDetailWithCounts }) {
       </h3>
       <div className="flex flex-wrap gap-4 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
         <span>
-          Safe watermark:{" "}
-          <span className="font-mono">{formatTimestamp(scan.safe_watermark_at)}</span>
+          Environment watermark ({scan.environment}):{" "}
+          <span className="font-mono">{formatTimestamp(scan.environment_watermark_at)}</span>
         </span>
         <span className={stale ? "font-medium text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400"}>
           {stale ? "stale" : "fresh"}
         </span>
+        <span>
+          This scan&apos;s watermark:{" "}
+          <span className="font-mono">{formatTimestamp(scan.safe_watermark_at)}</span>
+        </span>
         {lease && (
           <span>
-            Lease: fence {lease.fence}
-            {lease.owner_id ? `, held by ${lease.owner_id}` : ", unheld"}
+            Lease: fence {lease.fence}, {describeLease(lease, nowIso)}
           </span>
         )}
         {scan.latest_probe_run && (
@@ -382,7 +399,7 @@ export function ScanDetailView({
       <FeedbackCoverage feedback={scan.feedback} />
 
       {failures.length > 0 && (() => {
-        const { blocking, nonBlocking } = partitionFailuresByBlocking(failures);
+        const { blocking, eligibleUncounted, nonBlocking } = partitionFailuresByBlocking(failures);
         return (
           <div className="space-y-6">
             {blocking.length > 0 && (
@@ -392,6 +409,16 @@ export function ScanDetailView({
                 </h3>
                 <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4">
                   <FailureTable failures={blocking} />
+                </div>
+              </div>
+            )}
+            {eligibleUncounted.length > 0 && (
+              <div>
+                <h3 className="mb-3 text-base font-medium text-orange-600 dark:text-orange-400">
+                  Blocking-eligible Failures ({eligibleUncounted.length}) &mdash; coverage was never finalized, so these were not adjudicated
+                </h3>
+                <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4">
+                  <FailureTable failures={eligibleUncounted} />
                 </div>
               </div>
             )}

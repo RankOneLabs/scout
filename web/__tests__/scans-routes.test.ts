@@ -269,6 +269,24 @@ beforeAll(() => {
     8, now, null, now, null, 0, 0, "failed", "production", "live", "canonical_live",
     null, 0, null, null
   );
+  // Scan 9: a canonical owner interrupted mid-flight and reconciled under a
+  // stale fence. Finalization never ran, so its blocking-eligible failure
+  // has no scan_watermark_blockers row — it was never adjudicated, which
+  // is distinct from being non-blocking.
+  insertCoverageScan.run(
+    9, now, now, now, null, 0, 0, "interrupted", "production", "live", "canonical_live",
+    null, 0, null, null
+  );
+  db.prepare(
+    `INSERT INTO scan_fetch_failures
+       (id, scan_id, platform, context, kind, message, operation_phase,
+        blocks_watermark_advance, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    1003, 9, "scan_runner", "reconciliation", "abandoned_owner",
+    "canonical owner abandoned under a stale lease fence; reconciled at startup",
+    "scan", 1, now
+  );
 
   // Scan 5's non-blocking degradation: a parent_lookup failure that never
   // blocked the watermark (operation_phase excluded from the blocking set).
@@ -354,7 +372,7 @@ describe("scans query layer", () => {
   it("hides historical true-empty completed scans from the list", async () => {
     const { getScans } = await import("@/lib/queries");
 
-    expect(getScans().map((scan) => scan.id)).toEqual([8, 7, 6, 5, 4, 3, 2]);
+    expect(getScans().map((scan) => scan.id)).toEqual([9, 8, 7, 6, 5, 4, 3, 2]);
   });
 
   it("returns 404 for a hidden true-empty completed scan id", async () => {
@@ -407,6 +425,34 @@ describe("coverage and watermark facts are independent of processing status", ()
     expect(body.role).toBe("secondary");
     expect(body.canonical_scan_id).toBe(6);
     expect(body.watermark_advanced).toBe(false);
+  });
+
+  it("never advances an interrupted canonical owner, and leaves its blocking-eligible failure unadjudicated", async () => {
+    const { GET } = await import("@/app/api/scans/route");
+    const resp = await GET(makeNextRequest("http://localhost/api/scans?id=9") as never);
+    const body = await resp.json();
+    expect(body.status).toBe("interrupted");
+    expect(body.role).toBe("canonical_live");
+    expect(body.watermark_advanced).toBe(false);
+    expect(body.coverage_outcome).toBeNull();
+    expect(body.failures).toHaveLength(1);
+    // Eligible to block, but never counted: finalization never ran.
+    expect(body.failures[0]).toMatchObject({
+      id: 1003,
+      kind: "abandoned_owner",
+      blocks_watermark_advance: true,
+      blocked_watermark: false,
+    });
+  });
+
+  it("reports the environment's current watermark separately from the selected scan's own", async () => {
+    const { GET } = await import("@/app/api/scans/route");
+    // Scan 6 is blocked (own watermark null) but scan 5 advanced the
+    // environment — staleness must be judged against scan 5's cursor.
+    const resp = await GET(makeNextRequest("http://localhost/api/scans?id=6") as never);
+    const body = await resp.json();
+    expect(body.safe_watermark_at).toBeNull();
+    expect(body.environment_watermark_at).toBe("2026-05-15T00:00:00Z");
   });
 
   it("never advances a failed scan's watermark", async () => {
