@@ -1823,6 +1823,26 @@ async def main_loop(args: argparse.Namespace) -> None:
                         await tracer.flush()
                         logger.info("Digest saved to %s", digest_path)
 
+                except asyncio.CancelledError:
+                    # CancelledError is a BaseException, not an Exception —
+                    # score_messages' own per-post handler already covers
+                    # cancellation during scoring, but a cancellation during
+                    # fetch_messages (before any post exists) would
+                    # otherwise propagate past every handler below and
+                    # leave the already-committed canonical owner with no
+                    # terminal status at all. Mirror the KeyboardInterrupt
+                    # handling and always propagate.
+                    if active_scan_id is not None:
+                        with contextlib.suppress(Exception):
+                            state.fail_scan(
+                                active_scan_id,
+                                active_messages_scanned,
+                                failure_post_id=None,
+                                error_kind="cancelled",
+                                error_message="scan cancelled",
+                            )
+                    logger.warning("Scan cancelled; completed work is preserved")
+                    raise
                 except KeyboardInterrupt:
                     if active_scan_id is not None:
                         state.complete_scan(

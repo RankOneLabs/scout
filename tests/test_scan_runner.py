@@ -428,6 +428,220 @@ async def test_main_loop_empty_live_scan_is_a_finalized_empty_success(
 
 
 @pytest.mark.asyncio
+async def test_canonical_owner_is_committed_before_platform_fetch_is_awaited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Pause the platform fetch mid-flight and observe, from a second
+    connection, that the canonical owner scan is already durably
+    committed — the acceptance criterion this cohort is named for."""
+    db_path = str(tmp_path / "pause_before_fetch.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    fetch_paused = asyncio.Event()
+    resume_fetch = asyncio.Event()
+    observed_scan_row: sqlite3.Row | None = None
+
+    async def paused_fetch(
+        *_args: object, **_kwargs: object
+    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+        fetch_paused.set()
+        await resume_fetch.wait()
+        return ([], [])
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", paused_fetch)
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    main_loop_task = asyncio.create_task(scan_runner.main_loop(args))
+
+    await fetch_paused.wait()
+    # A separate, real connection to the same file — not real_state itself,
+    # so this genuinely proves durability rather than reading uncommitted
+    # in-process state.
+    observer = StateManager(db_path=db_path, init_schema=False)
+    try:
+        observed_scan_row = observer.conn.execute(
+            "SELECT role, status, completed_at FROM scans ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        observer.close()
+
+    resume_fetch.set()
+    await main_loop_task
+    real_state.close()
+
+    assert observed_scan_row is not None
+    assert observed_scan_row["role"] == "canonical_live"
+    assert observed_scan_row["status"] is None
+    assert observed_scan_row["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_canonical_owner_finalized_interrupted_on_fetch_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A fetch exception leaves the already-committed canonical owner
+    durably terminal with blocking evidence, and never advances the
+    watermark."""
+    db_path = str(tmp_path / "fetch_exception.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    async def failing_fetch(
+        *_args: object, **_kwargs: object
+    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+        raise RuntimeError("platform is on fire")
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", failing_fetch)
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    with pytest.raises(RuntimeError, match="platform is on fire"):
+        await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT status, safe_watermark_at, watermark_advanced FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["status"] == "failed"
+    assert scan_row["safe_watermark_at"] is None
+    assert scan_row["watermark_advanced"] == 0
+    failures = real_state.get_scan_fetch_failures(1)
+    assert any(f["blocks_watermark_advance"] for f in failures)
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_canonical_owner_finalized_interrupted_on_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Cancellation mid-fetch leaves the canonical owner durably
+    interrupted rather than orphaned with no terminal status at all."""
+    db_path = str(tmp_path / "fetch_cancelled.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    async def cancelled_fetch(
+        *_args: object, **_kwargs: object
+    ) -> tuple[list[Message], list[PlatformFetchFailure]]:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", cancelled_fetch)
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    with pytest.raises(asyncio.CancelledError):
+        await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT status, safe_watermark_at FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["status"] == "failed"
+    assert scan_row["safe_watermark_at"] is None
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_mode_both_second_pass_is_a_linked_non_advancing_secondary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    db_path = str(tmp_path / "mode_both_linkage.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "fetch_messages", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+
+    args = Namespace(mode="both", rescore=None, rescore_failed=None, continuous=False)
+    await scan_runner.main_loop(args)
+
+    # A zero-message fetch finalizes as an empty success from the first
+    # pass alone — exactly one scan row is ever created, and it is the
+    # canonical owner. --mode both's linkage is exercised when there is
+    # work to score; this covers the has-nothing-to-link case explicitly.
+    rows = real_state.conn.execute("SELECT role, canonical_scan_id FROM scans").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["role"] == "canonical_live"
+    assert rows[0]["canonical_scan_id"] is None
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_rescore_scan_role_is_rescore_not_canonical_live(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    db_path = str(tmp_path / "rescore_role.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    msg = _message("rescored-1", datetime.now(UTC))
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    real_state.load_posts = Mock(return_value=[msg])
+    real_state.keyword_prefilter_result = None
+
+    args = Namespace(mode="default", rescore="all", rescore_failed=None, continuous=False)
+    await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT role, run_kind FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["role"] == "rescore"
+    assert scan_row["run_kind"] == "rescore"
+
+    real_state.close()
+
+
+@pytest.mark.asyncio
 async def test_main_loop_anchors_watermark_to_pre_fetch_time(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
