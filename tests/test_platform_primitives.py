@@ -96,6 +96,64 @@ class TestClassifyHttpFailure:
         assert failure.kind == "network_error"
         assert failure.retryable is True
 
+    def test_defaults_to_fetch_phase_blocking(self) -> None:
+        """A primary-fetch HTTP failure blocks watermark advance by default."""
+        e = _status_error(500)
+        failure = classify_http_failure("bluesky", e)
+        assert failure.operation_phase == "fetch"
+        assert failure.blocks_watermark_advance is True
+
+    def test_caller_can_classify_as_non_blocking_secondary_evidence(self) -> None:
+        """A secondary-evidence lookup (e.g. Bluesky parent context) can be
+        classified as non-blocking so it never gates primary coverage."""
+        e = _status_error(500)
+        failure = classify_http_failure(
+            "bluesky", e, operation_phase="parent_lookup", blocks_watermark_advance=False
+        )
+        assert failure.operation_phase == "parent_lookup"
+        assert failure.blocks_watermark_advance is False
+
+
+# ---------------------------------------------------------------------------
+# derive_source_key / SourceDescriptor
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveSourceKey:
+    def test_independent_sources_get_distinct_keys(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("discord", "channel", "111"))
+        b = derive_source_key(SourceDescriptor("discord", "channel", "222"))
+        assert a != b
+
+    def test_key_is_deterministic_for_the_same_descriptor(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        descriptor = SourceDescriptor("farcaster", "search", "gateway rollup")
+        assert derive_source_key(descriptor) == derive_source_key(descriptor)
+
+    def test_normalization_ignores_case_and_incidental_whitespace(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("Bluesky", "Feed", " at://x/y "))
+        b = derive_source_key(SourceDescriptor("bluesky", "feed", "at://x/y"))
+        assert a == b
+
+    def test_different_platforms_never_collide_on_the_same_provider_key(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("bluesky", "search", "gateway"))
+        b = derive_source_key(SourceDescriptor("farcaster", "search", "gateway"))
+        assert a != b
+
+    def test_different_source_kinds_never_collide_on_the_same_provider_key(self) -> None:
+        from scout.platforms.base import SourceDescriptor, derive_source_key
+
+        a = derive_source_key(SourceDescriptor("bluesky", "search", "gateway"))
+        b = derive_source_key(SourceDescriptor("bluesky", "feed", "gateway"))
+        assert a != b
+
 
 # ---------------------------------------------------------------------------
 # parse_retry_after
@@ -247,7 +305,10 @@ class TestPaginateCursor:
     @pytest.mark.asyncio
     async def test_fetch_failure_returns_accumulated_items_and_failure(self) -> None:
         page1 = _page([{"id": "a"}], "cur1")
-        failure = PlatformFetchFailure(platform="test", kind="network_error", message="boom")
+        failure = PlatformFetchFailure(
+            platform="test", kind="network_error", message="boom",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
         calls, fetch_page = _fetch_pages([Ok(page1), Err(failure)])
 
         result = await paginate_cursor(

@@ -915,9 +915,12 @@ class TestParentContext:
         msg = result.messages[0]
         assert msg.parent_lookup_status == "failed"
         assert msg.parent is None
-        # Child preserved; non-fatal failure emitted
-        parent_failures = [f for f in result.failures if f.kind == "parent_context"]
+        # Child preserved; one permanent, non-blocking degradation record
+        # emitted for the confirmed-missing parent (decision 9).
+        parent_failures = [f for f in result.failures if f.kind == "parent_missing"]
         assert len(parent_failures) == 1
+        assert parent_failures[0].operation_phase == "parent_lookup"
+        assert parent_failures[0].blocks_watermark_advance is False
 
     @pytest.mark.asyncio
     async def test_parent_dedup_across_shared_parent(
@@ -975,8 +978,14 @@ class TestParentContext:
         # Child always included even when parent fetch fails
         assert len(result.messages) == 1
         assert result.messages[0].parent_lookup_status == "failed"
-        parent_failures = [f for f in result.failures if f.kind == "parent_context"]
-        assert len(parent_failures) >= 1
+        # Exactly one retryable failure for the failed chunk request itself —
+        # no per-child duplication, and no "confirmed missing" record since
+        # the request never actually succeeded (decision 9).
+        network_failures = [f for f in result.failures if f.kind == "network_error"]
+        assert len(network_failures) == 1
+        assert network_failures[0].operation_phase == "parent_lookup"
+        assert network_failures[0].blocks_watermark_advance is False
+        assert not [f for f in result.failures if f.kind == "parent_missing"]
 
     @pytest.mark.asyncio
     async def test_malformed_parent_view_skipped(

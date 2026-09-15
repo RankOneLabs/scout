@@ -9,7 +9,7 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 42
+LATEST_SCHEMA_VERSION = 44
 
 REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS review_dispositions (
@@ -59,6 +59,58 @@ AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS author_classifications_class_idx
         ON author_classifications(author_class, platform, author_id)""",
+)
+
+# Durable coverage foundation (v43/v44): the composite-FK blocker link table,
+# the per-environment lease fence a canonical live owner must hold to
+# finalize, and per-source checkpoints keyed by derive_source_key. Shared by
+# bootstrap and the additive migrations; each statement executes individually
+# so executescript cannot commit the outer UoW.
+COVERAGE_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    # scan_id is redundant with failure_id -> scan_fetch_failures.scan_id,
+    # but the composite FK below is exactly what makes a cross-scan blocker
+    # reference structurally impossible rather than merely
+    # application-validated (decision 2): it can only ever point at a
+    # failure row whose own scan_id matches this row's scan_id.
+    """CREATE TABLE IF NOT EXISTS scan_watermark_blockers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id INTEGER NOT NULL,
+        failure_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (scan_id, failure_id),
+        FOREIGN KEY (scan_id) REFERENCES scans(id),
+        FOREIGN KEY (scan_id, failure_id) REFERENCES scan_fetch_failures(scan_id, id)
+    )""",
+    """CREATE INDEX IF NOT EXISTS scan_watermark_blockers_failure_idx
+        ON scan_watermark_blockers(failure_id)""",
+    # One row per environment; fence is a monotonically increasing token a
+    # canonical live owner must still hold at finalization time (decision 10).
+    """CREATE TABLE IF NOT EXISTS environment_leases (
+        environment TEXT PRIMARY KEY,
+        fence INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )""",
+    # One row per independently-checkpointed source, keyed by
+    # scout.platforms.base.derive_source_key (decision 6). New sources start
+    # uninitialized (checkpoint_at NULL); rollout may seed exactly one row's
+    # checkpoint_at from a legacy cursor via an auditable bootstrap
+    # (bootstrapped_from_legacy=1) (decision 7). Retiring a source clears
+    # `active` without deleting the row, so reactivation resumes from the
+    # retained checkpoint rather than restarting cold.
+    """CREATE TABLE IF NOT EXISTS source_checkpoints (
+        source_key TEXT PRIMARY KEY,
+        platform TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        provider_key TEXT NOT NULL,
+        required INTEGER NOT NULL DEFAULT 1,
+        active INTEGER NOT NULL DEFAULT 1,
+        checkpoint_at TEXT,
+        bootstrapped_from_legacy INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE INDEX IF NOT EXISTS source_checkpoints_platform_idx
+        ON source_checkpoints(platform, active)""",
 )
 
 # Shared by bootstrap and the additive v38 migration. Each statement executes
@@ -137,7 +189,19 @@ CREATE TABLE IF NOT EXISTS scans (
     overflow_count INTEGER DEFAULT 0,
     dossier_revision TEXT,
     environment TEXT NOT NULL DEFAULT 'unknown',
-    run_kind TEXT NOT NULL DEFAULT 'unknown'
+    run_kind TEXT NOT NULL DEFAULT 'unknown',
+    -- Durable coverage foundation (v44). role/lease_fence/coverage_outcome/
+    -- watermark_advanced/coverage_classifier_version are only meaningful
+    -- once ScanStore.finalize_scan_coverage has run for this scan; CHECK
+    -- constraints are intentionally not attached to these ALTER-compatible
+    -- columns (consistent with this codebase's storage-level-invariant
+    -- precedent elsewhere, e.g. grades) — validation lives at the write
+    -- boundary in scans.py, not in the schema.
+    role TEXT NOT NULL DEFAULT 'canonical_live',
+    lease_fence INTEGER,
+    coverage_outcome TEXT,
+    watermark_advanced INTEGER NOT NULL DEFAULT 0,
+    coverage_classifier_version INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS parent_context_assessments (
@@ -161,7 +225,14 @@ CREATE TABLE IF NOT EXISTS scan_fetch_failures (
     http_status INTEGER,
     retry_after TEXT,
     retryable INTEGER NOT NULL DEFAULT 1,
+    operation_phase TEXT NOT NULL DEFAULT 'unknown',
+    blocks_watermark_advance INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
+    -- (scan_id, id) is trivially unique (id alone already is), but SQLite
+    -- composite foreign keys require the parent columns to be covered by an
+    -- explicit UNIQUE/PK constraint of that exact shape — this is what lets
+    -- scan_watermark_blockers reference (scan_id, id) below (decision 2).
+    UNIQUE (scan_id, id),
     FOREIGN KEY (scan_id) REFERENCES scans(id)
 );
 
@@ -1015,6 +1086,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {GRADE_REVISION_NO_REPLACE};
 {';'.join(REVIEW_SCHEMA_STATEMENTS)};
 {';'.join(AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS)};
+{';'.join(COVERAGE_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

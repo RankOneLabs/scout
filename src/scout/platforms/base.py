@@ -16,7 +16,7 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
-from scout.errors import PlatformFetchFailure
+from scout.errors import OperationPhase, PlatformFetchFailure
 from scout.result import Err, Ok, Result
 
 logger = logging.getLogger(__name__)
@@ -45,12 +45,20 @@ def classify_http_failure(
     platform: str,
     e: httpx.HTTPStatusError,
     context: str | None = None,
+    *,
+    operation_phase: OperationPhase = "fetch",
+    blocks_watermark_advance: bool = True,
 ) -> PlatformFetchFailure:
     """Classify an HTTP status error into a typed platform fetch failure.
 
     429 is retryable rate_limited, preserving Retry-After (or
     x-ratelimit-reset-after); 401/403 are non-retryable auth_error; every
-    other status is retryable network_error.
+    other status is retryable network_error. `operation_phase` and
+    `blocks_watermark_advance` default to a primary-fetch failure that
+    blocks watermark advance; callers classifying secondary evidence (e.g.
+    Bluesky parent-context lookups) pass `operation_phase="parent_lookup",
+    blocks_watermark_advance=False` so the failure is diagnosable without
+    blocking otherwise-complete primary coverage.
     """
     status = e.response.status_code
     body = e.response.text or str(e)
@@ -66,6 +74,8 @@ def classify_http_failure(
             context=context,
             retry_after=retry_after,
             retryable=True,
+            operation_phase=operation_phase,
+            blocks_watermark_advance=blocks_watermark_advance,
         )
     if status in (401, 403):
         return PlatformFetchFailure(
@@ -75,6 +85,8 @@ def classify_http_failure(
             http_status=status,
             context=context,
             retryable=False,
+            operation_phase=operation_phase,
+            blocks_watermark_advance=blocks_watermark_advance,
         )
     return PlatformFetchFailure(
         platform=platform,
@@ -83,7 +95,40 @@ def classify_http_failure(
         http_status=status,
         context=context,
         retryable=True,
+        operation_phase=operation_phase,
+        blocks_watermark_advance=blocks_watermark_advance,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDescriptor:
+    """Canonical description of one independently-checkpointed source.
+
+    `provider_key` is the raw, pre-normalization provider identifier/query/
+    feed/channel value (e.g. a Discord channel id, a Farcaster channel id or
+    search query, a Bluesky feed URI or search query). Normalization for key
+    derivation never touches provider requests — only identity.
+    """
+
+    platform: str
+    source_kind: str  # e.g. "channel", "search", "feed"
+    provider_key: str
+
+
+def derive_source_key(descriptor: SourceDescriptor) -> str:
+    """Derive a stable, deterministic source key from a canonical descriptor.
+
+    Normalizes platform, source_kind, and provider_key (strip + casefold)
+    so that equivalent descriptors — differing only in case or incidental
+    whitespace — collide on the same key, giving each configured source an
+    independent, stable checkpoint identity. Normalization changes identity
+    only; it must never be applied to the value actually sent in a provider
+    request.
+    """
+    platform = descriptor.platform.strip().casefold()
+    source_kind = descriptor.source_kind.strip().casefold()
+    provider_key = descriptor.provider_key.strip().casefold()
+    return f"{platform}:{source_kind}:{provider_key}"
 
 
 def parse_retry_after(value: str, now: datetime) -> float | None:
