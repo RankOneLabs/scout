@@ -442,9 +442,13 @@ class TestScanDurability:
         self, in_memory_state: StateManager
     ) -> None:
         """get_last_scan_timestamp must return safe_watermark_at, not completed_at."""
-        scan_id = in_memory_state.start_scan()
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
-        ts = in_memory_state.get_last_scan_timestamp()
+        in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        ts = in_memory_state.get_last_scan_timestamp(environment="production")
         assert ts is not None
         row = in_memory_state.conn.execute(
             "SELECT safe_watermark_at, fetch_started_at FROM scans WHERE id = ?",
@@ -456,25 +460,45 @@ class TestScanDurability:
 
     def test_partial_scan_does_not_advance_watermark(self, in_memory_state: StateManager) -> None:
         """Partial scans must not set safe_watermark_at (watermark must not advance)."""
-        scan1 = in_memory_state.start_scan()
+        scan1 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan1, 0, 0, status="complete")
-        first_watermark = in_memory_state.get_last_scan_timestamp()
+        in_memory_state.finalize_scan_coverage(
+            scan1, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        first_watermark = in_memory_state.get_last_scan_timestamp(environment="production")
 
-        scan2 = in_memory_state.start_scan()
+        scan2 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan2, 0, 0, status="partial")
+        in_memory_state.save_fetch_failure(
+            scan_id=scan2, platform="discord", kind="network_error", message="timeout",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
+        in_memory_state.finalize_scan_coverage(
+            scan2, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
 
-        watermark_after_partial = in_memory_state.get_last_scan_timestamp()
+        watermark_after_partial = in_memory_state.get_last_scan_timestamp(
+            environment="production"
+        )
         assert watermark_after_partial == first_watermark
 
     def test_failed_scan_does_not_advance_watermark(self, in_memory_state: StateManager) -> None:
-        scan1 = in_memory_state.start_scan()
+        scan1 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan1, 0, 0, status="complete")
-        first_watermark = in_memory_state.get_last_scan_timestamp()
+        in_memory_state.finalize_scan_coverage(
+            scan1, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        first_watermark = in_memory_state.get_last_scan_timestamp(environment="production")
 
-        scan2 = in_memory_state.start_scan()
+        scan2 = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan2, 0, 0, status="failed")
 
-        assert in_memory_state.get_last_scan_timestamp() == first_watermark
+        assert in_memory_state.get_last_scan_timestamp(environment="production") == (
+            first_watermark
+        )
 
     def test_save_fetch_failure_persists_metadata(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
@@ -486,6 +510,8 @@ class TestScanDurability:
             http_status=429,
             retry_after="30",
             retryable=True,
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
         )
         assert failure_id >= 1
         row = in_memory_state.conn.execute(
@@ -508,6 +534,8 @@ class TestScanDurability:
             kind="network_error",
             message="connection timeout",
             context="channel:ai",
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
         )
         row = in_memory_state.conn.execute(
             "SELECT context FROM scan_fetch_failures WHERE id = ?", (failure_id,)
@@ -539,10 +567,16 @@ class TestScanDurability:
     def test_complete_scan_uses_fetch_started_at_as_watermark(
         self, in_memory_state: StateManager
     ) -> None:
-        """For complete scans, safe_watermark_at defaults to fetch_started_at."""
+        """finalize_scan_coverage's watermark defaults to fetch_started_at."""
         explicit_fsa = datetime(2026, 6, 1, 10, 0, 0, tzinfo=UTC)
-        scan_id = in_memory_state.start_scan(fetch_started_at=explicit_fsa)
+        scan_id = in_memory_state.start_scan(
+            fetch_started_at=explicit_fsa, environment="production", run_kind="live",
+        )
         in_memory_state.complete_scan(scan_id, 5, 2, status="complete")
+        in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
 
         row = in_memory_state.conn.execute(
             "SELECT safe_watermark_at FROM scans WHERE id = ?", (scan_id,)

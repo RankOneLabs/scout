@@ -75,15 +75,6 @@ class CoverageFinalizationResult:
 
 
 @dataclass(frozen=True, slots=True)
-class WatermarkAdvanceError:
-    """`advance_watermark` could not derive a candidate timestamp."""
-
-    operation: str
-    scan_id: int
-    detail: str
-
-
-@dataclass(frozen=True, slots=True)
 class SourceCheckpoint:
     """One `source_checkpoints` row — an independent per-source cursor."""
 
@@ -129,7 +120,7 @@ class ScanStore:
     def _conn(self) -> sqlite3.Connection:
         return self._uow.conn
 
-    def get_last_scan_timestamp(self, *, environment: str | None = None) -> datetime | None:
+    def get_last_scan_timestamp(self, *, environment: str) -> datetime | None:
         """Return the safe watermark from the most recent eligible scan, or None.
 
         Returns safe_watermark_at rather than completed_at so the next scan's
@@ -137,27 +128,24 @@ class ScanStore:
         not when processing finished — avoiding a lossy gap for messages that
         arrive during the processing window.
 
-        When `environment` is given, only scans whose stored `environment`
-        matches it exactly are eligible — development and unknown-environment
-        rows never influence a caller reading a specific (e.g. production)
-        cursor (decision 5). `environment=None` preserves this method's
-        historical any-environment behavior for call sites outside this
-        cohort's edit scope (e.g. scout.scanning.runner) that do not yet pass
-        one; see docs/known deviations in the coverage-foundation cohort
-        report for why this parameter is optional rather than required.
+        `environment` is required and must be an exact, non-'unknown' value:
+        development and unknown-environment rows must never influence a
+        production cursor read, and a caller with no real environment to
+        supply has no safe reading to perform (decision 5). Only rows with
+        `role='canonical_live'` are eligible — a secondary or rescore scan's
+        watermark can never leak into the cursor another owner reads.
         """
-        if environment is None:
-            row = self._conn.execute(
-                "SELECT safe_watermark_at FROM scans "
-                "WHERE safe_watermark_at IS NOT NULL ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        else:
-            row = self._conn.execute(
-                "SELECT safe_watermark_at FROM scans "
-                "WHERE safe_watermark_at IS NOT NULL AND environment = ? "
-                "ORDER BY id DESC LIMIT 1",
-                (environment,),
-            ).fetchone()
+        if not environment or environment == "unknown":
+            raise ValueError(
+                "get_last_scan_timestamp requires a specific, non-'unknown' environment"
+            )
+        row = self._conn.execute(
+            "SELECT safe_watermark_at FROM scans "
+            "WHERE safe_watermark_at IS NOT NULL AND environment = ? "
+            "AND role = 'canonical_live' "
+            "ORDER BY id DESC LIMIT 1",
+            (environment,),
+        ).fetchone()
         if row and row["safe_watermark_at"]:
             return datetime.fromisoformat(row["safe_watermark_at"])
         return None
@@ -217,40 +205,24 @@ class ScanStore:
         *,
         status: ScanStatus = "complete",
         overflow_count: int = 0,
-        advance_watermark: bool = True,
     ) -> None:
         """Mark a scan as complete, partial, failed, or interrupted.
 
-        For complete scans with advance_watermark=True, safe_watermark_at is
-        set to the scan's own stored fetch_started_at — the only candidate
-        timestamp, with no caller-supplied override and no fallback to "now"
-        (decision 3): if a scan somehow has no stored fetch_started_at, the
-        watermark is left unset rather than silently advancing to the
-        current time. Non-fetch scans such as rescore should pass
-        advance_watermark=False so they do not move live platform cursors.
-
-        This method predates and is independent of `finalize_scan_coverage`
-        / `advance_watermark`: it is the existing status/watermark surface
-        every current caller uses, and continues to gate watermark movement
-        on `status == "complete"` exactly as before. New code that needs the
-        durable, evidence-derived coverage_outcome and the atomic
-        finalization gates from decision 10 should call
-        `finalize_scan_coverage` (optionally followed by `advance_watermark`)
-        instead.
+        This method only ever touches processing status and counters — it
+        never writes `safe_watermark_at` or `watermark_advanced`. The only
+        legitimate path that can move the watermark is
+        `finalize_scan_coverage(scan_id, *, advance_watermark=...)`, which
+        derives the decision from durable evidence inside one atomic
+        transaction (decisions 1, 3, 10). A caller that wants to advance the
+        watermark for this scan must call `finalize_scan_coverage`
+        separately with an explicit `advance_watermark` intent.
         """
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
-            if status == "complete" and advance_watermark:
-                row = self._conn.execute(
-                    "SELECT fetch_started_at FROM scans WHERE id = ?", (scan_id,)
-                ).fetchone()
-                wm = row["fetch_started_at"] if row and row["fetch_started_at"] else None
-            else:
-                wm = None
             self._conn.execute(
                 "UPDATE scans SET completed_at = ?, messages_scanned = ?, relevant_found = ?, "
-                "status = ?, safe_watermark_at = ?, overflow_count = ? WHERE id = ?",
-                (now, messages_scanned, relevant_found, status, wm, overflow_count, scan_id),
+                "status = ?, overflow_count = ? WHERE id = ?",
+                (now, messages_scanned, relevant_found, status, overflow_count, scan_id),
             )
         logger.info(
             "Completed scan #%d (%s): %d scanned, %d relevant, %d overflow",
@@ -271,16 +243,23 @@ class ScanStore:
         http_status: int | None = None,
         retry_after: str | None = None,
         retryable: bool = True,
-        operation_phase: str = "unknown",
-        blocks_watermark_advance: bool = True,
+        *,
+        operation_phase: str,
+        blocks_watermark_advance: bool,
     ) -> int:
         """Persist a per-platform fetch failure for operator visibility and retry.
 
         `operation_phase`/`blocks_watermark_advance` mirror
-        `scout.errors.PlatformFetchFailure` and default to the same
-        fail-closed "unclassified" pairing so a caller outside this cohort's
-        edit scope that has not been updated yet still persists a failure
-        `finalize_scan_coverage` treats as blocking.
+        `scout.errors.PlatformFetchFailure` and are required with no
+        default: every caller must state the actual classification it
+        received from the platform/processing layer that raised the
+        failure, rather than this method silently substituting the
+        fail-closed "unclassified" pairing on their behalf. A caller with
+        no real classification to pass should construct the failure with
+        `operation_phase="unknown", blocks_watermark_advance=True`
+        explicitly — `finalize_scan_coverage` always treats an
+        `operation_phase="unknown"` row as blocking regardless of the
+        stored `blocks_watermark_advance` value.
         """
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
@@ -404,40 +383,6 @@ class ScanStore:
         logger.info("Bumped lease fence for environment=%s to %d", environment, fence)
         return fence
 
-    # --- Watermark advance ---
-
-    def advance_watermark(self, scan_id: int) -> Result[datetime, WatermarkAdvanceError]:
-        """Advance scan_id's durable watermark from its own stored
-        fetch_started_at — the single candidate timestamp (decision 3).
-
-        Takes no timestamp of any kind: there is no caller-supplied override
-        and no fallback to "now" when fetch_started_at is missing — either
-        the scan's own recorded fetch start is used verbatim, or the call
-        fails closed with `Err` rather than fabricate a chronology.
-        """
-        operation = "advance_watermark"
-        with self._uow.begin_immediate():
-            row = self._conn.execute(
-                "SELECT fetch_started_at FROM scans WHERE id = ?", (scan_id,)
-            ).fetchone()
-            if row is None:
-                return Err(WatermarkAdvanceError(
-                    operation=operation, scan_id=scan_id, detail="scan not found",
-                ))
-            if not row["fetch_started_at"]:
-                return Err(WatermarkAdvanceError(
-                    operation=operation,
-                    scan_id=scan_id,
-                    detail="scan has no stored fetch_started_at",
-                ))
-            fetch_started_at = datetime.fromisoformat(row["fetch_started_at"])
-            self._conn.execute(
-                "UPDATE scans SET safe_watermark_at = ?, watermark_advanced = 1 WHERE id = ?",
-                (row["fetch_started_at"], scan_id),
-            )
-        logger.info("Advanced watermark for scan #%d to %s", scan_id, fetch_started_at)
-        return Ok(fetch_started_at)
-
     # --- Coverage finalization ---
 
     def finalize_scan_coverage(
@@ -445,6 +390,7 @@ class ScanStore:
         scan_id: int,
         *,
         environment: str,
+        advance_watermark: bool,
         required_source_keys: frozenset[str] = frozenset(),
         covered_source_keys: frozenset[str] = frozenset(),
         coverage_classifier_version: int,
@@ -453,6 +399,16 @@ class ScanStore:
     ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
         """Atomically derive and record whether scan_id's primary coverage
         is durably safe to advance the watermark from (decision 1, 10).
+
+        `advance_watermark` is a required, keyword-only expression of
+        caller intent: this is the only path in the codebase that can ever
+        set `safe_watermark_at`/`watermark_advanced`, and it only does so
+        when the caller explicitly asks for it AND the derived coverage
+        outcome is `'complete'`. Passing `advance_watermark=False` still
+        computes and durably records `coverage_outcome` and the blocking
+        set, without touching the watermark — useful for a caller that only
+        wants an eligibility/coverage read (e.g. a rescore or secondary
+        pass must never advance a live cursor).
 
         Runs entirely inside one `BEGIN IMMEDIATE` transaction: every
         eligibility fact (terminal status, canonical live role, exact
@@ -550,7 +506,7 @@ class ScanStore:
 
             watermark_advanced = False
             safe_watermark_at: datetime | None = None
-            if derived_outcome == "complete":
+            if derived_outcome == "complete" and advance_watermark:
                 safe_watermark_at = fetch_started_at
                 watermark_advanced = True
 

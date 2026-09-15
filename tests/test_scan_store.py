@@ -55,16 +55,20 @@ class TestScanLifecycle:
         self,
         in_memory_state: StateManager,
     ) -> None:
-        assert in_memory_state.get_last_scan_timestamp() is None
+        assert in_memory_state.get_last_scan_timestamp(environment="production") is None
 
     def test_get_last_scan_timestamp_after_completion(
         self,
         in_memory_state: StateManager,
     ) -> None:
-        scan_id = in_memory_state.start_scan()
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan_id, 0, 0)
+        in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
 
-        ts = in_memory_state.get_last_scan_timestamp()
+        ts = in_memory_state.get_last_scan_timestamp(environment="production")
         assert ts is not None
         assert isinstance(ts, datetime)
 
@@ -146,6 +150,8 @@ class TestScanFetchFailures:
             http_status=429,
             retry_after="30",
             retryable=True,
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
         )
         in_memory_state.commit()
 
@@ -166,7 +172,10 @@ class TestScanFetchFailures:
     def test_failures_scoped_to_scan(self, in_memory_state: StateManager) -> None:
         scan1 = in_memory_state.start_scan()
         scan2 = in_memory_state.start_scan()
-        in_memory_state.save_fetch_failure(scan1, "farcaster", "network_error", "timeout")
+        in_memory_state.save_fetch_failure(
+            scan1, "farcaster", "network_error", "timeout",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
         in_memory_state.commit()
 
         assert len(in_memory_state.get_scan_fetch_failures(scan1)) == 1
@@ -189,13 +198,16 @@ class TestOverflowCount:
         assert row is not None
         assert row["overflow_count"] == 5
 
-    def test_complete_scan_can_skip_watermark_advance(self, in_memory_state: StateManager) -> None:
+    def test_complete_scan_never_sets_the_watermark_on_its_own(
+        self, in_memory_state: StateManager
+    ) -> None:
+        """complete_scan only ever touches status/counters — the watermark
+        only ever moves through finalize_scan_coverage (decision 1)."""
         scan_id = in_memory_state.start_scan()
         in_memory_state.complete_scan(
             scan_id,
             messages_scanned=10,
             relevant_found=2,
-            advance_watermark=False,
         )
         in_memory_state.commit()
 
@@ -218,11 +230,18 @@ class TestOverflowCount:
         assert row["overflow_count"] == 0
 
 class TestScanStatusTransitions:
-    def test_complete_status_sets_watermark(self, in_memory_state: StateManager) -> None:
-        scan_id = in_memory_state.start_scan()
+    def test_complete_status_advances_watermark_only_via_finalize_scan_coverage(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
         in_memory_state.complete_scan(scan_id, 10, 3, status="complete")
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
         in_memory_state.commit()
 
+        assert isinstance(result, Ok)
         row = in_memory_state.conn.execute(
             "SELECT status, safe_watermark_at FROM scans WHERE id = ?", (scan_id,)
         ).fetchone()
@@ -324,12 +343,22 @@ class TestBlockedAuthors:
 
 
 class TestSaveFetchFailureClassification:
-    def test_defaults_to_fail_closed_unknown_and_blocking(
+    def test_classification_is_required_with_no_default(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        with pytest.raises(TypeError):
+            in_memory_state.save_fetch_failure(  # type: ignore[call-arg]
+                scan_id=scan_id, platform="discord", kind="unexpected", message="boom",
+            )
+
+    def test_an_explicit_unknown_classification_is_still_treated_as_blocking(
         self, in_memory_state: StateManager
     ) -> None:
         scan_id = in_memory_state.start_scan()
         failure_id = in_memory_state.save_fetch_failure(
             scan_id=scan_id, platform="discord", kind="unexpected", message="boom",
+            operation_phase="unknown", blocks_watermark_advance=True,
         )
         in_memory_state.commit()
 
@@ -360,14 +389,24 @@ class TestSaveFetchFailureClassification:
 
 
 class TestAdvanceWatermark:
+    """The only route that can move safe_watermark_at is
+    finalize_scan_coverage(..., advance_watermark=True) (decision 1, 3):
+    there is no other, ungated method on ScanStore that writes it."""
+
     def test_advances_from_stored_fetch_started_at(self, in_memory_state: StateManager) -> None:
         explicit_fsa = datetime(2026, 3, 1, 8, 0, 0, tzinfo=UTC)
-        scan_id = in_memory_state.start_scan(fetch_started_at=explicit_fsa)
+        scan_id = in_memory_state.start_scan(
+            fetch_started_at=explicit_fsa, environment="production", run_kind="live",
+        )
+        in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
 
-        result = in_memory_state.advance_watermark(scan_id)
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
 
         assert isinstance(result, Ok)
-        assert result.value == explicit_fsa
+        assert result.value.safe_watermark_at == explicit_fsa
         row = in_memory_state.conn.execute(
             "SELECT safe_watermark_at, watermark_advanced FROM scans WHERE id = ?", (scan_id,)
         ).fetchone()
@@ -375,9 +414,32 @@ class TestAdvanceWatermark:
         assert row["watermark_advanced"] == 1
 
     def test_errors_for_a_missing_scan(self, in_memory_state: StateManager) -> None:
-        result = in_memory_state.advance_watermark(999)
+        result = in_memory_state.finalize_scan_coverage(
+            999, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
         assert isinstance(result, Err)
         assert result.error.scan_id == 999
+
+    def test_advance_watermark_false_computes_outcome_but_never_writes_the_watermark(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
+        in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
+
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=False,
+            coverage_classifier_version=1,
+        )
+
+        assert isinstance(result, Ok)
+        assert result.value.coverage_outcome == "complete"
+        assert result.value.watermark_advanced is False
+        row = in_memory_state.conn.execute(
+            "SELECT safe_watermark_at, watermark_advanced FROM scans WHERE id = ?", (scan_id,)
+        ).fetchone()
+        assert row["safe_watermark_at"] is None
+        assert row["watermark_advanced"] == 0
 
     def test_errors_when_fetch_started_at_is_missing_rather_than_defaulting_to_now(
         self, in_memory_state: StateManager
@@ -387,15 +449,19 @@ class TestAdvanceWatermark:
         # the "never fall back to now" guard (decision 3).
         now = datetime.now(UTC).isoformat()
         cursor = in_memory_state.conn.execute(
-            "INSERT INTO scans (started_at, fetch_started_at, environment, run_kind) "
-            "VALUES (?, NULL, 'production', 'live')",
+            "INSERT INTO scans "
+            "(started_at, fetch_started_at, environment, run_kind, status, lease_fence) "
+            "VALUES (?, NULL, 'production', 'live', 'complete', 0)",
             (now,),
         )
         in_memory_state.commit()
         scan_id = cursor.lastrowid
         assert scan_id is not None
 
-        result = in_memory_state.advance_watermark(scan_id)
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
 
         assert isinstance(result, Err)
         assert "fetch_started_at" in result.error.detail
@@ -406,23 +472,34 @@ class TestAdvanceWatermark:
 
 
 class TestGetLastScanTimestampByEnvironment:
-    def test_none_preserves_legacy_any_environment_behavior(
-        self, in_memory_state: StateManager
+    def _complete_and_advance(
+        self, state: StateManager, scan_id: int, *, environment: str
     ) -> None:
-        scan_id = in_memory_state.start_scan(environment="production")
-        in_memory_state.complete_scan(scan_id, 0, 0, status="complete")
+        state.complete_scan(scan_id, 0, 0, status="complete")
+        state.finalize_scan_coverage(
+            scan_id, environment=environment, advance_watermark=True,
+            coverage_classifier_version=1,
+        )
 
-        assert in_memory_state.get_last_scan_timestamp() is not None
+    def test_environment_is_required(self, in_memory_state: StateManager) -> None:
+        with pytest.raises((TypeError, ValueError)):
+            in_memory_state.get_last_scan_timestamp()  # type: ignore[call-arg]
+
+    def test_unknown_environment_is_rejected(self, in_memory_state: StateManager) -> None:
+        with pytest.raises(ValueError):
+            in_memory_state.get_last_scan_timestamp(environment="unknown")
 
     def test_exact_environment_match_only(self, in_memory_state: StateManager) -> None:
         prod_scan = in_memory_state.start_scan(
-            environment="production", fetch_started_at=datetime(2026, 1, 1, tzinfo=UTC)
+            environment="production", run_kind="live",
+            fetch_started_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        in_memory_state.complete_scan(prod_scan, 0, 0, status="complete")
+        self._complete_and_advance(in_memory_state, prod_scan, environment="production")
         dev_scan = in_memory_state.start_scan(
-            environment="development", fetch_started_at=datetime(2026, 2, 1, tzinfo=UTC)
+            environment="development", run_kind="live",
+            fetch_started_at=datetime(2026, 2, 1, tzinfo=UTC),
         )
-        in_memory_state.complete_scan(dev_scan, 0, 0, status="complete")
+        self._complete_and_advance(in_memory_state, dev_scan, environment="development")
 
         assert in_memory_state.get_last_scan_timestamp(
             environment="production"
@@ -435,9 +512,17 @@ class TestGetLastScanTimestampByEnvironment:
         self, in_memory_state: StateManager
     ) -> None:
         unknown_scan = in_memory_state.start_scan(
-            environment="unknown", fetch_started_at=datetime(2026, 5, 1, tzinfo=UTC)
+            environment="unknown", run_kind="live",
+            fetch_started_at=datetime(2026, 5, 1, tzinfo=UTC),
         )
         in_memory_state.complete_scan(unknown_scan, 0, 0, status="complete")
+        # finalize_scan_coverage itself also rejects environment='unknown' —
+        # an unknown-environment scan structurally cannot advance a cursor.
+        result = in_memory_state.finalize_scan_coverage(
+            unknown_scan, environment="unknown", advance_watermark=True,
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Err)
 
         assert in_memory_state.get_last_scan_timestamp(environment="production") is None
 
@@ -456,7 +541,7 @@ class TestFinalizeScanCoverage:
             environment=environment,
             run_kind="live",
         )
-        state.complete_scan(scan_id, 5, 1, status=status, advance_watermark=False)
+        state.complete_scan(scan_id, 5, 1, status=status)
         return scan_id
 
     def test_no_failures_advances_watermark_and_records_complete_outcome(
@@ -465,7 +550,7 @@ class TestFinalizeScanCoverage:
         scan_id = self._start_eligible_scan(in_memory_state)
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -493,7 +578,7 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -518,7 +603,7 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -534,7 +619,7 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -555,7 +640,7 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
 
         assert isinstance(result, Ok)
@@ -569,7 +654,7 @@ class TestFinalizeScanCoverage:
     def test_rejects_failed_status(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, status="failed")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "status" in result.error.detail
@@ -577,7 +662,7 @@ class TestFinalizeScanCoverage:
     def test_rejects_interrupted_status(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, status="interrupted")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
 
@@ -585,9 +670,9 @@ class TestFinalizeScanCoverage:
         scan_id = in_memory_state.start_scan(
             environment="production", run_kind="live", role="secondary",
         )
-        in_memory_state.complete_scan(scan_id, 1, 0, status="complete", advance_watermark=False)
+        in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "role" in result.error.detail
@@ -596,17 +681,17 @@ class TestFinalizeScanCoverage:
         scan_id = in_memory_state.start_scan(
             environment="production", run_kind="live", role="rescore",
         )
-        in_memory_state.complete_scan(scan_id, 1, 0, status="complete", advance_watermark=False)
+        in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
 
     def test_rejects_non_live_run_kind(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan(environment="production", run_kind="human_positive")
-        in_memory_state.complete_scan(scan_id, 1, 0, status="complete", advance_watermark=False)
+        in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "run kind" in result.error.detail
@@ -614,7 +699,7 @@ class TestFinalizeScanCoverage:
     def test_rejects_unknown_environment(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, environment="unknown")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="unknown", coverage_classifier_version=1,
+            scan_id, environment="unknown", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "environment" in result.error.detail
@@ -622,7 +707,7 @@ class TestFinalizeScanCoverage:
     def test_rejects_environment_mismatch(self, in_memory_state: StateManager) -> None:
         scan_id = self._start_eligible_scan(in_memory_state, environment="production")
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="development", coverage_classifier_version=1,
+            scan_id, environment="development", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
 
@@ -632,7 +717,7 @@ class TestFinalizeScanCoverage:
         in_memory_state.bump_environment_lease_fence("production")
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "lease fence" in result.error.detail
@@ -641,7 +726,7 @@ class TestFinalizeScanCoverage:
         future = datetime.now(UTC) + timedelta(hours=1)
         scan_id = self._start_eligible_scan(in_memory_state, fetch_started_at=future)
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Err)
         assert "future" in result.error.detail
@@ -653,6 +738,7 @@ class TestFinalizeScanCoverage:
         result = in_memory_state.finalize_scan_coverage(
             scan_id,
             environment="production",
+            advance_watermark=True,
             required_source_keys=frozenset({"discord:channel:1", "discord:channel:2"}),
             covered_source_keys=frozenset({"discord:channel:1"}),
             coverage_classifier_version=1,
@@ -667,6 +753,7 @@ class TestFinalizeScanCoverage:
         result = in_memory_state.finalize_scan_coverage(
             scan_id,
             environment="production",
+            advance_watermark=True,
             required_source_keys=frozenset({"discord:channel:1"}),
             covered_source_keys=frozenset({"discord:channel:1", "discord:channel:2"}),
             coverage_classifier_version=1,
@@ -681,6 +768,7 @@ class TestFinalizeScanCoverage:
         result = in_memory_state.finalize_scan_coverage(
             scan_id,
             environment="production",
+            advance_watermark=True,
             coverage_classifier_version=1,
             expected_coverage_outcome="blocked",
         )
@@ -702,7 +790,7 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         result = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(result, Ok)
 
@@ -720,10 +808,10 @@ class TestFinalizeScanCoverage:
         in_memory_state.commit()
 
         first = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         second = in_memory_state.finalize_scan_coverage(
-            scan_id, environment="production", coverage_classifier_version=1,
+            scan_id, environment="production", advance_watermark=True, coverage_classifier_version=1,
         )
         assert isinstance(first, Ok) and isinstance(second, Ok)
         rows = in_memory_state.conn.execute(
@@ -740,6 +828,7 @@ class TestScanWatermarkBlockersCompositeForeignKey:
         scan2 = in_memory_state.start_scan(environment="production")
         other_scan_failure_id = in_memory_state.save_fetch_failure(
             scan_id=scan2, platform="discord", kind="unexpected", message="boom",
+            operation_phase="unknown", blocks_watermark_advance=True,
         )
         in_memory_state.commit()
 

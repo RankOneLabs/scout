@@ -73,7 +73,6 @@ from scout.storage.scans import ScanStatus as ScanStatus
 from scout.storage.scans import ScanStore, StoredAuthorClassification
 from scout.storage.scans import SourceCheckpoint as SourceCheckpoint
 from scout.storage.scans import SourceCheckpointError as SourceCheckpointError
-from scout.storage.scans import WatermarkAdvanceError as WatermarkAdvanceError
 from scout.storage.schema import LATEST_SCHEMA_VERSION as LATEST_SCHEMA_VERSION
 from scout.storage.schema import SCHEMA as SCHEMA
 from scout.storage.unit_of_work import UnitOfWork
@@ -282,7 +281,7 @@ class StateManager:
 
     # --- Scan (delegates to ScanStore) ---
 
-    def get_last_scan_timestamp(self, *, environment: str | None = None) -> datetime | None:
+    def get_last_scan_timestamp(self, *, environment: str) -> datetime | None:
         return self._scans.get_last_scan_timestamp(environment=environment)
 
     def get_latest_completed_scan_id(self) -> int | None:
@@ -311,7 +310,6 @@ class StateManager:
         *,
         status: ScanStatus = "complete",
         overflow_count: int = 0,
-        advance_watermark: bool = True,
     ) -> None:
         self._scans.complete_scan(
             scan_id,
@@ -319,17 +317,14 @@ class StateManager:
             relevant_found,
             status=status,
             overflow_count=overflow_count,
-            advance_watermark=advance_watermark,
         )
-
-    def advance_watermark(self, scan_id: int) -> Result[datetime, WatermarkAdvanceError]:
-        return self._scans.advance_watermark(scan_id)
 
     def finalize_scan_coverage(
         self,
         scan_id: int,
         *,
         environment: str,
+        advance_watermark: bool,
         required_source_keys: frozenset[str] = frozenset(),
         covered_source_keys: frozenset[str] = frozenset(),
         coverage_classifier_version: int,
@@ -339,6 +334,7 @@ class StateManager:
         return self._scans.finalize_scan_coverage(
             scan_id,
             environment=environment,
+            advance_watermark=advance_watermark,
             required_source_keys=required_source_keys,
             covered_source_keys=covered_source_keys,
             coverage_classifier_version=coverage_classifier_version,
@@ -412,12 +408,13 @@ class StateManager:
         http_status: int | None = None,
         retry_after: str | None = None,
         retryable: bool = True,
-        operation_phase: str = "unknown",
-        blocks_watermark_advance: bool = True,
+        *,
+        operation_phase: str,
+        blocks_watermark_advance: bool,
     ) -> int:
         return self._scans.save_fetch_failure(
             scan_id, platform, kind, message, context, http_status, retry_after, retryable,
-            operation_phase, blocks_watermark_advance,
+            operation_phase=operation_phase, blocks_watermark_advance=blocks_watermark_advance,
         )
 
     def fail_scan(
