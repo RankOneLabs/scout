@@ -39,6 +39,7 @@ from scout.config import (
 )
 from scout.grading.feedback import FeedbackMode, PersistedFeedbackSnapshot, PhaseFeedbackBundle
 from scout.registry import RuntimeRegistry
+from scout.result import Result
 from scout.storage.artifacts import ArtifactStore
 from scout.storage.db import Db
 from scout.storage.evaluations import (
@@ -64,8 +65,15 @@ from scout.storage.migrations import (
 )
 from scout.storage.posts import PostStore
 from scout.storage.registry import RegistryStore
+from scout.storage.scans import CoverageFinalizationError as CoverageFinalizationError
+from scout.storage.scans import CoverageFinalizationResult as CoverageFinalizationResult
+from scout.storage.scans import CoverageOutcome as CoverageOutcome
+from scout.storage.scans import ScanRole as ScanRole
 from scout.storage.scans import ScanStatus as ScanStatus
 from scout.storage.scans import ScanStore, StoredAuthorClassification
+from scout.storage.scans import SourceCheckpoint as SourceCheckpoint
+from scout.storage.scans import SourceCheckpointError as SourceCheckpointError
+from scout.storage.scans import WatermarkAdvanceError as WatermarkAdvanceError
 from scout.storage.schema import LATEST_SCHEMA_VERSION as LATEST_SCHEMA_VERSION
 from scout.storage.schema import SCHEMA as SCHEMA
 from scout.storage.unit_of_work import UnitOfWork
@@ -274,8 +282,8 @@ class StateManager:
 
     # --- Scan (delegates to ScanStore) ---
 
-    def get_last_scan_timestamp(self) -> datetime | None:
-        return self._scans.get_last_scan_timestamp()
+    def get_last_scan_timestamp(self, *, environment: str | None = None) -> datetime | None:
+        return self._scans.get_last_scan_timestamp(environment=environment)
 
     def get_latest_completed_scan_id(self) -> int | None:
         return self._scans.get_latest_completed_scan_id()
@@ -289,9 +297,10 @@ class StateManager:
         *,
         environment: str = "development",
         run_kind: str = "live",
+        role: ScanRole = "canonical_live",
     ) -> int:
         return self._scans.start_scan(
-            fetch_started_at, environment=environment, run_kind=run_kind
+            fetch_started_at, environment=environment, run_kind=run_kind, role=role
         )
 
     def complete_scan(
@@ -299,8 +308,8 @@ class StateManager:
         scan_id: int,
         messages_scanned: int,
         relevant_found: int,
+        *,
         status: ScanStatus = "complete",
-        safe_watermark_at: datetime | None = None,
         overflow_count: int = 0,
         advance_watermark: bool = True,
     ) -> None:
@@ -308,11 +317,92 @@ class StateManager:
             scan_id,
             messages_scanned,
             relevant_found,
-            status,
-            safe_watermark_at,
-            overflow_count,
-            advance_watermark,
+            status=status,
+            overflow_count=overflow_count,
+            advance_watermark=advance_watermark,
         )
+
+    def advance_watermark(
+        self, scan_id: int, *, now: datetime | None = None
+    ) -> Result[datetime, WatermarkAdvanceError]:
+        return self._scans.advance_watermark(scan_id, now=now)
+
+    def finalize_scan_coverage(
+        self,
+        scan_id: int,
+        *,
+        environment: str,
+        required_source_keys: frozenset[str] = frozenset(),
+        covered_source_keys: frozenset[str] = frozenset(),
+        coverage_classifier_version: int,
+        now: datetime | None = None,
+        expected_coverage_outcome: CoverageOutcome | None = None,
+    ) -> Result[CoverageFinalizationResult, CoverageFinalizationError]:
+        return self._scans.finalize_scan_coverage(
+            scan_id,
+            environment=environment,
+            required_source_keys=required_source_keys,
+            covered_source_keys=covered_source_keys,
+            coverage_classifier_version=coverage_classifier_version,
+            now=now,
+            expected_coverage_outcome=expected_coverage_outcome,
+        )
+
+    def get_environment_lease_fence(self, environment: str) -> int:
+        return self._scans.get_environment_lease_fence(environment)
+
+    def bump_environment_lease_fence(self, environment: str) -> int:
+        return self._scans.bump_environment_lease_fence(environment)
+
+    def get_source_checkpoint(self, source_key: str) -> SourceCheckpoint | None:
+        return self._scans.get_source_checkpoint(source_key)
+
+    def ensure_source_checkpoint(
+        self,
+        source_key: str,
+        *,
+        platform: str,
+        source_kind: str,
+        provider_key: str,
+        required: bool = True,
+    ) -> SourceCheckpoint:
+        return self._scans.ensure_source_checkpoint(
+            source_key,
+            platform=platform,
+            source_kind=source_kind,
+            provider_key=provider_key,
+            required=required,
+        )
+
+    def bootstrap_legacy_source_checkpoint(
+        self,
+        source_key: str,
+        *,
+        platform: str,
+        source_kind: str,
+        provider_key: str,
+        legacy_checkpoint_at: datetime,
+        required: bool = True,
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        return self._scans.bootstrap_legacy_source_checkpoint(
+            source_key,
+            platform=platform,
+            source_kind=source_kind,
+            provider_key=provider_key,
+            legacy_checkpoint_at=legacy_checkpoint_at,
+            required=required,
+        )
+
+    def retire_source_checkpoint(self, source_key: str) -> bool:
+        return self._scans.retire_source_checkpoint(source_key)
+
+    def reactivate_source_checkpoint(
+        self, source_key: str, *, reset: bool = False
+    ) -> Result[SourceCheckpoint, SourceCheckpointError]:
+        return self._scans.reactivate_source_checkpoint(source_key, reset=reset)
+
+    def update_source_checkpoint(self, source_key: str, *, checkpoint_at: datetime) -> None:
+        self._scans.update_source_checkpoint(source_key, checkpoint_at=checkpoint_at)
 
     def save_fetch_failure(
         self,
@@ -324,9 +414,12 @@ class StateManager:
         http_status: int | None = None,
         retry_after: str | None = None,
         retryable: bool = True,
+        operation_phase: str = "unknown",
+        blocks_watermark_advance: bool = True,
     ) -> int:
         return self._scans.save_fetch_failure(
-            scan_id, platform, kind, message, context, http_status, retry_after, retryable
+            scan_id, platform, kind, message, context, http_status, retry_after, retryable,
+            operation_phase, blocks_watermark_advance,
         )
 
     def fail_scan(
@@ -356,6 +449,8 @@ class StateManager:
                 "http_status": f.http_status,
                 "retry_after": f.retry_after,
                 "retryable": f.retryable,
+                "operation_phase": f.operation_phase,
+                "blocks_watermark_advance": f.blocks_watermark_advance,
             }
             for f in self._scans.get_scan_fetch_failures(scan_id)
         ]
