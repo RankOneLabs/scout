@@ -187,10 +187,12 @@ incomplete as recording nothing.
    command" step 2 above.
 6. **Two successive recent production watermarks.** Two consecutive
    `scout watermark stale-check --environment production` observations,
-   both `stale: false`, taken far enough apart to show the watermark is
-   still advancing under the resumed worker — a single fresh reading only
-   proves the recovery command itself worked, not that scheduled scanning
-   resumed normally afterward.
+   both `stale: false`, with **both observed watermark values recorded
+   and the second strictly later than the first**. Two `stale: false`
+   readings alone can be the same watermark still sitting inside the
+   stale threshold; only a strictly advancing value proves scheduled
+   scanning resumed under the restarted worker rather than just that the
+   recovery command itself worked.
 7. **Normalized per-source fetch volume.** Each active source's recent
    message/page volume compared against its own historical baseline (not
    against a stale expectation the environment isolation this doc
