@@ -4,14 +4,29 @@ probe/recovery-audit evidence trail."""
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import tempfile
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from scout.result import Err, Ok
+from scout.scanning.lease import acquire_lease, generate_owner_id, reconcile_abandoned_owners
 from scout.storage.scans import EnvironmentLease, LeaseError
 from scout.storage.state import StateManager
+
+
+@pytest.fixture
+def file_backed_state() -> StateManager:
+    """acquire_lease's heartbeat handle opens its own connection to the
+    same db_path — ":memory:" is per-connection isolated, so lease-handle
+    tests need a real temp file to exercise the dedicated heartbeat
+    connection against the same durable state."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_path = os.path.join(tmp_dir, "lease_test.db")
+        with StateManager(db_path=db_path) as state:
+            yield state, db_path
 
 
 def _acquire(state: StateManager, environment: str, owner_id: str, *, ttl_seconds: float = 30):
@@ -324,3 +339,79 @@ class TestProbeAndRecoveryAudit:
         ).fetchone()
         assert row["outcome"] == "refused"
         assert row["detail"] == "no recent passed probe"
+
+
+class TestEnvironmentLeaseHandle:
+    async def test_heartbeat_renews_before_expiry(self, file_backed_state) -> None:
+        state, db_path = file_backed_state
+        owner_id = generate_owner_id()
+        result = acquire_lease(
+            state, environment="production", owner_id=owner_id, db_path=db_path,
+            ttl_seconds=0.6, heartbeat_interval_seconds=0.2,
+        )
+        assert isinstance(result, Ok)
+        handle = result.value
+        handle.start_heartbeat()
+        try:
+            import asyncio
+
+            await asyncio.sleep(1.0)
+            assert not handle.lost
+            assert handle.fence == 1
+        finally:
+            await handle.stop(release=True)
+
+    async def test_stop_without_release_leaves_lease_held(self, file_backed_state) -> None:
+        state, db_path = file_backed_state
+        owner_id = generate_owner_id()
+        result = acquire_lease(
+            state, environment="production", owner_id=owner_id, db_path=db_path,
+            ttl_seconds=30, heartbeat_interval_seconds=10,
+        )
+        assert isinstance(result, Ok)
+        handle = result.value
+        await handle.stop(release=False)
+
+        other = state.acquire_environment_lease("production", "someone-else", ttl_seconds=30)
+        assert isinstance(other, Err)
+
+    async def test_stop_with_release_allows_reacquire(self, file_backed_state) -> None:
+        state, db_path = file_backed_state
+        owner_id = generate_owner_id()
+        result = acquire_lease(
+            state, environment="production", owner_id=owner_id, db_path=db_path,
+            ttl_seconds=30, heartbeat_interval_seconds=10,
+        )
+        assert isinstance(result, Ok)
+        handle = result.value
+        await handle.stop(release=True)
+
+        other = state.acquire_environment_lease("production", "someone-else", ttl_seconds=30)
+        assert isinstance(other, Ok)
+
+    async def test_reconcile_abandoned_owners_helper_delegates(self, file_backed_state) -> None:
+        state, db_path = file_backed_state
+        first_owner = generate_owner_id()
+        first = acquire_lease(
+            state, environment="production", owner_id=first_owner, db_path=db_path,
+            ttl_seconds=30, heartbeat_interval_seconds=10,
+        )
+        assert isinstance(first, Ok)
+        abandoned_id = state.start_scan(environment="production", role="canonical_live")
+        await first.value.stop(release=False)
+
+        state.db.execute(
+            "UPDATE environment_leases SET expires_at = ? WHERE environment = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "production"),
+        )
+        state.db.commit()
+
+        second_owner = generate_owner_id()
+        second = acquire_lease(
+            state, environment="production", owner_id=second_owner, db_path=db_path,
+            ttl_seconds=30, heartbeat_interval_seconds=10,
+        )
+        assert isinstance(second, Ok)
+        reconciled = reconcile_abandoned_owners(state, second.value)
+        assert reconciled == [abandoned_id]
+        await second.value.stop(release=True)
