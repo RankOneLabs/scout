@@ -331,7 +331,12 @@ In the same finalization transaction, every covered source's
 for a retired source. The runner derives the `required`/`covered`
 normalized source-key sets it passes in from the platform layer's
 per-source `SourceFetchOutcome` evidence (`coverage.register_source_outcomes`
-get-or-creates a cold checkpoint row for every attempted source). A
+get-or-creates a cold checkpoint row for every attempted source, and
+seeds `required` from *every* active required checkpoint row, not only
+the attempted ones — an active required source this run never attempted
+gets a blocking `source_unattempted` failure row, so an unconfigured or
+skipped source blocks rather than silently dropping out of coverage;
+decommissioned sources must be retired explicitly). A
 required source the fetch did not cover is accepted as a `blocked`
 outcome only when persisted failure evidence explains it; missing
 coverage with no evidence at all is refused as a caller/evidence
@@ -425,8 +430,13 @@ regardless.
 
 `scout watermark probe`/`backfill`/`cutover` (`cli/watermark.py`) each
 acquire the environment lease the same way `main_loop` does, but as an
-exclusive **recovery lock** rather than a long-lived scan-loop
-possession: acquire, do the bounded work, release in a `finally`. A
+exclusive **recovery lock**: probe and backfill hold it through an
+`EnvironmentLeaseHandle` heartbeating on a dedicated connection (a slow
+probe cannot silently outlive the TTL) and re-check it before writing
+evidence; backfill's finalization and its audit row commit in one
+`begin_immediate()`, and a fetch exception or cancellation after the
+owner was committed makes that owner terminal and audits the refusal
+before the lock is released. A
 lock-contention refusal (`Err` from `acquire_environment_lease`) and every
 `cutover` attempt — accepted or refused — is appended to the immutable,
 trigger-guarded `recovery_operations` table before the command returns,

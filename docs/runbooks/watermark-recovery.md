@@ -23,8 +23,8 @@ environment's fenced lease as an exclusive recovery lock for the duration
 of the command, and both backfill and cutover attempts — accepted or
 refused — are appended to the immutable `recovery_operations` table.
 
-None of these commands perform any host-level willie action. Scout has no
-service manager, scheduler, or deployment tooling of its own in this
+None of these commands perform any host-level action on willie (the
+production host). Scout has no service manager, scheduler, or deployment tooling of its own in this
 repository — starting, stopping, or restarting the live worker process on
 whatever host runs it is an external operator responsibility, described in
 the prerequisites below.

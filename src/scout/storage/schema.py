@@ -168,6 +168,10 @@ LEASE_AND_RECOVERY_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TRIGGER IF NOT EXISTS recovery_operations_no_delete
         BEFORE DELETE ON recovery_operations BEGIN
         SELECT RAISE(ABORT, 'recovery_operations is immutable'); END""",
+    """CREATE TRIGGER IF NOT EXISTS recovery_operations_no_replace
+        BEFORE INSERT ON recovery_operations
+        WHEN EXISTS (SELECT 1 FROM recovery_operations WHERE id = NEW.id)
+        BEGIN SELECT RAISE(ABORT, 'recovery_operations is immutable'); END""",
 )
 
 # Shared by bootstrap and the additive v38 migration. Each statement executes

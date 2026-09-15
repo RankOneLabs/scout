@@ -11,15 +11,17 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 
-from scout.errors import SourceFetchOutcome
+from scout.errors import PlatformFetchFailure, SourceFetchOutcome
 from scout.result import Err, Ok, Result
 from scout.storage.scans import (
     CoverageFinalizationError,
     CoverageFinalizationResult,
     LeaseError,
     ScanRole,
+    SourceCheckpoint,
 )
 from scout.storage.state import StateManager
 
@@ -73,17 +75,37 @@ def commit_linked_secondary(
     return scan_id
 
 
+@dataclass(frozen=True, slots=True)
+class SourceCoverage:
+    """The normalized source-key sets finalization consumes, plus the
+    active required checkpoints this fetch never attempted at all."""
+
+    required: frozenset[str]
+    covered: frozenset[str]
+    unattempted: tuple[SourceCheckpoint, ...]
+
+
 def register_source_outcomes(
     state: StateManager, source_outcomes: Sequence[SourceFetchOutcome]
-) -> tuple[frozenset[str], frozenset[str]]:
+) -> SourceCoverage:
     """Get-or-create a checkpoint row for every source the fetch attempted
     (new sources start cold, per the coverage foundation) and derive the
-    (required, covered) normalized source-key sets finalization consumes:
-    required = attempted sources whose checkpoint is active and required;
-    covered = attempted sources whose pagination ended cleanly."""
+    sets finalization consumes.
+
+    `required` is seeded from every active, required checkpoint row — not
+    only from the sources this fetch happened to attempt — so a source
+    whose platform is unconfigured this run, or that a scanner skipped,
+    still counts against coverage. Such a source is returned in
+    `unattempted`; the caller records blocking evidence for it (see
+    `unattempted_source_failures`) so the scan finalizes `blocked` rather
+    than silently advancing past it. Decommissioned sources must be
+    retired explicitly (`retire_source_checkpoint`) to stop counting.
+    """
+    attempted: set[str] = set()
     required: set[str] = set()
     covered: set[str] = set()
     for outcome in source_outcomes:
+        attempted.add(outcome.source_key)
         checkpoint = state.ensure_source_checkpoint(
             outcome.source_key,
             platform=outcome.platform,
@@ -94,7 +116,36 @@ def register_source_outcomes(
             required.add(outcome.source_key)
         if outcome.covered:
             covered.add(outcome.source_key)
-    return frozenset(required), frozenset(covered)
+    unattempted = tuple(
+        checkpoint
+        for checkpoint in state.list_source_checkpoints(active_only=True)
+        if checkpoint.required and checkpoint.source_key not in attempted
+    )
+    required.update(checkpoint.source_key for checkpoint in unattempted)
+    return SourceCoverage(
+        required=frozenset(required), covered=frozenset(covered), unattempted=unattempted,
+    )
+
+
+def unattempted_source_failures(coverage: SourceCoverage) -> list[PlatformFetchFailure]:
+    """One blocking fetch failure per active required source the fetch
+    never attempted — the durable evidence that turns a missing source
+    into a `blocked` coverage outcome instead of a silent advance."""
+    return [
+        PlatformFetchFailure(
+            platform=checkpoint.platform,
+            kind="source_unattempted",
+            message=(
+                f"active required source {checkpoint.source_key} was not attempted by this "
+                "fetch; retire it if it has been decommissioned"
+            ),
+            context=checkpoint.source_key,
+            retryable=True,
+            operation_phase="fetch",
+            blocks_watermark_advance=True,
+        )
+        for checkpoint in coverage.unattempted
+    ]
 
 
 def record_interruption(

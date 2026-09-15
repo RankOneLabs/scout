@@ -153,6 +153,7 @@ class _FakeState(AbstractContextManager["_FakeState"]):
         self.reconcile_abandoned_canonical_owners = Mock(return_value=[])
         self.link_secondary_scan = Mock()
         self.start_canonical_owner_scan = Mock(return_value=Ok(1))
+        self.list_source_checkpoints = Mock(return_value=[])
         self.release_environment_lease = Mock(return_value=True)
         self.close = Mock()
         self.has_seen_message = Mock(return_value=False)

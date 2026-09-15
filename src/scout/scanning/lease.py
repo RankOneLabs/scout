@@ -118,12 +118,23 @@ class EnvironmentLeaseHandle:
         while True:
             if await self._wait_for_next_beat() or self._lost.is_set():
                 return
-            result = self._heartbeat_state.renew_environment_lease(
-                self.environment,
-                self.owner_id,
-                self._lease.fence,
-                ttl_seconds=self._ttl_seconds,
-            )
+            try:
+                result = self._heartbeat_state.renew_environment_lease(
+                    self.environment,
+                    self.owner_id,
+                    self._lease.fence,
+                    ttl_seconds=self._ttl_seconds,
+                )
+            except Exception:
+                # A renewal we could not even attempt (connection gone, disk
+                # error) is indistinguishable from a refused one for safety:
+                # the lease may have lapsed, so fail closed.
+                logger.error(
+                    "Lease heartbeat failed for environment=%s owner=%s; treating as lost",
+                    self.environment, self.owner_id, exc_info=True,
+                )
+                self._mark_lost()
+                return
             match result:
                 case Ok(lease):
                     self._lease = lease
@@ -136,10 +147,13 @@ class EnvironmentLeaseHandle:
                         "Lease heartbeat lost for environment=%s owner=%s: %s",
                         self.environment, self.owner_id, error.detail,
                     )
-                    self._lost.set()
-                    if self._on_lost is not None:
-                        self._on_lost()
+                    self._mark_lost()
                     return
+
+    def _mark_lost(self) -> None:
+        self._lost.set()
+        if self._on_lost is not None:
+            self._on_lost()
 
     async def stop(self, *, release: bool) -> None:
         """Stop the heartbeat task and, if requested and the lease was

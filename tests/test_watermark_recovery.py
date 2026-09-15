@@ -5,6 +5,7 @@ and exit-code contracts."""
 from __future__ import annotations
 
 import json
+import sqlite3
 from argparse import Namespace
 from datetime import UTC, datetime, timedelta
 
@@ -304,3 +305,99 @@ class TestCutover:
                 )
             )
             assert exit_code == watermark_cli.EXIT_LOCK_CONTENTION
+
+
+class TestBackfillFailureHandling:
+    def test_fetch_exception_leaves_a_terminal_owner_and_a_refused_audit_row(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+
+        async def exploding_fetch(*_args: object, **_kwargs: object):
+            raise RuntimeError("platform is on fire")
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", exploding_fetch)
+
+        with pytest.raises(RuntimeError, match="on fire"):
+            watermark_cli.run_watermark(_backfill_args(db_path))
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            scan = state.db.execute(
+                "SELECT status, watermark_advanced FROM scans ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert scan["status"] == "failed"
+            assert scan["watermark_advanced"] == 0
+            audit = state.db.execute(
+                "SELECT outcome, detail FROM recovery_operations ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert audit["outcome"] == "refused"
+            assert "RuntimeError" in audit["detail"]
+            # The lock was released on the way out.
+            from scout.result import Ok
+
+            assert isinstance(
+                state.acquire_environment_lease("production", "next", ttl_seconds=30), Ok
+            )
+
+    def test_audit_insert_failure_rolls_back_the_advance(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+
+        async def fake_fetch(*_args: object, **_kwargs: object):
+            return PlatformsFetch([], [])
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
+        original = StateManager.record_recovery_operation
+
+        def exploding_audit(self: StateManager, **kwargs: object):
+            if kwargs.get("outcome") == "accepted":
+                raise sqlite3.OperationalError("audit table unavailable")
+            return original(self, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(StateManager, "record_recovery_operation", exploding_audit)
+
+        with pytest.raises(sqlite3.OperationalError):
+            watermark_cli.run_watermark(_backfill_args(db_path))
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            assert state.get_last_scan_timestamp(environment="production") is None
+            scan = state.db.execute(
+                "SELECT watermark_advanced, coverage_outcome FROM scans ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert scan["watermark_advanced"] == 0
+            assert scan["coverage_outcome"] is None
+
+    def test_unattempted_active_required_source_blocks_backfill(
+        self, db_path: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(
+            watermark_cli, "build_platform_scanners", lambda **_kw: (None, None, None)
+        )
+
+        async def fake_fetch(*_args: object, **_kwargs: object):
+            return PlatformsFetch([], [])
+
+        monkeypatch.setattr(watermark_cli, "fetch_messages", fake_fetch)
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            state.ensure_source_checkpoint(
+                "discord:channel:9", platform="discord", source_kind="channel", provider_key="9",
+            )
+
+        exit_code = watermark_cli.run_watermark(_backfill_args(db_path))
+        assert exit_code == watermark_cli.EXIT_SOURCE_OR_PROBE_FAILURE
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["unattempted_active_sources"] == ["discord:channel:9"]
+
+        with StateManager(db_path=db_path, init_schema=False) as state:
+            assert state.get_last_scan_timestamp(environment="production") is None
+            scan = state.db.execute(
+                "SELECT coverage_outcome FROM scans ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert scan["coverage_outcome"] == "blocked"
+            failures = state.get_scan_fetch_failures(1)
+            assert any(f["kind"] == "source_unattempted" for f in failures)

@@ -122,6 +122,17 @@ class DiscordScanner:
 
                         if not isinstance(channel, discord.TextChannel):
                             logger.warning("Channel %d is not a text channel, skipping", ch_id)
+                            failure = PlatformFetchFailure(
+                                platform="discord",
+                                kind="config_error",
+                                message=f"Channel {ch_id} is not a text channel",
+                                context=f"channel:{ch_id}",
+                                retryable=False,
+                                operation_phase="fetch",
+                                blocks_watermark_advance=True,
+                            )
+                            failures.append(failure)
+                            outcomes.append(_outcome(ch_id, 0, "failure", failure))
                             continue
 
                         count = 0

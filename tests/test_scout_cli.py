@@ -194,3 +194,27 @@ class TestWatermarkArgParsing:
         )
         with pytest.raises(SystemExit):
             scout_cli.parse_args()
+
+
+    def test_backfill_rejects_a_non_positive_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "scout", "watermark", "backfill", "--environment", "production",
+                "--operator", "steve", "--rationale", "r", "--hours", "-1",
+            ],
+        )
+        with pytest.raises(SystemExit):
+            scout_cli.parse_args()
+
+    def test_probe_rejects_a_zero_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scout.cli.main as scout_cli
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["scout", "watermark", "probe", "--environment", "production", "--hours", "0"],
+        )
+        with pytest.raises(SystemExit):
+            scout_cli.parse_args()

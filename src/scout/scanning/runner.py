@@ -1463,10 +1463,13 @@ async def main_loop(args: argparse.Namespace) -> None:
                         all_messages = fetched.messages
                         fetch_failures = list(fetched.failures)
                         lease_handle.check()
-                        required_source_keys, covered_source_keys = (
-                            coverage_lifecycle.register_source_outcomes(
-                                state, fetched.source_outcomes
-                            )
+                        source_coverage = coverage_lifecycle.register_source_outcomes(
+                            state, fetched.source_outcomes
+                        )
+                        required_source_keys = source_coverage.required
+                        covered_source_keys = source_coverage.covered
+                        fetch_failures.extend(
+                            coverage_lifecycle.unattempted_source_failures(source_coverage)
                         )
 
                         all_unseen = (

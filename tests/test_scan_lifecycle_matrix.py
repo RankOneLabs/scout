@@ -317,3 +317,29 @@ async def test_no_transaction_is_open_across_any_await_boundary(
         "continuous_sleep": True,
     }
     h.close()
+
+
+async def test_unattempted_active_required_source_blocks_the_live_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """An active required checkpoint whose platform this run never attempted
+    counts against coverage — blocking evidence is recorded and the
+    watermark does not advance, instead of the source silently dropping out
+    of the required set."""
+    h = Harness(monkeypatch, tmp_path, name="unattempted")
+    h.state.ensure_source_checkpoint(
+        "discord:channel:9", platform="discord", source_kind="channel", provider_key="9",
+    )
+    h.fetch(PlatformsFetch([_message("m1")], [], (_outcome("bluesky:search:agent"),)), monkeypatch)
+
+    await scan_runner.main_loop(_args())
+
+    (row,) = h.scans()
+    assert row["coverage_outcome"] == "blocked"
+    assert row["watermark_advanced"] == 0
+    failures = h.state.get_scan_fetch_failures(row["id"])
+    assert any(
+        f["kind"] == "source_unattempted" and f["context"] == "discord:channel:9"
+        for f in failures
+    )
+    h.close()

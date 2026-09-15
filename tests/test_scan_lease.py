@@ -654,3 +654,55 @@ class TestEnvironmentLeaseHandle:
         reconciled = reconcile_abandoned_owners(state, second.value)
         assert reconciled == [abandoned_id]
         await second.value.stop(release=True)
+
+
+class TestHeartbeatFailureIsLeaseLoss:
+    async def test_renewal_exception_marks_the_lease_lost(self, file_backed_state) -> None:
+        state, db_path = file_backed_state
+        heartbeat_state = StateManager(db_path=db_path, init_schema=False)
+        result = acquire_lease(
+            state, environment="production", owner_id=generate_owner_id(),
+            heartbeat_state=heartbeat_state, ttl_seconds=30, heartbeat_interval_seconds=0.01,
+        )
+        assert isinstance(result, Ok)
+        handle = result.value
+
+        def explode(*_a: object, **_k: object):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        heartbeat_state.renew_environment_lease = explode  # type: ignore[method-assign]
+        lost_callbacks: list[bool] = []
+        handle.start_heartbeat(on_lost=lambda: lost_callbacks.append(True))
+        import asyncio
+
+        for _ in range(50):
+            if handle.lost:
+                break
+            await asyncio.sleep(0.01)
+        assert handle.lost
+        assert lost_callbacks == [True]
+        with pytest.raises(Exception, match="lost"):
+            handle.check()
+        await handle.stop(release=False)
+        heartbeat_state.close()
+
+
+class TestRecoveryOperationsCannotBeReplaced:
+    def test_insert_or_replace_on_an_existing_id_is_refused(
+        self, in_memory_state: StateManager
+    ) -> None:
+        audit_id = in_memory_state.record_recovery_operation(
+            environment="production", operation="backfill", operator="steve",
+            rationale="r", outcome="accepted",
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            in_memory_state.db.execute(
+                "INSERT OR REPLACE INTO recovery_operations "
+                "(id, environment, operation, operator, rationale, outcome, created_at) "
+                "VALUES (?, 'production', 'backfill', 'mallory', 'rewritten', 'refused', 'now')",
+                (audit_id,),
+            )
+        row = in_memory_state.db.execute(
+            "SELECT operator FROM recovery_operations WHERE id = ?", (audit_id,)
+        ).fetchone()
+        assert row["operator"] == "steve"
