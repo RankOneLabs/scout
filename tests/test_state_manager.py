@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sqlite3
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from datetime import UTC, datetime
 import pytest
 
 from scout.config import Message
+from scout.result import Ok
 from scout.storage.migrations import AutonomyEventsNotEmptyError
 from scout.storage.state import (
     LATEST_SCHEMA_VERSION,
@@ -1347,4 +1349,94 @@ class TestCoverageFoundationMigration:
             assert state.get_last_scan_timestamp(environment="production") == (
                 datetime.fromisoformat("2026-01-01T00:00:00+00:00")
             )
+
+
+class TestOperatorFactReadModel:
+    """The web dashboard (web/lib/queries.ts) reads scan_watermark_blockers,
+    source_checkpoints, environment_leases, source_probe_runs, and
+    recovery_operations directly via raw SQL, never through StateManager —
+    these tests pin the exact row shapes (column names, and which columns
+    are the SQLite-integer booleans the web layer must coerce) that
+    contract depends on, so a schema change that breaks it fails here
+    rather than silently in the UI."""
+
+    def test_scan_watermark_blockers_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.acquire_environment_lease("production", "owner", ttl_seconds=300)
+        scan_id = in_memory_state.start_scan(environment="production", run_kind="live")
+        in_memory_state.complete_scan(scan_id, 1, 0, status="complete")
+        in_memory_state.save_fetch_failure(
+            scan_id=scan_id, platform="discord", kind="page_ceiling", message="ceiling",
+            operation_phase="fetch", blocks_watermark_advance=True,
+        )
+        in_memory_state.commit()
+        result = in_memory_state.finalize_scan_coverage(
+            scan_id, environment="production", advance_watermark=True, owner_id="owner",
+            coverage_classifier_version=1,
+        )
+        assert isinstance(result, Ok)
+        assert result.value.coverage_outcome == "blocked"
+
+        row = in_memory_state.conn.execute(
+            "SELECT scan_id, failure_id, created_at FROM scan_watermark_blockers"
+        ).fetchone()
+        assert row["scan_id"] == scan_id
+        assert row["created_at"] is not None
+
+    def test_source_checkpoints_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.ensure_source_checkpoint(
+            "discord:channel:123", platform="discord", source_kind="channel",
+            provider_key="123", required=True,
+        )
+        row = in_memory_state.conn.execute(
+            "SELECT source_key, platform, source_kind, provider_key, required, active, "
+            "checkpoint_at, bootstrapped_from_legacy FROM source_checkpoints "
+            "WHERE source_key = 'discord:channel:123'"
+        ).fetchone()
+        assert row["required"] in (0, 1)
+        assert row["active"] in (0, 1)
+        assert row["bootstrapped_from_legacy"] in (0, 1)
+        assert row["checkpoint_at"] is None
+
+    def test_environment_leases_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.acquire_environment_lease("production", "owner-1", ttl_seconds=300)
+        row = in_memory_state.conn.execute(
+            "SELECT environment, fence, owner_id, expires_at, updated_at "
+            "FROM environment_leases WHERE environment = 'production'"
+        ).fetchone()
+        assert row["fence"] == 1
+        assert row["owner_id"] == "owner-1"
+        assert row["expires_at"] is not None
+
+    def test_source_probe_runs_row_shape(self, in_memory_state: StateManager) -> None:
+        probe_id = in_memory_state.start_probe_run(
+            "production", source_count=2, window_hours=6.0, limits_json="{}",
+        )
+        in_memory_state.complete_probe_run(
+            probe_id, passed=True, page_count=4, detail_json='{"ok": true}',
+        )
+        row = in_memory_state.conn.execute(
+            "SELECT environment, started_at, completed_at, passed, source_count, "
+            "page_count, window_hours, limits_json, detail_json FROM source_probe_runs "
+            "WHERE id = ?",
+            (probe_id,),
+        ).fetchone()
+        assert row["passed"] == 1
+        assert row["page_count"] == 4
+        json.loads(row["limits_json"])
+        json.loads(row["detail_json"])
+
+    def test_recovery_operations_row_shape(self, in_memory_state: StateManager) -> None:
+        in_memory_state.record_recovery_operation(
+            environment="production", operation="backfill", operator="steve",
+            rationale="recover from gap", outcome="accepted",
+        )
+        row = in_memory_state.conn.execute(
+            "SELECT environment, operation, operator, rationale, policy, source_evidence, "
+            "probe_run_id, expected_old_watermark, accepted_new_watermark, outcome, detail, "
+            "created_at FROM recovery_operations"
+        ).fetchone()
+        assert row["operation"] == "backfill"
+        assert row["outcome"] == "accepted"
+        assert row["policy"] is None
+        assert row["created_at"] is not None
 

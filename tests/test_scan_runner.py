@@ -2012,6 +2012,67 @@ async def test_page_ceiling_only_failure_scan_stays_partial_and_reuses_watermark
     real_state.close()
 
 
+@pytest.mark.asyncio
+async def test_non_blocking_parent_lookup_failure_degrades_status_without_blocking_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A parent_lookup failure is permanent non-primary enrichment
+    degradation, not a primary coverage blocker (decision 4): the scan's
+    processing `status` still degrades to 'partial' (something did fail),
+    but coverage_outcome and watermark_advanced are independently
+    'complete'/True — the two facts must never collapse into each other."""
+    db_path = str(tmp_path / "parent_lookup_degradation.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+    failure = PlatformFetchFailure(
+        platform="bluesky",
+        kind="parent_lookup_failed",
+        message="parent post lookup timed out",
+        context="at://did:plc:example/app.bsky.feed.post/1",
+        retryable=True,
+        operation_phase="parent_lookup",
+        blocks_watermark_advance=False,
+    )
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages",
+        AsyncMock(return_value=PlatformsFetch([_message("m1", datetime.now(UTC))], [failure])),
+    )
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES",
+        {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+    monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
+    monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=False)
+    await scan_runner.main_loop(args)
+
+    scan_row = real_state.conn.execute(
+        "SELECT id, status, coverage_outcome, watermark_advanced, safe_watermark_at "
+        "FROM scans ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert scan_row is not None
+    assert scan_row["status"] == "partial"
+    assert scan_row["coverage_outcome"] == "complete"
+    assert scan_row["watermark_advanced"] == 1
+    assert scan_row["safe_watermark_at"] is not None
+
+    failures = real_state.get_scan_fetch_failures(scan_row["id"])
+    assert len(failures) == 1
+    assert failures[0]["operation_phase"] == "parent_lookup"
+    assert failures[0]["blocks_watermark_advance"] is False
+
+    real_state.close()
+
+
 # ---------------------------------------------------------------------------
 # T-001: classify_outcome -> persist_outcome full-transaction integration
 # matrix, real file-backed StateManager, real dossier. No mocks of
