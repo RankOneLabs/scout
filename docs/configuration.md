@@ -38,6 +38,20 @@ Each configured `BLUESKY_FEED_URIS` entry adds another paginated request
 stream. Adding keywords or languages therefore increases rate-limit exposure
 multiplicatively.
 
+## Owned scan lifecycle and lease-based recovery
+
+| Variable | Default | Description |
+|---|---:|---|
+| `SCOUT_LEASE_TTL_SECONDS` | `120` | TTL a canonical live owner's environment lease is granted for on acquire, and extended to on each heartbeat renewal |
+| `SCOUT_LEASE_HEARTBEAT_SECONDS` | `30` | Interval between heartbeat renewals; must leave room for at least 2 missed heartbeats within `SCOUT_LEASE_TTL_SECONDS` |
+| `SCOUT_RECOVERY_LOCK_TTL_SECONDS` | `1800` | TTL of the exclusive recovery lock `scout watermark probe`/`backfill`/`cutover` hold for one operator invocation |
+| `SCOUT_CUTOVER_PROBE_MAX_AGE_SECONDS` | `3600` | How recent a passed six-hour probe must be to gate a controlled cutover |
+| `SCOUT_BACKFILL_MAX_PAGES_PER_SOURCE` | `20` | Bounded-backfill page ceiling per source |
+| `SCOUT_STALE_WATERMARK_HOURS` | `24` | A canonical live watermark older than this is reported stale by `scout watermark stale-check` |
+
+See `docs/runbooks/watermark-recovery.md` for the operational procedure
+these gate — probe, bounded backfill, and controlled cutover.
+
 ## Model routing
 
 | Variable | Default | Description |

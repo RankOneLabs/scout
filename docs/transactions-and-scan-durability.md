@@ -280,6 +280,125 @@ changes the per-post atomic unit described above — a `failed` scan can
 still contain any number of fully durable surfaced/terminal outcomes from
 posts processed before the failing one.
 
+## Owned scan lifecycle: the canonical owner, the lease, and recovery
+
+`scanning/lease.py`, `scanning/coverage.py`, and `ScanStore`'s lease/
+recovery methods (`scans.py`) extend the transaction discipline above with
+one more invariant: **exactly one canonical live fetch-owner scan is
+durably committed before any platform I/O begins**, and its terminal
+status is always resolved through the same commit-then-finalize path
+described below — success, empty success, a processing exception, or
+cancellation.
+
+### The environment lease is a fenced compare-and-set, not a mutex
+
+`environment_leases` (one row per environment) carries a monotonic `fence`
+alongside `owner_id`/`expires_at`. `acquire_environment_lease` is a single
+`begin_immediate()` unit: it bumps `fence` and installs the caller as
+holder only when no one currently holds an unexpired lease for that
+environment; otherwise it returns `Err` without mutating anything.
+`renew_environment_lease` is a narrower CAS — `WHERE environment=? AND
+owner_id=? AND fence=? AND expires_at > ?` — that never bumps the fence,
+so a heartbeat can extend an already-held lease without re-fencing
+in-flight scans. `release_environment_lease` clears the holder but,
+deliberately, does not bump the fence either; the next `acquire` always
+bumps it regardless of whether it found a released or an expired holder,
+which is simpler to reason about and always safe (fencing only needs
+monotonicity, not a bump on every state change).
+
+Every `scans` row snapshots the environment's fence at `start_scan()` time
+into `scans.lease_fence`. `finalize_scan_coverage` (still the sole path
+that can ever set `watermark_advanced`) re-reads the environment's
+*current* fence inside its own `begin_immediate()` and refuses to advance
+unless the scan's stored fence still matches — a worker that lost its
+lease mid-scan (renewal refused, or another worker took over after this
+worker's lease expired) can never advance the watermark even if it
+finishes processing and calls `finalize_scan_coverage` anyway.
+
+### Reconciliation only touches strictly older, non-terminal, same-environment scans
+
+`reconcile_abandoned_canonical_owners(environment, current_fence)` runs in
+one `begin_immediate()`: it selects `role='canonical_live' AND
+completed_at IS NULL AND lease_fence < current_fence` for the given
+environment only, marks each `status='interrupted'`, and inserts a
+blocking `scan_fetch_failures` row for each — the same evidence shape
+`fail_scan` produces. A scan with `lease_fence == current_fence` (the
+current holder's own possibly-still-running scan) and every row in any
+other environment are structurally excluded from the `WHERE` clause, not
+filtered after the fact.
+
+### Commit-before-I/O and the four terminal paths
+
+`main_loop` acquires the environment lease and runs reconciliation once,
+before entering its scan loop, then renews the lease at the top of every
+iteration — a short CAS on the primary connection, never spanning an
+`await`. For a live (non-`--rescore`/`--rescore-failed`) iteration,
+`coverage.commit_canonical_owner` — a plain `start_scan(role=
+'canonical_live')` — runs and commits *before* `fetch_messages` is
+awaited. From that point on, exactly one of four things finalizes that
+scan:
+
+1. **Success with candidates.** The existing per-post durability
+   described above runs, `complete_scan()` records processing status, and
+   `coverage.finalize_owner` (wrapping `finalize_scan_coverage` +
+   `mark_coverage_finalization_failed` on `Err`) runs once, only for this
+   canonical-owner scan.
+2. **Empty success.** A zero-message, fully covered fetch skips
+   `complete_scan`'s normal counters straight to `finalize_empty_success`
+   — `complete_scan(0, 0, status="complete")` then the same
+   `finalize_owner` call — without ever constructing a tracer, feedback
+   loop, model client, or digest.
+3. **Processing exception.** The existing `except Exception` handler (see
+   "Outcome-persistence failure and cancellation abort the scan" above)
+   already ran `fail_scan(active_scan_id, ...)` before this cohort; moving
+   `active_scan_id`'s assignment to the pre-fetch commit means this same
+   handler now also covers an exception raised by `fetch_messages` itself,
+   not just by scoring.
+4. **Cancellation during fetch.** `asyncio.CancelledError` is a
+   `BaseException`, not an `Exception` — it would otherwise skip every
+   handler below it. `main_loop` has an explicit `except
+   asyncio.CancelledError` clause, ahead of `except KeyboardInterrupt`,
+   that records the same `fail_scan` evidence and unconditionally
+   re-raises.
+
+In every one of these four paths, `fail_scan`/`finalize_scan_coverage`'s
+own eligibility checks mean a scan that lost its lease mid-flight still
+becomes durably terminal with auditable evidence, but never advances the
+watermark — the fence check inside `finalize_scan_coverage` is the actual
+safety net; the terminal-status write is for operator visibility and
+`reconcile_abandoned_canonical_owners` on the next process start.
+
+### `--mode both` linkage and rescore/rescore-failed
+
+The first mode pass of a live scan reuses the pre-committed canonical
+owner's `scan_id`. Any later pass (`--mode both`'s second pass) commits a
+new row via `coverage.commit_linked_secondary` with `role='secondary'`
+and `canonical_scan_id` pointing at the owner — `finalize_scan_coverage`
+already refuses any non-`canonical_live` role, so only the first pass's
+`finalize_owner` call is ever reached; later passes just call
+`complete_scan`. `--rescore`/`--rescore-failed` runs have no canonical
+owner at all (no live fetch happened) — each pass is its own independent
+`role='rescore'` scan, structurally ineligible for coverage finalization
+regardless.
+
+### Recovery operations hold the lease as an exclusive lock
+
+`scout watermark probe`/`backfill`/`cutover` (`cli/watermark.py`) each
+acquire the environment lease the same way `main_loop` does, but as an
+exclusive **recovery lock** rather than a long-lived scan-loop
+possession: acquire, do the bounded work, release in a `finally`. A
+lock-contention refusal (`Err` from `acquire_environment_lease`) and every
+`cutover` attempt — accepted or refused — is appended to the immutable,
+trigger-guarded `recovery_operations` table before the command returns,
+so a rejected attempt is exactly as auditable as an accepted one.
+`cutover_watermark` is its own `begin_immediate()` unit: it re-validates
+the caller's lease is still the current, unexpired holder, re-reads the
+live cursor and compares it against the caller-supplied `expected_old`
+watermark (a compare-and-set against a value the caller observed
+separately, before requesting cutover — the classic TOCTOU gap this
+closes), and only then inserts the synthetic, already-`watermark_advanced
+=1` `scans` row that becomes the new cursor.
+
 ## Grade-corpus audit: read-only dry run, all-or-nothing apply
 
 `scripts/grade_corpus_audit.py` has two independent read paths and one
