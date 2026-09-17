@@ -15,6 +15,7 @@ from scout.config import (
     FARCASTER_MAX_PAGES,
     FARCASTER_SIGNER_UUID,
     NEYNAR_API_URL,
+    Account,
     Message,
     PublishedPost,
 )
@@ -594,16 +595,27 @@ class FarcasterScanner:
         channel: dict[str, object] = cast.get("channel") or {}  # type: ignore[assignment]
         username = str(author.get("username", ""))
         url = f"https://warpcast.com/{username}/{cast_hash[:10]}" if username else ""
+        profile = author.get("profile")
+        profile_data = profile if isinstance(profile, dict) else {}
+        bio = profile_data.get("bio")
+        bio_data = bio if isinstance(bio, dict) else {}
+
+        def optional_int(value: object) -> int | None:
+            return int(value) if isinstance(value, (int, str)) else None
 
         return Message(
             platform="farcaster",
             platform_id=cast_hash,
             channel_name=str(channel.get("id", "home")),
             channel_id=str(channel.get("id", "")),
-            author_name=str(
-                author.get("display_name", author.get("username", "unknown")),
+            author=Account(
+                platform="farcaster", id=str(author.get("fid", "")),
+                name=str(author.get("display_name", author.get("username", "unknown"))),
+                handle=username or None,
+                bio=str(bio_data["text"]) if bio_data.get("text") is not None else None,
+                followers=optional_int(author.get("follower_count")),
+                following=optional_int(author.get("following_count")),
             ),
-            author_id=str(author.get("fid", "")),
             content=text,
             created_at=created_at,
             url=url,

@@ -316,11 +316,20 @@ def build_search_queries(keywords: tuple[KeywordRoute, ...]) -> list[str]:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceAuthor:
-    """Platform-neutral author identity."""
+class Account:
+    """Platform-neutral account profile observed alongside a message."""
 
+    platform: str
     id: str
     name: str
+    handle: str | None
+    bio: str | None = None
+    followers: int | None = None
+    following: int | None = None
+    posts: int | None = None
+    created_at: datetime | None = None
+    verified: bool | None = None
+    observed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,7 +337,7 @@ class SourceParent:
     """Immediate parent post context resolved from a reply reference."""
 
     id: str
-    author: SourceAuthor
+    author: Account
     text: str
     url: str
 
@@ -341,13 +350,20 @@ class Message:
     platform_id: str  # Platform-specific message ID
     channel_name: str
     channel_id: str
-    author_name: str
-    author_id: str
+    author: Account
     content: str
     created_at: datetime
     url: str = ""
     parent: SourceParent | None = None
     parent_lookup_status: str = "not_applicable"  # not_applicable | resolved | failed
+
+    @property
+    def author_name(self) -> str:
+        return self.author.name
+
+    @property
+    def author_id(self) -> str:
+        return self.author.id
 
 
 @dataclass(frozen=True, slots=True)

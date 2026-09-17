@@ -13,7 +13,7 @@ import os
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -97,7 +97,7 @@ from scout.scanning.agent import (
     build_scout_phase_configs,
     resolve_mode_for_message,
 )
-from scout.scanning.author_class import classify_author, handle_from_url
+from scout.scanning.author_class import classify_author
 from scout.scanning.digest import (
     append_to_digest,
     finalize_digest,
@@ -811,7 +811,7 @@ def _annotate_author(state: StateManager, msg: Message) -> None:
     """
     if not msg.author_id:
         return
-    classification = classify_author(msg.author_name, handle_from_url(msg.url))
+    classification = classify_author(msg.author.name, msg.author.handle)
     try:
         state.record_author_classification(
             platform=msg.platform,
@@ -982,6 +982,15 @@ async def score_messages(
             continue
 
         _annotate_author(state, msg)
+        try:
+            account = msg.author
+            if account.observed_at is None:
+                account = replace(account, observed_at=msg.created_at)
+            state.record_account_snapshot(account)
+        except (sqlite3.Error, ValueError):
+            logger.warning(
+                "account snapshot failed for %s:%r", msg.platform, msg.author_id, exc_info=True
+            )
 
         # Author blocks are checked from live SQLite state for every candidate,
         # so a block added from the web UI also stops later items in an active

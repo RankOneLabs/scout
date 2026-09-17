@@ -30,6 +30,7 @@ from paa_runtime.events import (
 )
 
 from scout.config import (
+    Account,
     CritiqueLesson,
     GradeRecord,
     GradingSignal,
@@ -40,6 +41,7 @@ from scout.config import (
 from scout.grading.feedback import FeedbackMode, PersistedFeedbackSnapshot, PhaseFeedbackBundle
 from scout.registry import RuntimeRegistry
 from scout.result import Result
+from scout.storage.accounts import AccountStore
 from scout.storage.artifacts import ArtifactStore
 from scout.storage.db import Db
 from scout.storage.evaluations import (
@@ -188,6 +190,7 @@ class StateManager:
         self._grades = GradeStore(self._uow, evaluations=self._evaluations)
         self._registry = RegistryStore(self._uow)
         self._artifacts = ArtifactStore(self._uow)
+        self._accounts = AccountStore(self._uow)
 
     @property
     def db(self) -> Db:
@@ -233,6 +236,16 @@ class StateManager:
     def artifacts(self) -> ArtifactStore:
         """Exact retained analysis bytes and immutable producer lineage."""
         return self._artifacts
+
+    @property
+    def accounts(self) -> AccountStore:
+        return self._accounts
+
+    def record_account_snapshot(self, account: Account) -> bool:
+        return self._accounts.record_account_snapshot(account)
+
+    def latest_account(self, platform: str, account_id: str) -> Account | None:
+        return self._accounts.latest_account(platform, account_id)
 
     @property
     def registry(self) -> RegistryStore:

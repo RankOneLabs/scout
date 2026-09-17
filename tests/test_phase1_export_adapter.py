@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from jig import NullFeedbackLoop, ScoreSource, SQLiteFeedbackLoop
 
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.evals.phase1.export_adapter import (
     CANONICAL_FAILURE_DIMENSIONS,
     ExportedGradeRejected,
@@ -461,8 +461,12 @@ def _seed_graded_evaluation(state: StateManager) -> None:
         platform_id="projection-guard-1",
         channel_name="general",
         channel_id="ch-1",
-        author_name="alice",
-        author_id="u1",
+        author=Account(
+            platform="discord",
+            id="u1",
+            name="alice",
+            handle=None,
+        ),
         content="how do I configure the gateway?",
         created_at=datetime.now(UTC),
     )

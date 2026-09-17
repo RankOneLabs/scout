@@ -11,7 +11,7 @@ import pytest
 from jig import FeedbackQuery, Score, ScoreSource, SQLiteFeedbackLoop
 
 import scout.evals.phase1.jig_exporter as jig_exporter
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.evals.phase1.export_adapter import CANONICAL_FAILURE_DIMENSIONS
 from scout.evals.phase1.jig_exporter import (
     JigRebuildError,
@@ -46,8 +46,12 @@ def _seed_message(state: StateManager, platform_id: str) -> Message:
         platform_id=platform_id,
         channel_name="general",
         channel_id="ch-1",
-        author_name="alice",
-        author_id="u1",
+        author=Account(
+            platform="discord",
+            id="u1",
+            name="alice",
+            handle=None,
+        ),
         content="how do I configure the gateway?",
         created_at=datetime.now(UTC),
     )

@@ -34,10 +34,10 @@ import scout.scanning.runner as scan_runner
 from scout.config import (
     MODES,
     SCAN_INTERVAL_HOURS,
+    Account,
     GradeRecord,
     Message,
     ModeConfig,
-    SourceAuthor,
     SourceParent,
 )
 from scout.dossiers.resolver import (
@@ -197,8 +197,12 @@ def _message(platform_id: str, created_at: datetime) -> Message:
         platform_id=platform_id,
         channel_name="bluesky",
         channel_id="",
-        author_name="author",
-        author_id="author-id",
+        author=Account(
+            platform="bluesky",
+            id="author-id",
+            name="author",
+            handle=None,
+        ),
         content=f"message {platform_id}",
         created_at=created_at,
     )
@@ -1256,7 +1260,10 @@ async def test_author_is_annotated_before_the_block_check(
     now = datetime.now(UTC)
     msg = replace(
         _message("annotated-poster", now),
-        author_name="Some Feed",
+        author=replace(
+            _message("annotated-poster", now).author,
+            name="Some Feed", handle="daily-links.bsky.social",
+        ),
         url="https://bsky.app/profile/daily-links.bsky.social/post/abc",
     )
     scan_id = in_memory_state.start_scan()
@@ -1297,6 +1304,8 @@ async def test_author_is_annotated_before_the_block_check(
         AUTHOR_CLASS_RULE_VERSION,
         "Feed",
     )
+    rows = in_memory_state.conn.execute("SELECT platform, account_id FROM accounts").fetchall()
+    assert [tuple(row) for row in rows] == [(msg.platform, msg.author_id)]
 
 
 @pytest.mark.asyncio
@@ -2542,7 +2551,9 @@ def test_t001_surfaced_persists_when_duplicate_post_upgrades_parent(
 
         parent = SourceParent(
             id="parent-1",
-            author=SourceAuthor(id="parent-author", name="Parent Author"),
+            author=Account(
+                platform="bluesky", id="parent-author", name="Parent Author", handle=None,
+            ),
             text="original parent text",
             url="https://example.com/parent",
         )
@@ -2882,8 +2893,12 @@ def _t002_message(platform_id: str, when: datetime) -> Message:
         platform_id=platform_id,
         channel_name="general",
         channel_id="c1",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="discord",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content=f"message {platform_id}",
         created_at=when,
     )

@@ -3180,6 +3180,14 @@ def _migrate_to_45(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_46(conn: sqlite3.Connection) -> None:
+    """Dated account profile snapshots (v46)."""
+    from scout.storage.schema import ACCOUNT_SCHEMA_STATEMENTS
+
+    for statement in ACCOUNT_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3225,4 +3233,5 @@ MIGRATIONS: dict[int, Migration] = {
     43: _migrate_to_43,
     44: _migrate_to_44,
     45: _migrate_to_45,
+    46: _migrate_to_46,
 }

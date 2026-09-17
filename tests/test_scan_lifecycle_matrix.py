@@ -19,7 +19,7 @@ import pytest
 
 import scout.config as config
 import scout.scanning.runner as scan_runner
-from scout.config import Message
+from scout.config import Account, Message
 from scout.errors import PlatformFetchFailure, SourceFetchOutcome
 from scout.registry import KeywordRoute, RuntimeRegistry
 from scout.result import Err, Ok
@@ -38,7 +38,12 @@ def _registry() -> RuntimeRegistry:
 def _message(platform_id: str) -> Message:
     return Message(
         platform="bluesky", platform_id=platform_id, channel_name="bluesky", channel_id="",
-        author_name="author", author_id="author-id", content=f"agent message {platform_id}",
+        author=Account(
+            platform="bluesky",
+            id="author-id",
+            name="author",
+            handle=None,
+        ), content=f"agent message {platform_id}",
         created_at=datetime.now(UTC),
     )
 
