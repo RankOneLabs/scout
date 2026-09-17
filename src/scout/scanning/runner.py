@@ -891,6 +891,9 @@ async def score_messages(
         try:
             return await task
         except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if not cancel and current is not None and current.cancelling():
+                raise
             return None
         except Exception:
             logger.warning("typesafe shadow task failed", exc_info=True)
