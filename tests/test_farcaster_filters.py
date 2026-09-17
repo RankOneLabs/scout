@@ -97,3 +97,17 @@ class TestCastToMessage:
         msg = FarcasterScanner._cast_to_message(cast, "test", datetime.now(UTC))
         assert msg.author_name == "unknown"
         assert msg.url == ""  # no username → no URL
+
+    def test_malformed_follower_counts_are_ignored(self) -> None:
+        cast: dict[str, object] = {
+            "hash": "0xfff",
+            "author": {
+                "username": "alice",
+                "fid": 1,
+                "follower_count": "not-a-number",
+                "following_count": "12",
+            },
+        }
+        msg = FarcasterScanner._cast_to_message(cast, "test", datetime.now(UTC))
+        assert msg.author.followers is None
+        assert msg.author.following == 12

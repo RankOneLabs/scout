@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 
 from scout.config import Account
 from scout.storage.unit_of_work import UnitOfWork
@@ -21,8 +21,15 @@ class AccountStore:
 
     def record_account_snapshot(self, account: Account) -> bool:
         """Record one observed account state; return whether a row was inserted."""
+        if not account.platform.strip():
+            raise ValueError("account.platform must be non-empty")
+        if not account.id.strip():
+            raise ValueError("account.id must be non-empty")
         if account.observed_at is None:
             raise ValueError("account.observed_at is required for a snapshot")
+        if account.observed_at.utcoffset() is None:
+            raise ValueError("account.observed_at must be timezone-aware")
+        observed_at = account.observed_at.astimezone(UTC)
         with self._uow.begin():
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO accounts "
@@ -32,7 +39,7 @@ class AccountStore:
                 (
                     account.platform,
                     account.id,
-                    account.observed_at.isoformat(),
+                    observed_at.isoformat(),
                     account.name,
                     account.handle,
                     account.bio,

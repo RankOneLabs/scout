@@ -601,7 +601,12 @@ class FarcasterScanner:
         bio_data = bio if isinstance(bio, dict) else {}
 
         def optional_int(value: object) -> int | None:
-            return int(value) if isinstance(value, (int, str)) else None
+            if not isinstance(value, (int, str)):
+                return None
+            try:
+                return int(value)
+            except ValueError:
+                return None
 
         return Message(
             platform="farcaster",

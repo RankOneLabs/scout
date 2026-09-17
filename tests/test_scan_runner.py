@@ -1266,6 +1266,11 @@ async def test_author_is_annotated_before_the_block_check(
         ),
         url="https://bsky.app/profile/daily-links.bsky.social/post/abc",
     )
+    second_msg = replace(
+        msg,
+        platform_id="annotated-poster-2",
+        created_at=now - timedelta(days=1),
+    )
     scan_id = in_memory_state.start_scan()
     in_memory_state.block_author(platform=msg.platform, author_id=msg.author_id)
     run_mock = AsyncMock()
@@ -1276,10 +1281,13 @@ async def test_author_is_annotated_before_the_block_check(
     monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
     monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
 
-    routed = [RoutedMessage(message=msg, keyword_route=None)]
+    routed = [
+        RoutedMessage(message=msg, keyword_route=None),
+        RoutedMessage(message=second_msg, keyword_route=None),
+    ]
     await scan_runner.score_messages(
         routed,
-        [msg],
+        [msg, second_msg],
         {"evaluate": "e", "respond": "r", "critique": "c"},
         {},
         {},
@@ -1304,8 +1312,12 @@ async def test_author_is_annotated_before_the_block_check(
         AUTHOR_CLASS_RULE_VERSION,
         "Feed",
     )
-    rows = in_memory_state.conn.execute("SELECT platform, account_id FROM accounts").fetchall()
-    assert [tuple(row) for row in rows] == [(msg.platform, msg.author_id)]
+    rows = in_memory_state.conn.execute(
+        "SELECT platform, account_id, observed_at FROM accounts"
+    ).fetchall()
+    assert [(row["platform"], row["account_id"]) for row in rows] == [
+        (msg.platform, msg.author_id)
+    ]
 
 
 @pytest.mark.asyncio
