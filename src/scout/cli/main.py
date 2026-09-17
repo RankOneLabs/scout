@@ -291,6 +291,30 @@ def parse_args() -> argparse.Namespace:
 
     from scout.cli.replay import positive_int
 
+    replay_parser = subparsers.add_parser(
+        "replay", help="Reproducible replay population commands"
+    )
+    replay_sub = replay_parser.add_subparsers(dest="replay_command", required=True)
+    export_population_p = replay_sub.add_parser(
+        "export-population",
+        help="Export a stable relevance population as JSON lines",
+    )
+    export_population_p.add_argument(
+        "task_config",
+        nargs="?",
+        help="Pinned RelevanceTask JSON (omit with --all-evaluations)",
+    )
+    export_population_p.add_argument(
+        "--all-evaluations",
+        action="store_true",
+        help="Export every stored evaluation for --project-key from the live database",
+    )
+    export_population_p.add_argument(
+        "--project-key",
+        default=None,
+        help="Project to export with --all-evaluations",
+    )
+
     feedback_parser = subparsers.add_parser(
         "feedback", help="Offline replay and comparison commands"
     )
@@ -970,6 +994,12 @@ def main() -> None:
                 grid_report_feedback(args)
             else:
                 grid_expand_feedback(args)
+        return
+    if args.subcommand == "replay":
+        from scout.cli.replay import export_population
+
+        if args.replay_command == "export-population":
+            export_population(args)
         return
     if args.stats:
         show_stats()

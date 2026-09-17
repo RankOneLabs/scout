@@ -7,6 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
@@ -38,6 +39,31 @@ from scout.result import Err, Ok, Result
 from scout.scanning.schemas import validate_farcaster_byte_length
 
 logger = logging.getLogger(__name__)
+
+_FARCASTER_POST_HOSTS = frozenset({
+    "farcaster.xyz",
+    "warpcast.com",
+    "www.farcaster.xyz",
+    "www.warpcast.com",
+})
+
+
+def handle_from_farcaster_url(url: str | None) -> str | None:
+    """Return the author segment from a canonical Farcaster post URL."""
+    if not url:
+        return None
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or host not in _FARCASTER_POST_HOSTS:
+        return None
+    path = [unquote(segment) for segment in parsed.path.split("/") if segment]
+    if len(path) < 2 or path[0] == "~":
+        return None
+    handle = path[0].removeprefix("@")
+    return handle or None
 
 
 def _utc_now() -> datetime:

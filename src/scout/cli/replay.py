@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -29,9 +31,16 @@ from scout.replay.experiments import (
     execute_replay,
     preview_replay,
 )
+from scout.replay.population_export import (
+    load_live_population,
+    records_from_frozen_inputs,
+    render_population_jsonl,
+)
 from scout.replay.pricing import PricingCatalog, PricingCatalogError, load_pricing_catalog
 from scout.replay.runtime import replay_runtime
+from scout.replay.tasks import EXPERIMENT_TASK_ADAPTER, RelevanceTask, load_relevance_population
 from scout.result import Err
+from scout.storage.state import StateManager
 
 
 def positive_int(value: str) -> int:
@@ -43,6 +52,54 @@ def positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError(f"{value!r} must be a positive integer")
     return parsed
+
+
+def export_population(args: argparse.Namespace) -> None:
+    """Emit a frozen relevance task or all live project evaluations as JSONL."""
+    task_config: str | None = args.task_config
+    project_key: str | None = args.project_key
+    if args.all_evaluations:
+        if task_config is not None:
+            print("error: TASK_CONFIG cannot be used with --all-evaluations", file=sys.stderr)
+            raise SystemExit(2)
+        if not project_key or not project_key.strip():
+            print("error: --all-evaluations requires --project-key", file=sys.stderr)
+            raise SystemExit(2)
+    else:
+        if task_config is None:
+            print(
+                "error: TASK_CONFIG is required unless --all-evaluations is used",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        if project_key is not None:
+            print("error: --project-key requires --all-evaluations", file=sys.stderr)
+            raise SystemExit(2)
+
+    try:
+        with StateManager(db_path=DB_PATH) as state:
+            if args.all_evaluations:
+                assert project_key is not None
+                records = load_live_population(state.conn, project_key)
+            else:
+                assert task_config is not None
+                task = EXPERIMENT_TASK_ADAPTER.validate_json(Path(task_config).read_bytes())
+                if not isinstance(task, RelevanceTask):
+                    raise ValueError("TASK_CONFIG must contain a relevance task")
+                population = load_relevance_population(state, task)
+                if isinstance(population, Err):
+                    raise ValueError(population.error.detail)
+                records = records_from_frozen_inputs(
+                    case.source for case in population.value.cases
+                )
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        print(f"error: could not export population: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    payload = render_population_jsonl(records)
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
+    print(f"sha256: {hashlib.sha256(payload).hexdigest()}", file=sys.stderr)
 
 
 def _read_prompt_file(path: str) -> str:
@@ -522,6 +579,7 @@ def grid_expand_feedback(args: argparse.Namespace) -> None:
 
 __all__ = [
     "batch_replay_feedback",
+    "export_population",
     "grid_expand_feedback",
     "batch_retry_feedback",
     "positive_int",
