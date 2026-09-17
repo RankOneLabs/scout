@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from scout.config import Message
+from scout.config import Account, Message
 from scout.registry import KeywordRoute
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
 
@@ -22,8 +22,12 @@ def _make_message(content: str, platform_id: str = "1") -> Message:
         platform_id=platform_id,
         channel_name="general",
         channel_id="123",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="discord",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content=content,
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
     )

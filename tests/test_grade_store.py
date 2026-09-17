@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.grades import (
     GradeStore,
     GradeValidationError,
@@ -250,8 +250,12 @@ def _build_pre26_db_with_grades(db_path: str) -> tuple[int, int]:
             platform_id="pre26-linked",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="linked post",
             created_at=datetime.now(UTC),
         )
@@ -282,8 +286,12 @@ def _build_pre26_db_with_grades(db_path: str) -> tuple[int, int]:
             platform_id="pre26-unlinked",
             channel_name="general",
             channel_id="ch-1",
-            author_name="bob",
-            author_id="u2",
+            author=Account(
+                platform="discord",
+                id="u2",
+                name="bob",
+                handle=None,
+            ),
             content="unlinked post",
             created_at=datetime.now(UTC),
         )
@@ -353,8 +361,12 @@ class TestGradeUpsertConcurrency:
                 platform_id="concurrency-1",
                 channel_name="general",
                 channel_id="ch-1",
-                author_name="alice",
-                author_id="u1",
+                author=Account(
+                    platform="discord",
+                    id="u1",
+                    name="alice",
+                    handle=None,
+                ),
                 content="test post",
                 created_at=datetime.now(UTC),
             )
@@ -717,8 +729,12 @@ class TestMigration26GradeRevisionsAndUsageOverrides:
             platform_id="immutable-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -770,8 +786,12 @@ class TestGradeRevisionsWritePath:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="test post",
             created_at=datetime.now(UTC),
         )
@@ -971,8 +991,12 @@ class TestGradeRevisionsWritePath:
             platform_id="orphan-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="orphan post",
             created_at=datetime.now(UTC),
         )
@@ -1005,8 +1029,12 @@ class TestGradeRevisionsWritePath:
                 platform_id="adopt-1",
                 channel_name="general",
                 channel_id="ch-1",
-                author_name="alice",
-                author_id="u1",
+                author=Account(
+                    platform="discord",
+                    id="u1",
+                    name="alice",
+                    handle=None,
+                ),
                 content="post",
                 created_at=datetime.now(UTC),
             )
@@ -1072,8 +1100,12 @@ class TestGradeRevisionsWritePath:
                 platform_id="concurrent-rev-1",
                 channel_name="general",
                 channel_id="ch-1",
-                author_name="alice",
-                author_id="u1",
+                author=Account(
+                    platform="discord",
+                    id="u1",
+                    name="alice",
+                    handle=None,
+                ),
                 content="test post",
                 created_at=datetime.now(UTC),
             )
@@ -1144,8 +1176,12 @@ class TestGradeRevisionConvergenceRepair:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="test post",
             created_at=datetime.now(UTC),
         )
@@ -1380,8 +1416,12 @@ class TestGradeUsageOverrides:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1458,8 +1498,12 @@ class TestGradeUsageOverrides:
             platform_id="lookup-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1499,8 +1543,12 @@ class TestMigration34ReplyDraftRevisions:
             platform_id="reply-rev-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1728,8 +1776,12 @@ class TestSaveGradeReplyRevisionLifecycle:
             platform_id="atomic-rev-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1913,8 +1965,12 @@ class TestSaveGradeReplyRevisionLifecycle:
             platform_id="draftless-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -2053,8 +2109,12 @@ class TestEvaluationIdentityGating:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="test content for eval identity",
             created_at=datetime.now(UTC),
         )

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 import discord
 
-from scout.config import DISCORD_MAX_PAGES, Message
+from scout.config import DISCORD_MAX_PAGES, Account, Message
 from scout.errors import (
     PlatformFetchFailure,
     PlatformFetchSuccess,
@@ -173,8 +173,10 @@ class DiscordScanner:
                                     platform_id=msg_id,
                                     channel_name=channel.name,
                                     channel_id=str(channel.id),
-                                    author_name=msg.author.display_name,
-                                    author_id=str(msg.author.id),
+                                    author=Account(
+                                        platform="discord", id=str(msg.author.id),
+                                        name=msg.author.display_name, handle=None,
+                                    ),
                                     content=msg.content,
                                     created_at=msg.created_at.replace(tzinfo=UTC),
                                     url=msg.jump_url,

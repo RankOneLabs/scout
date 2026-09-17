@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
-from scout.config import Message
+from scout.config import Account, Message
 from scout.platforms.dedupe import dedupe_and_filter
 
 
@@ -33,8 +33,12 @@ def _to_message(item: Item, text: str, created_at: datetime) -> Message:
         platform_id=item["id"],
         channel_name="test-channel",
         channel_id="test-channel",
-        author_name="tester",
-        author_id="tester",
+        author=Account(
+            platform="test",
+            id="tester",
+            name="tester",
+            handle=None,
+        ),
         content=text,
         created_at=created_at,
         url="",

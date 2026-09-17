@@ -28,7 +28,7 @@ from jig import (
 
 import scout.replay.experiments as ee
 import scout.replay.pricing as rp
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.dossiers.resolver import (
     DossierFact,
     DossierResolution,
@@ -247,7 +247,12 @@ async def _seed_reply_draft_correction(
     author_id = f"u-{trace_id}"
     msg = Message(
         platform="discord", platform_id=f"corr-{trace_id}", channel_name="general",
-        channel_id="ch-1", author_name="alice", author_id=author_id,
+        channel_id="ch-1", author=Account(
+                               platform="discord",
+                               id=author_id,
+                               name="alice",
+                               handle=None,
+                           ),
         content="post", created_at=datetime.now(UTC),
     )
     relevance_result = RelevanceResult(
@@ -324,7 +329,12 @@ def _seed_phase_run(
         snapshot_phase_id = phase_by_name[phase]
     msg = Message(
         platform="discord", platform_id=f"exp-{trace_id}", channel_name="general",
-        channel_id="ch-1", author_name="alice", author_id="u1",
+        channel_id="ch-1", author=Account(
+                               platform="discord",
+                               id="u1",
+                               name="alice",
+                               handle=None,
+                           ),
         content="post", created_at=datetime.now(UTC),
     )
     post_id = state.save_post(msg, scan_id)

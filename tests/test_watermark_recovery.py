@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 import scout.cli.watermark as watermark_cli
-from scout.config import Message
+from scout.config import Account, Message
 from scout.errors import SourceFetchOutcome
 from scout.result import Err
 from scout.scanning.runner import PlatformsFetch
@@ -324,7 +324,12 @@ class TestBackfill:
         )
         message = Message(
             platform="discord", platform_id="stale", channel_name="general",
-            channel_id="1", author_name="alice", author_id="a1",
+            channel_id="1", author=Account(
+                                platform="discord",
+                                id="a1",
+                                name="alice",
+                                handle=None,
+                            ),
             content="stale worker data", created_at=datetime.now(UTC),
             url="https://example.test/stale",
         )

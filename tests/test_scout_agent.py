@@ -17,7 +17,7 @@ from jig import (
 )
 
 import scout.scanning.pipeline as pipeline
-from scout.config import MODES, Message, SourceAuthor, SourceParent
+from scout.config import MODES, Account, Message, SourceParent
 from scout.dossiers.resolver import DossierFact, DossierProhibition, DossierResource, DossierSummary
 from scout.errors import ParseError
 from scout.grading.feedback import LegacySection, PhaseFeedbackBundle, SnapshotBody
@@ -305,7 +305,7 @@ def test_format_message_input_non_reply_has_source_post_header() -> None:
 def test_format_message_input_with_resolved_parent() -> None:
     parent = SourceParent(
         id="at://did:plc:parent/post/p001",
-        author=SourceAuthor(id="did:plc:parent", name="ParentUser"),
+        author=Account(platform="bluesky", id="did:plc:parent", name="ParentUser", handle=None),
         text="The original question about auth",
         url="https://bsky.app/profile/parent/post/p001",
     )
@@ -314,8 +314,12 @@ def test_format_message_input_with_resolved_parent() -> None:
         platform_id="reply-001",
         channel_name="bluesky",
         channel_id="bsky",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="bluesky",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content="Great point about auth!",
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
         parent=parent,
@@ -335,8 +339,12 @@ def test_format_message_input_with_failed_parent() -> None:
         platform_id="reply-002",
         channel_name="bluesky",
         channel_id="bsky",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="bluesky",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content="Agreed!",
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
         parent=None,
@@ -351,7 +359,7 @@ def test_format_message_input_with_failed_parent() -> None:
 def test_format_message_input_source_post_before_parent() -> None:
     parent = SourceParent(
         id="at://did:plc:parent/post/p002",
-        author=SourceAuthor(id="did:plc:parent", name="OtherUser"),
+        author=Account(platform="bluesky", id="did:plc:parent", name="OtherUser", handle=None),
         text="First post",
         url="",
     )
@@ -360,8 +368,12 @@ def test_format_message_input_source_post_before_parent() -> None:
         platform_id="reply-003",
         channel_name="bluesky",
         channel_id="bsky",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="bluesky",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content="My reply",
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
         parent=parent,
@@ -382,8 +394,12 @@ def _make_message(content: str = "hello world") -> Message:
         platform_id="msg-1",
         channel_name="general",
         channel_id="123",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="discord",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content=content,
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
     )

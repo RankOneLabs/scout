@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scout.config import Message, RelevanceResult
+from scout.config import Account, Message, RelevanceResult
 from scout.result import Err, Ok
 from scout.storage.state import StateManager
 
@@ -18,8 +18,12 @@ def _make_discord_msg(platform_id: str = "m1") -> Message:
         platform_id=platform_id,
         channel_name="general",
         channel_id="c1",
-        author_name="bob",
-        author_id="u1",
+        author=Account(
+            platform="discord",
+            id="u1",
+            name="bob",
+            handle=None,
+        ),
         content="hello",
         created_at=datetime.now(UTC),
     )
@@ -89,8 +93,12 @@ class TestScanStats:
             platform_id="m1",
             channel_name="ch",
             channel_id="c1",
-            author_name="a",
-            author_id="u1",
+            author=Account(
+                platform="test",
+                id="u1",
+                name="a",
+                handle=None,
+            ),
             content="content",
             created_at=datetime.now(UTC),
         )

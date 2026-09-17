@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.grading.feedback import resolve_feedback_policy_config
 from scout.storage.state import LATEST_SCHEMA_VERSION, StateManager
 from scripts.audit_feedback_policy import (
@@ -32,7 +32,12 @@ def _seed_grade(
 ) -> int:
     msg = Message(
         platform="bluesky", platform_id=platform_id, channel_name="",
-        channel_id="", author_name="a", author_id="u",
+        channel_id="", author=Account(
+                           platform="bluesky",
+                           id="u",
+                           name="a",
+                           handle=None,
+                       ),
         content="hello", created_at=datetime.now(UTC),
     )
     post_id = state.save_post(msg, scan_id)

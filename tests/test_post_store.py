@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from scout.config import Message, RelevanceResult, SourceAuthor, SourceParent
+from scout.config import Account, Message, RelevanceResult, SourceParent
+from scout.scanning.author_class import classify_author
 from scout.storage.state import StateManager
 
 
@@ -14,8 +15,12 @@ def _make_msg_with_parent(platform_id: str, parent: SourceParent | None, status:
         platform_id=platform_id,
         channel_name="bluesky",
         channel_id="bsky",
-        author_name="tester",
-        author_id="did:plc:tester",
+        author=Account(
+            platform="bluesky",
+            id="did:plc:tester",
+            name="tester",
+            handle=None,
+        ),
         content="test reply",
         created_at=datetime.now(UTC),
         url="https://bsky.app/profile/tester/post/abc",
@@ -27,7 +32,10 @@ def _make_msg_with_parent(platform_id: str, parent: SourceParent | None, status:
 def _make_source_parent(parent_id: str = "at://did:plc:parent/post/p001") -> SourceParent:
     return SourceParent(
         id=parent_id,
-        author=SourceAuthor(id="did:plc:parent", name="Parent Author"),
+        author=Account(
+            platform="bluesky", id="did:plc:parent", name="Parent Author",
+            handle="parent.bsky.social",
+        ),
         text="The original post content",
         url="https://bsky.app/profile/parent/post/p001",
     )
@@ -41,8 +49,12 @@ class TestPostDedup:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="user-1",
+            author=Account(
+                platform="discord",
+                id="user-1",
+                name="alice",
+                handle=None,
+            ),
             content="test content",
             created_at=datetime.now(UTC),
         )
@@ -78,8 +90,12 @@ class TestLoadPosts:
             platform_id="load-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Test content for loading",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
             url="https://example.com",
@@ -93,6 +109,24 @@ class TestLoadPosts:
         assert loaded[0].content == "Test content for loading"
         assert loaded[0].author_name == "alice"
 
+    def test_bluesky_replay_preserves_live_author_classification(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        live = Message(
+            platform="bluesky", platform_id="at://did:plc:feed/app.bsky.feed.post/one",
+            channel_name="bluesky", channel_id="",
+            author=Account(platform="bluesky", id="did:plc:feed", name="Daily Links",
+                           handle="daily-links.bsky.social"),
+            content="News", created_at=datetime(2025, 1, 1, tzinfo=UTC),
+            url="https://bsky.app/profile/daily-links.bsky.social/post/one",
+        )
+        in_memory_state.save_post(live, scan_id)
+        replayed = in_memory_state.load_posts(scan_id)[0]
+        assert classify_author(replayed.author.name, replayed.author.handle) == classify_author(
+            live.author.name, live.author.handle
+        )
+
 class TestLoadUnevaluatedPosts:
     def test_returns_posts_without_evaluation(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
@@ -101,8 +135,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="uneval-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="No evaluation yet",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -119,8 +157,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="eval-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Already evaluated",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -146,8 +188,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="recovered-later",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Recovered by a later scan",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -174,8 +220,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="eval-2",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Evaluated",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -194,8 +244,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="uneval-2",
             channel_name="general",
             channel_id="ch-1",
-            author_name="bob",
-            author_id="u2",
+            author=Account(
+                platform="discord",
+                id="u2",
+                name="bob",
+                handle=None,
+            ),
             content="Not evaluated",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -212,8 +266,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="s1-eval",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Evaluated in scan 1",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -233,8 +291,12 @@ class TestLoadUnevaluatedPosts:
             platform_id="s2-uneval",
             channel_name="general",
             channel_id="ch-1",
-            author_name="bob",
-            author_id="u2",
+            author=Account(
+                platform="discord",
+                id="u2",
+                name="bob",
+                handle=None,
+            ),
             content="Not evaluated in scan 2",
             created_at=datetime(2025, 1, 2, tzinfo=UTC),
         )

@@ -13,7 +13,7 @@ import os
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -97,7 +97,7 @@ from scout.scanning.agent import (
     build_scout_phase_configs,
     resolve_mode_for_message,
 )
-from scout.scanning.author_class import classify_author, handle_from_url
+from scout.scanning.author_class import classify_author
 from scout.scanning.digest import (
     append_to_digest,
     finalize_digest,
@@ -809,9 +809,9 @@ def _annotate_author(state: StateManager, msg: Message) -> None:
     failure is logged and the post still flows into evaluation, because
     the class is advisory for reviewers, not an input to any model call.
     """
-    if not msg.author_id:
+    if not msg.author_id.strip():
         return
-    classification = classify_author(msg.author_name, handle_from_url(msg.url))
+    classification = classify_author(msg.author.name, msg.author.handle)
     try:
         state.record_author_classification(
             platform=msg.platform,
@@ -869,6 +869,7 @@ async def score_messages(
     """
     if feedback_snapshot is None:
         raise ValueError("score_messages requires this scan's feedback_snapshot")
+    account_observed_at = datetime.now(UTC)
     phase_run_identity = {
         p.phase: PhaseRunIdentity(snapshot_phase_id=p.snapshot_phase_id, model=model)
         for p, model in (
@@ -982,12 +983,22 @@ async def score_messages(
             continue
 
         _annotate_author(state, msg)
+        if msg.author_id.strip():
+            try:
+                account = msg.author
+                if account.observed_at is None:
+                    account = replace(account, observed_at=account_observed_at)
+                state.record_account_snapshot(account)
+            except (sqlite3.Error, ValueError):
+                logger.warning(
+                    "account snapshot failed for %s:%r", msg.platform, msg.author_id, exc_info=True
+                )
 
         # Author blocks are checked from live SQLite state for every candidate,
         # so a block added from the web UI also stops later items in an active
         # scan. Posts remain persisted above for audit/deduplication, but no
         # prompt is built and no LLM call is made for the blocked account.
-        if msg.author_id and state.is_author_blocked(
+        if msg.author_id.strip() and state.is_author_blocked(
             platform=msg.platform,
             author_id=msg.author_id,
         ) is True:

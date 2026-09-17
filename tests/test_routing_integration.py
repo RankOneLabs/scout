@@ -23,7 +23,7 @@ from jig import (
 )
 
 import scout.scanning.runner as scan_runner
-from scout.config import MODES, Message
+from scout.config import MODES, Account, Message
 from scout.grading.feedback import legacy_feedback_bundle
 from scout.registry import KeywordRoute
 from scout.scanning.prefilter import keyword_prefilter
@@ -71,8 +71,12 @@ def _msg(platform_id: str, content: str) -> Message:
         platform_id=platform_id,
         channel_name="general",
         channel_id="123",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="discord",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content=content,
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
     )

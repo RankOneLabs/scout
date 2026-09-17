@@ -9,7 +9,18 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 45
+LATEST_SCHEMA_VERSION = 46
+
+ACCOUNT_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS accounts (
+        platform TEXT NOT NULL, account_id TEXT NOT NULL, observed_at TEXT NOT NULL,
+        name TEXT NOT NULL, handle TEXT, bio TEXT, followers INTEGER, following INTEGER,
+        posts INTEGER, created_at TEXT, verified INTEGER,
+        PRIMARY KEY (platform, account_id, observed_at)
+    )""",
+    """CREATE INDEX IF NOT EXISTS accounts_latest_idx
+        ON accounts(platform, account_id, observed_at DESC)""",
+)
 
 REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS review_dispositions (
@@ -1155,6 +1166,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS)};
 {';'.join(COVERAGE_SCHEMA_STATEMENTS)};
 {';'.join(LEASE_AND_RECOVERY_SCHEMA_STATEMENTS)};
+{';'.join(ACCOUNT_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

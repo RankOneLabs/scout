@@ -23,7 +23,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 import scout.scanning.runner as scan_runner
-from scout.config import RELEVANCE_THRESHOLD, Message
+from scout.config import RELEVANCE_THRESHOLD, Account, Message
 from scout.dossiers.resolver import DossierFact, DossierResource, DossierSummary
 from scout.scanning.runner import OutcomeDecision, classify_outcome
 from scout.scanning.schemas import DeclarativeSegment, ReplyCandidate, StructuredDraftOutput
@@ -42,8 +42,12 @@ def _message() -> Message:
         platform_id="m1",
         channel_name="general",
         channel_id="c1",
-        author_name="alice",
-        author_id="author-1",
+        author=Account(
+            platform="discord",
+            id="author-1",
+            name="alice",
+            handle=None,
+        ),
         content="tell me about the gateway",
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
     )

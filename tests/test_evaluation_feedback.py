@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import scout.grading.feedback as ef
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.state import StateManager
 
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
@@ -787,7 +787,12 @@ def _seed_grade(
 ) -> tuple[int, int]:
     msg = Message(
         platform="bluesky", platform_id=platform_id, channel_name="",
-        channel_id="", author_name="a", author_id="u",
+        channel_id="", author=Account(
+                           platform="bluesky",
+                           id="u",
+                           name="a",
+                           handle=None,
+                       ),
         content="hello", created_at=datetime.now(UTC),
     )
     post_id = state.save_post(msg, scan_id)

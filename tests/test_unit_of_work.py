@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.state import StateManager
 
 
@@ -37,8 +37,12 @@ def _seed_source_evaluation(state: StateManager) -> tuple[int, int, int]:
         platform_id="uow-source-1",
         channel_name="general",
         channel_id="channel-1",
-        author_name="alice",
-        author_id="alice-1",
+        author=Account(
+            platform="discord",
+            id="alice-1",
+            name="alice",
+            handle=None,
+        ),
         content="This should receive a response",
         created_at=datetime.now(UTC),
     )
@@ -84,7 +88,12 @@ def test_composed_evaluation_and_grade_write_commits_together(tmp_path) -> None:
         state.attach_human_positive_promotion_scan(source_evaluation_id, target_scan_id)
         message = Message(
             platform="discord", platform_id="uow-source-1", channel_name="general",
-            channel_id="channel-1", author_name="alice", author_id="alice-1",
+            channel_id="channel-1", author=Account(
+                                        platform="discord",
+                                        id="alice-1",
+                                        name="alice",
+                                        handle=None,
+                                    ),
             content="This should receive a response", created_at=datetime.now(UTC),
         )
 
@@ -126,7 +135,12 @@ def test_composed_evaluation_and_grade_write_rolls_back_together_on_failure(tmp_
         state.attach_human_positive_promotion_scan(source_evaluation_id, target_scan_id)
         message = Message(
             platform="discord", platform_id="uow-source-1", channel_name="general",
-            channel_id="channel-1", author_name="alice", author_id="alice-1",
+            channel_id="channel-1", author=Account(
+                                        platform="discord",
+                                        id="alice-1",
+                                        name="alice",
+                                        handle=None,
+                                    ),
             content="This should receive a response", created_at=datetime.now(UTC),
         )
 

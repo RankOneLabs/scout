@@ -10,7 +10,7 @@ from jig.core.runner import _build_submit_output_tool
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from scout.config import Message
+from scout.config import Account, Message
 from scout.scanning.schemas import (
     FARCASTER_POST_MAX_BYTES,
     CritiquePhaseOutput,
@@ -70,8 +70,12 @@ def _make_message() -> Message:
         platform_id="1",
         channel_name="general",
         channel_id="123",
-        author_name="alice",
-        author_id="a1",
+        author=Account(
+            platform="discord",
+            id="a1",
+            name="alice",
+            handle=None,
+        ),
         content="hello",
         created_at=datetime(2026, 4, 18, tzinfo=UTC),
     )

@@ -50,7 +50,7 @@ from jig import (
     sweep,
 )
 
-from scout.config import MODES, Message, ModeConfig, SourceAuthor, SourceParent
+from scout.config import MODES, Account, Message, ModeConfig, SourceParent
 from scout.dossiers.resolver import DossierResolution, resolve_dossier
 from scout.evals.phase1.grader import ScoutPhase1Grader
 from scout.evals.phase1.loader import DEFAULT_CORPUS_DIR, load_phase1_corpus
@@ -280,7 +280,10 @@ def _build_message(case: Phase1Case) -> Message:
         author_raw = parent_raw["author"]
         parent = SourceParent(
             id=str(parent_raw["id"]),
-            author=SourceAuthor(id=str(author_raw["id"]), name=str(author_raw["name"])),
+            author=Account(
+                platform=str(source.get("platform") or "discord"),
+                id=str(author_raw["id"]), name=str(author_raw["name"]), handle=None,
+            ),
             text=str(parent_raw["text"]),
             url=str(parent_raw["url"]),
         )
@@ -290,8 +293,10 @@ def _build_message(case: Phase1Case) -> Message:
         platform_id=case.id,
         channel_name=str(source.get("channel") or ""),
         channel_id="eval-harness",
-        author_name="eval-harness-author",
-        author_id="eval-harness-author",
+        author=Account(
+            platform=str(source.get("platform") or "discord"),
+            id="eval-harness-author", name="eval-harness-author", handle=None,
+        ),
         content=str(source.get("content") or ""),
         created_at=datetime.now(UTC),
         parent=parent,

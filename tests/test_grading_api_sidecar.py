@@ -23,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import scout.cli.grading_api as grading_api_sidecar
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.state import StateManager, format_graded_at, parse_graded_at
 
 # A well-formed grade body for middleware probes. Evaluation 1 never exists
@@ -411,8 +411,12 @@ def _seed_evaluation(
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="user-1",
+            author=Account(
+                platform="discord",
+                id="user-1",
+                name="alice",
+                handle=None,
+            ),
             content="test post",
             created_at=datetime.now(UTC),
         )
