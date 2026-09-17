@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from scout.platforms.farcaster import handle_from_farcaster_url
+
 AUTHOR_CLASS_RULE_VERSION = 1
 
 AuthorClass = Literal["aggregator", "unknown"]
@@ -62,6 +64,15 @@ def handle_from_url(url: str | None) -> str | None:
         return None
     handle = match.group(1)
     return None if handle == _INVALID_HANDLE else handle
+
+
+def handle_from_post_url(platform: str, url: str | None) -> str | None:
+    """Recover a post author's handle for platforms whose URLs carry it."""
+    if platform == "bluesky":
+        return handle_from_url(url)
+    if platform == "farcaster":
+        return handle_from_farcaster_url(url)
+    return None
 
 
 def _normalize_handle(handle: str | None) -> str:
