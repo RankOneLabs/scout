@@ -30,6 +30,31 @@ Rebuild reports without executing models:
 uv run scout feedback grid report /tmp/campaign/manifest.json --out /tmp/campaign/reports
 ```
 
+## Exporting a relevance population
+
+Export the exact frozen population selected by a pinned `RelevanceTask` as one
+JSON record per evaluation, ordered by evaluation ID:
+
+```bash
+uv run scout replay export-population \
+  evidence/relevance-sweeps-2026-09/relevance-task-af08aa7b-agent-ops.json \
+  > population.jsonl
+```
+
+The command writes the SHA-256 of the exact JSONL bytes to stderr. Repeating the
+command against the same retained task produces byte-identical output and the
+same digest. To inspect every currently stored production evaluation for a
+project instead of a frozen study population, use the live-table mode:
+
+```bash
+uv run scout replay export-population \
+  --all-evaluations --project-key agent-ops > all-agent-ops.jsonl
+```
+
+Live exports include production scores and decisions for every matching
+evaluation. `human_label` is null when no finalized human grade exists, and
+`snapshot_id` is null because this mode is not a frozen snapshot.
+
 Every variant and all its attempts are persisted atomically before the first model
 call. If execution is interrupted, stop the original worker before recovery:
 
