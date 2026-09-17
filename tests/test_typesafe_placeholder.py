@@ -9,4 +9,4 @@ async def test_placeholder_selects_post_or_default() -> None:
     known = await backend({"post": {"id": "known-post"}}, catalogue)
     unknown = await backend({"post": {"id": "other"}}, catalogue)
     assert isinstance(known, Ok) and known.value.request_id == "placeholder-known"
-    assert isinstance(unknown, Ok) and unknown.value.request_id == "placeholder-default"
+    assert isinstance(unknown, Ok) and unknown.value.request_id == "placeholder-default:other"

@@ -113,6 +113,8 @@ from scout.storage.state import (
     StateManager,
     SurfaceRateLimitedError,
 )
+from scout.typesafe.routes import is_agent_ops_route
+from scout.typesafe.shadow import ShadowRelevanceRunner
 from scout.verifier import GateViolation, verify_draft_content
 
 logger = logging.getLogger("scout.scanning.runner")
@@ -869,6 +871,30 @@ async def score_messages(
     """
     if feedback_snapshot is None:
         raise ValueError("score_messages requires this scan's feedback_snapshot")
+    shadow_runner: ShadowRelevanceRunner | None = None
+    if _config.TYPESAFE_SHADOW_MODE:
+        if not _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH:
+            raise ValueError(
+                "TYPESAFE_PLACEHOLDER_ANSWERS_PATH is required when TYPESAFE_SHADOW_MODE=true"
+            )
+        shadow_runner = ShadowRelevanceRunner.placeholder(
+            _config.TYPESAFE_CATALOGUE_PATH,
+            _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH,
+        )
+    shadow_tasks: set[asyncio.Task[int | None]] = set()
+
+    async def _settle_shadow_task(
+        task: asyncio.Task[int | None], *, cancel: bool = False
+    ) -> int | None:
+        if cancel:
+            task.cancel()
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return None
+        except Exception:
+            logger.warning("typesafe shadow task failed", exc_info=True)
+            return None
     account_observed_at = datetime.now(UTC)
     phase_run_identity = {
         p.phase: PhaseRunIdentity(snapshot_phase_id=p.snapshot_phase_id, model=model)
@@ -1010,6 +1036,19 @@ async def score_messages(
             )
             continue
 
+        shadow_route = is_agent_ops_route(routed.keyword_route)
+        logger.info(
+            "Typesafe shadow route: post=%s project_key=%s selected=%s",
+            msg.platform_id,
+            routed.keyword_route.project_key if routed.keyword_route else None,
+            shadow_route,
+        )
+        shadow_project: ProjectTarget | None = None
+        if shadow_runner is not None and shadow_route:
+            route = routed.keyword_route
+            assert route is not None
+            shadow_project = projects.get(route.project_key)
+
         resolved_mode = resolve_mode_for_message(base_mode_cfg, routed.keyword_route)
         phase_configs = _get_phase_configs(resolved_mode)
         _log_route_bundle(routed, resolved_mode)
@@ -1023,11 +1062,25 @@ async def score_messages(
             critic=phase_run_identity["critic"],
         )
 
+        shadow_task: asyncio.Task[int | None] | None = None
+        if shadow_runner is not None and shadow_project is not None:
+            shadow_task = asyncio.create_task(
+                shadow_runner.run(
+                    state_manager=state,
+                    scan_id=scan_id,
+                    post_id=post_id,
+                    message=msg,
+                    project=shadow_project,
+                )
+            )
+            shadow_tasks.add(shadow_task)
+
         # No Db transaction is open across this await: save_post above
         # already committed, and evaluation is pure LLM/network I/O with
         # no database access of its own. Each phase's own _run_phase call
         # opens its short, independent evaluation_phase_runs insert
         # transaction only after that phase's trace is verified durable.
+        shadow_run_id: int | None = None
         try:
             result = await run_pipeline(
                 pipeline,
@@ -1051,6 +1104,9 @@ async def score_messages(
                     error_kind="cancelled",
                     error_message="scan cancelled during evaluation",
                 )
+            await asyncio.gather(
+                *(_settle_shadow_task(task, cancel=True) for task in shadow_tasks)
+            )
             raise
         except Exception:
             # Recoverable incomplete post: preserved as saved-but-unevaluated,
@@ -1069,6 +1125,10 @@ async def score_messages(
                 exc_info=True,
             )
             continue
+        finally:
+            if shadow_task is not None:
+                shadow_run_id = await _settle_shadow_task(shadow_task)
+                shadow_tasks.discard(shadow_task)
 
         match result.step_outputs.get("score_and_draft"):
             case Ok(candidate):
@@ -1106,7 +1166,13 @@ async def score_messages(
         # Classification and invariant errors propagate rather than being
         # caught here — a programmer defect must be loud, not folded into
         # an unevaluated scoring_error.
-        decision = classify_outcome(candidate, msg, _dossiers)
+        try:
+            decision = classify_outcome(candidate, msg, _dossiers)
+        except BaseException:
+            await asyncio.gather(
+                *(_settle_shadow_task(task, cancel=True) for task in shadow_tasks)
+            )
+            raise
 
         route_id = routed.keyword_route.id if routed.keyword_route else None
         dossier_summary_id = (
@@ -1137,8 +1203,9 @@ async def score_messages(
                 "No dossier loaded for project %r; gate_blocked", decision.project_key
             )
 
+        evaluation_id: int
         try:
-            persist_outcome(state, decision, context)
+            evaluation_id = persist_outcome(state, decision, context)
         except SurfaceRateLimitedError as error:
             # StateManager has already committed the authoritative
             # gate_blocked evaluation and author_rate gate_blocks row under
@@ -1168,6 +1235,7 @@ async def score_messages(
                 AUTHOR_RATE_EVALUATOR_VERSION, msg.platform_id,
                 error.persisted_evaluation_id, error.gate_block_ids,
             )
+            evaluation_id = error.persisted_evaluation_id
         except sqlite3.Error as e:
             # persist_outcome's own begin_immediate() context has already
             # rolled back every row for this post's outcome — post_id
@@ -1187,7 +1255,20 @@ async def score_messages(
                     error_kind="persistence_error",
                     error_message=f"persist_outcome failed: {e}",
                 )
+            await asyncio.gather(
+                *(_settle_shadow_task(task, cancel=True) for task in shadow_tasks)
+            )
             raise
+
+        if shadow_run_id is not None:
+            try:
+                state.shadow_relevance.backfill_evaluation_id(shadow_run_id, evaluation_id)
+            except Exception:
+                logger.warning(
+                    "typesafe evaluation_id backfill failed for post %s",
+                    msg.platform_id,
+                    exc_info=True,
+                )
 
         if decision.status != "surfaced":
             if decision.status == "gate_blocked":
@@ -1219,6 +1300,9 @@ async def score_messages(
                     exc_info=True,
                 )
         print(block)
+
+    if shadow_tasks:
+        await asyncio.gather(*(_settle_shadow_task(task) for task in shadow_tasks))
 
     digest_ok = digest_writable
     if digest_writable:

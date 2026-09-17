@@ -25,9 +25,15 @@ class PlaceholderBackend:
         del catalogue
         post = state.get("post")
         post_id = post.get("id") if isinstance(post, dict) else None
+        known = str(post_id) in self._answers
         payload = self._answers.get(str(post_id), self._answers["default"])
         try:
-            return Ok(Answers.model_validate(payload))
+            answers = Answers.model_validate(payload)
+            if not known:
+                answers = answers.model_copy(
+                    update={"request_id": f"{answers.request_id}:{post_id}"}
+                )
+            return Ok(answers)
         except Exception as exc:
             return Err(
                 BackendError(
