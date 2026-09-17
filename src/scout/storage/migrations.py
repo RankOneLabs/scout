@@ -3188,6 +3188,14 @@ def _migrate_to_46(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_47(conn: sqlite3.Connection) -> None:
+    """Non-gating typesafe shadow relevance runs (v47)."""
+    from scout.storage.schema import SHADOW_RELEVANCE_SCHEMA_STATEMENTS
+
+    for statement in SHADOW_RELEVANCE_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3234,4 +3242,5 @@ MIGRATIONS: dict[int, Migration] = {
     44: _migrate_to_44,
     45: _migrate_to_45,
     46: _migrate_to_46,
+    47: _migrate_to_47,
 }
