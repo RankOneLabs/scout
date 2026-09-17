@@ -228,3 +228,21 @@ def test_live_population_includes_every_project_evaluation_and_only_finalized_la
         "trent",
     ]
     assert all(record.snapshot_id is None for record in records)
+
+
+def test_live_population_rejects_invalid_production_decision() -> None:
+    with StateManager(db_path=":memory:") as state:
+        state.conn.execute(
+            "INSERT INTO posts "
+            "(id, platform, platform_msg_id, channel_name, author_name, content, url) "
+            "VALUES (1, 'discord', 'message-1', 'agent-ops', 'Alice', 'first', "
+            "'https://discord.com/channels/1/2/3')"
+        )
+        state.conn.execute(
+            "INSERT INTO evaluations "
+            "(id, post_id, relevant, score, project_key, surface_status) "
+            "VALUES (10, 1, 2, 0.9, 'agent-ops', 'surfaced')"
+        )
+
+        with pytest.raises(ValueError, match="evaluation 10 decision must be boolean"):
+            load_live_population(state.conn, "agent-ops")

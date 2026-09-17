@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -91,7 +92,7 @@ def export_population(args: argparse.Namespace) -> None:
                 records = records_from_frozen_inputs(
                     case.source for case in population.value.cases
                 )
-    except (OSError, ValueError) as exc:
+    except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"error: could not export population: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
