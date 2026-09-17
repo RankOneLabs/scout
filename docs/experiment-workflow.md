@@ -43,8 +43,13 @@ uv run scout replay export-population \
 
 The command writes the SHA-256 of the exact JSONL bytes to stderr. Repeating the
 command against the same retained task produces byte-identical output and the
-same digest. To inspect every currently stored production evaluation for a
-project instead of a frozen study population, use the live-table mode:
+same digest. The pinned agent-ops task above contains 51 records and produced
+SHA-256 `5469a9586e5c3b992451ffd932dd105c75f93a4d6be2a6c908da4c525f9afb31`
+against the production database snapshot taken on 2026-09-17; this is the
+population digest cited by the Assay study.
+
+To inspect every currently stored production evaluation for a project instead
+of a frozen study population, use the live-table mode:
 
 ```bash
 uv run scout replay export-population \

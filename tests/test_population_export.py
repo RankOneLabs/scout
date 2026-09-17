@@ -189,6 +189,8 @@ def test_live_population_includes_every_project_evaluation_and_only_finalized_la
                 (1, "cast-1", "Alice", "first", "https://warpcast.com/alice/0x1"),
                 (2, "cast-2", "Bob", "second", "https://warpcast.com/bob/0x2"),
                 (3, "cast-3", "Eve", "other", "https://warpcast.com/eve/0x3"),
+                (4, "cast-4", "Mallory", "fourth", "https://warpcast.com/mallory/0x4"),
+                (5, "cast-5", "Trent", "fifth", "https://warpcast.com/trent/0x5"),
             ],
         )
         state.conn.executemany(
@@ -199,6 +201,8 @@ def test_live_population_includes_every_project_evaluation_and_only_finalized_la
                 (20, 2, 0, 0.2, "agent-ops"),
                 (10, 1, 1, 0.9, "agent-ops"),
                 (30, 3, 1, 0.8, "other"),
+                (40, 4, 0, 0.1, "agent-ops"),
+                (50, 5, 1, 0.7, "agent-ops"),
             ],
         )
         state.conn.executemany(
@@ -208,12 +212,19 @@ def test_live_population_includes_every_project_evaluation_and_only_finalized_la
             [
                 (10, 1, "2026-09-01T00:00:00.000Z", "correct", 0),
                 (20, 2, "2026-09-01T00:00:00.000Z", "false_negative", 1),
+                (40, 4, "2026-09-01T00:00:00.000Z", "false_positive", 0),
+                (50, 5, "2026-09-01T00:00:00.000Z", "false_negative", 0),
             ],
         )
 
         records = load_live_population(state.conn, "agent-ops")
 
-    assert [record.evaluation_id for record in records] == [10, 20]
-    assert [record.human_label for record in records] == [True, None]
-    assert [record.author_handle for record in records] == ["alice", "bob"]
+    assert [record.evaluation_id for record in records] == [10, 20, 40, 50]
+    assert [record.human_label for record in records] == [True, None, None, None]
+    assert [record.author_handle for record in records] == [
+        "alice",
+        "bob",
+        "mallory",
+        "trent",
+    ]
     assert all(record.snapshot_id is None for record in records)
