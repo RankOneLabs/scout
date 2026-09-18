@@ -692,6 +692,23 @@ def validate_partition(
     return Ok(None)
 
 
+def validate_retained_group_assignments(
+    partition: FrozenPartition,
+) -> Result[None, ArtifactError]:
+    """Reject retained groups assigned to more than one partition."""
+    assignments: dict[GroupId, str] = {}
+    for member in partition.members:
+        assigned = assignments.get(member.group_id)
+        if assigned is not None and assigned != member.partition:
+            return Err(
+                ArtifactError(
+                    "validate_partition", None, "Recorded related group crosses partitions"
+                )
+            )
+        assignments[member.group_id] = member.partition
+    return Ok(None)
+
+
 def population_grouping_posts(
     population: RejectedPopulation,
 ) -> tuple[RecordedPost | GroupingPost, ...]:

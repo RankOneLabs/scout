@@ -13,8 +13,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from scout.grading.assistance import validate_partition, validate_retained_group_assignments
 from scout.grading.assistance_scope import read_assistance_bundle
-from scout.grading.assistance_types import FrozenPartition
+from scout.grading.assistance_store import load_corpus_snapshot, load_training_examples
+from scout.grading.assistance_types import FrozenPartition, RejectedPopulation
 from scout.grading.snapshots import CorpusSnapshot
 from scout.replay.tasks import EXPERIMENT_TASK_ADAPTER, RelevanceTask
 from scout.result import Err
@@ -31,7 +33,7 @@ from scout.typesafe.reporting import (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class TypesafeFitError(RuntimeError):
     """Typed, operator-facing fitting refusal."""
 
@@ -121,29 +123,33 @@ def _load_fit_inputs(
     retained = read_assistance_bundle(conn, (parsed.snapshot_digest, partition_digest))
     if isinstance(retained, Err):
         raise TypesafeFitError("load_partition", retained.error.detail)
-    contents = {artifact.digest: artifact.content for artifact in retained.value.artifacts}
+    bundle = retained.value
+    snapshot_result = load_corpus_snapshot(bundle, parsed.snapshot_digest)
+    if isinstance(snapshot_result, Err):
+        raise TypesafeFitError("load_partition", snapshot_result.error.detail)
+    examples_result = load_training_examples(bundle, parsed.snapshot_digest)
+    if isinstance(examples_result, Err):
+        raise TypesafeFitError("load_partition", examples_result.error.detail)
+    contents = {artifact.digest: artifact.content for artifact in bundle.artifacts}
     try:
         partition = FrozenPartition.model_validate_json(contents[partition_digest])
-        snapshot = CorpusSnapshot.model_validate_json(contents[parsed.snapshot_digest])
     except (KeyError, ValidationError) as exc:
         raise TypesafeFitError(
             "load_partition", "retained partition or snapshot is invalid"
         ) from exc
+    snapshot = snapshot_result.value
     if partition.snapshot_digest != parsed.snapshot_digest:
         raise TypesafeFitError("load_partition", "partition belongs to another snapshot")
-    snapshot_members = {member.evaluation_id: member for member in snapshot.members}
-    partition_members = {member.evaluation_id: member for member in partition.members}
-    if len(partition_members) != len(partition.members) or set(partition_members) != set(
-        snapshot_members
-    ):
-        raise TypesafeFitError(
-            "load_partition", "partition must cover each snapshot member exactly once"
-        )
-    if any(
-        member.input_digest != snapshot_members[evaluation_id].input_digest
-        for evaluation_id, member in partition_members.items()
-    ):
-        raise TypesafeFitError("load_partition", "partition input differs from snapshot")
+    checked = validate_partition(
+        examples_result.value,
+        RejectedPopulation(project_key=snapshot.selection.project_key, items=()),
+        partition,
+    )
+    if isinstance(checked, Err):
+        raise TypesafeFitError("load_partition", checked.error.detail)
+    retained_groups = validate_retained_group_assignments(partition)
+    if isinstance(retained_groups, Err):
+        raise TypesafeFitError("load_partition", retained_groups.error.detail)
     return partition, snapshot
 
 
@@ -291,9 +297,7 @@ def run_typesafe(args: argparse.Namespace) -> int:
         if not ShadowRelevanceStore.table_exists(conn):
             print("shadow_relevance_runs is not present; this database predates schema v47.")
             return 0
-        rows = ShadowRelevanceStore.report_rows(
-            conn, since=args.since, scan_id=args.scan_id
-        )
+        rows = ShadowRelevanceStore.report_rows(conn, since=args.since, scan_id=args.scan_id)
     try:
         fixture_check = replay_acceptance_fixture()
     except FixtureReplayUnavailableError as exc:

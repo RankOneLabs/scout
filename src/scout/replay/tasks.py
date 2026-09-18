@@ -14,7 +14,7 @@ from jig import Grader, Score, ScoreSource
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from scout.grading.artifacts import ArtifactError, DigestReference
-from scout.grading.assistance import validate_partition
+from scout.grading.assistance import validate_partition, validate_retained_group_assignments
 from scout.grading.assistance_scope import read_assistance_bundle
 from scout.grading.assistance_store import load_corpus_snapshot, load_training_examples
 from scout.grading.assistance_types import FrozenPartition, RejectedPopulation, SelectionReference
@@ -207,14 +207,9 @@ def load_relevance_population(
             )
             if isinstance(checked, Err):
                 return checked
-            assignments: dict[str, str] = {}
-            for partition_member in partition.members:
-                if (
-                    partition_member.group_id in assignments
-                    and assignments[partition_member.group_id] != partition_member.partition
-                ):
-                    raise ValueError("Recorded related group crosses partitions")
-                assignments[partition_member.group_id] = partition_member.partition
+            retained_groups = validate_retained_group_assignments(partition)
+            if isinstance(retained_groups, Err):
+                return retained_groups
         partition_members = (
             {}
             if partition is None
