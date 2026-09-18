@@ -7,6 +7,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from scout.cli.typesafe import run_typesafe
 from scout.typesafe.compose import DECIDE_REGISTRY, register_fitted_gate
 from scout.typesafe.models import Answers
@@ -29,12 +31,21 @@ def _args(db_path: Path, task: dict[str, object], out: Path) -> argparse.Namespa
     )
 
 
-def test_non_train_task_refuses_before_database_open(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("partition", ["all", "heldout"])
+def test_non_train_task_refuses_before_database_open(
+    monkeypatch, tmp_path, partition: str
+) -> None:
     def forbidden(*_args, **_kwargs):
         raise AssertionError("database must not be opened")
 
     monkeypatch.setattr("scout.cli.typesafe.read_only_connection", forbidden)
-    task = {"kind": "relevance", "snapshot_digest": "a" * 64, "partition": "all"}
+    task: dict[str, object] = {
+        "kind": "relevance",
+        "snapshot_digest": "a" * 64,
+        "partition": partition,
+    }
+    if partition == "heldout":
+        task["partition_digest"] = "b" * 64
     assert run_typesafe(_args(tmp_path / "missing.db", task, tmp_path / "out")) == 2
 
 

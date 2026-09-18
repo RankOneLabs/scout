@@ -47,6 +47,11 @@ It writes `weight-set.json`, `PLAN.md`, `RESULTS.md`, `checksums.json`, and
 decision threshold and uncertainty band and both values are retained in the
 weight set. The pinned September agent-ops task is `partition: "all"` with no
 digest, so it cannot be fitted until the label-packet work pins a partition.
+With the default symmetric costs (`c_fp = c_fn = 1`), the threshold is `0.5`
+and the uncertainty band is the single point `[0.5, 0.5]`; only a prediction
+of exactly `0.5` is marked uncertain. Operators who require a wider uncertainty
+zone must choose asymmetric costs or define a different policy in a future
+version rather than assuming the defaults create a margin around the threshold.
 
 ## Platform limits
 
