@@ -4,7 +4,8 @@ from importlib.resources import files
 import pytest
 from pydantic import ValidationError
 
-from scout.typesafe.compose import DECIDE_REGISTRY
+from scout.typesafe.compose import DECIDE_REGISTRY, apply_weight_set
+from scout.typesafe.fitting import fit_weight_set
 from scout.typesafe.models import Answers, DecisionRecord
 
 
@@ -72,3 +73,27 @@ def test_choice_probabilities_are_nonempty_and_bounded(
 def test_answers_rejects_empty_request_id() -> None:
     with pytest.raises(ValidationError):
         Answers.model_validate({"request_id": "", "model": "fixture", "answers": {}})
+
+
+def test_fitted_gate_handles_extreme_negative_logit() -> None:
+    from datetime import UTC, datetime
+
+    fitted = fit_weight_set(
+        [(1, {"q": 0.1}, False), (2, {"q": 0.9}, True)],
+        catalogue_version="a" * 64,
+        c_fp=1.0,
+        c_fn=1.0,
+        fitted_at=datetime(2026, 9, 17, tzinfo=UTC),
+    ).model_copy(update={"weights": {"q": -1000.0}, "bias": 0.0})
+    decision = apply_weight_set(
+        Answers.model_validate(
+            {
+                "request_id": "request",
+                "model": "fixture",
+                "answers": {"q": {"kind": "probability", "probability": 1.0}},
+            }
+        ),
+        fitted,
+    )
+    assert decision.p_eligible == 0.0
+    assert not decision.eligible

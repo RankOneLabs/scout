@@ -55,6 +55,39 @@ If you can't draw the data flow as a DAG where each node is a pure-ish transform
 
 Relevance labels judge content only; whether the *account* is worth engaging is a separate dimension that the manual blocklist expresses. `scanning.author_class.classify_author` is the first automatic signal on that dimension: a pure transform from display name and handle to an `AuthorClassification` (`aggregator` or `unknown`, the rule version, and the text that matched), keyed on a lexicon of feed, bot and news terms. The scan runner's `_annotate_author` node runs it for every persisted post, blocked authors included, and upserts one row per author into `author_classifications` (schema v42). It annotates, never gates: an unblocked aggregator still flows into evaluation, a storage failure is logged and evaluation continues, and the review UI shows the class beside the block button so a reviewer can act on it. `tests/fixtures/author_classifier/acceptance.json` pins the rule against the blocklist and the human-graded relevant authors; a rule change bumps `AUTHOR_CLASS_RULE_VERSION` and re-scores that fixture.
 
+## Typesafe relevance is a parallel, non-gating node
+
+The typesafe classifier is a sibling of the author-annotation node, not a
+stage in the relevance/drafting pipeline. After fetch and deduplication the scan
+runner starts it as a background task, records its output in
+`shadow_relevance_runs`, and later backfills the evaluation link when one is
+available. Failure is logged and contained. Its answer and decision never alter
+the pipeline result, relevance score, review status, or surfaced draft.
+
+Question catalogues are versioned data, not code-generated SDK objects. A
+canonical content hash identifies the exact question set and decision mapping;
+each shadow row stores that catalogue version and the tagged answers. Offline
+fitting loads an existing `RelevanceTask` and its `FrozenPartition`, hard-refuses
+anything except `train`, restricts the SQL join to those train evaluation IDs,
+and joins one catalogue version to the snapshot-pinned finalized grade
+revisions. Pure feature extraction maps probability answers, score levels, and
+choice questions with a `none` option to numeric features. Scikit-learn fits L2
+logistic weights, which remain a versioned `WeightSet` on disk. The scan path
+does not discover or load fitted weights; `fitted_gate/<weight_set_version>` is
+registered explicitly only for tests and a possible future promotion.
+
+“Shadow” therefore has three distinct meanings in Scout:
+
+- PAA deployment mode `shadow` is the autonomy position declared in
+  `contracts/paa/*.yaml`; it describes whether a declared task may affect the
+  world.
+- Feedback snapshot mode `shadow`, selected by `FEEDBACK_PROMPT_ENABLED` in
+  `config.py` and retained by `paa/replay_records.py`, records feedback without
+  supplying it to live prompts.
+- The typesafe shadow classifier described here runs beside the production
+  pipeline and writes advisory observations to `shadow_relevance_runs` without
+  touching the pipeline result.
+
 ## PAA task declarations as a typed evaluator-identity boundary
 
 Scout takes the PAA contract and its reference control plane from

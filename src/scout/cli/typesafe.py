@@ -1,18 +1,45 @@
-"""CLI adapter for the read-only typesafe shadow report."""
+"""CLI adapters for typesafe shadow reporting and offline training fits."""
 
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+import hashlib
+import json
+import sqlite3
+import sys
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
+from pydantic import ValidationError
+
+from scout.grading.assistance_scope import read_assistance_bundle
+from scout.grading.assistance_types import FrozenPartition
+from scout.grading.snapshots import CorpusSnapshot
+from scout.replay.tasks import EXPERIMENT_TASK_ADAPTER, RelevanceTask
+from scout.result import Err
 from scout.storage.db import read_only_connection
 from scout.storage.shadow_relevance import ShadowRelevanceStore
+from scout.typesafe.compose import DECIDE_REGISTRY, register_fitted_gate
+from scout.typesafe.fitting import extract_features, fit_weight_set
+from scout.typesafe.models import Answers
 from scout.typesafe.reporting import (
     FixtureReplayUnavailableError,
     build_report,
     render_text,
     replay_acceptance_fixture,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class TypesafeFitError(RuntimeError):
+    """Typed, operator-facing fitting refusal."""
+
+    code: str
+    detail: str
+
+    def __str__(self) -> str:
+        return f"{self.code}: {self.detail}"
 
 
 def _iso8601(value: str) -> str:
@@ -36,9 +63,230 @@ def add_typesafe_parser(
     selector.add_argument("--scan-id", type=int)
     report.add_argument("--json", action="store_true")
     report.add_argument("--db-path", default=db_path)
+    fit = commands.add_parser("fit", help="Fit a train-only shadow relevance gate")
+    fit.add_argument("--task", required=True, help="RelevanceTask JSON or path to its JSON file")
+    fit.add_argument("--catalogue-version", required=True, type=_sha256)
+    fit.add_argument("--out", required=True, type=Path)
+    fit.add_argument("--c-fp", type=_positive_cost, default=1.0)
+    fit.add_argument("--c-fn", type=_positive_cost, default=1.0)
+    fit.add_argument("--db-path", default=db_path)
+
+
+def _sha256(value: str) -> str:
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise argparse.ArgumentTypeError("must be a lowercase SHA-256 digest")
+    return value
+
+
+def _positive_cost(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive finite number") from exc
+    if not (parsed > 0.0 and parsed < float("inf")):
+        raise argparse.ArgumentTypeError("must be a positive finite number")
+    return parsed
+
+
+def _task_bytes(value: str) -> bytes:
+    if value.lstrip().startswith("{"):
+        return value.encode()
+    try:
+        return Path(value).read_bytes()
+    except OSError as exc:
+        raise TypesafeFitError("invalid_task", str(exc)) from exc
+
+
+def _parse_fit_task(task_value: str) -> RelevanceTask:
+    try:
+        parsed = EXPERIMENT_TASK_ADAPTER.validate_json(_task_bytes(task_value))
+    except ValidationError as exc:
+        raise TypesafeFitError("invalid_task", str(exc)) from exc
+    if not isinstance(parsed, RelevanceTask):
+        raise TypesafeFitError("invalid_task", "fit requires a relevance task")
+    # This refusal intentionally precedes opening SQLite. It is the leakage guard.
+    if parsed.partition != "train" or parsed.partition_digest is None:
+        raise TypesafeFitError(
+            "train_partition_required",
+            "fitting requires partition='train' with a partition_digest",
+        )
+    return parsed
+
+
+def _load_fit_inputs(
+    parsed: RelevanceTask, conn: sqlite3.Connection
+) -> tuple[FrozenPartition, CorpusSnapshot]:
+    partition_digest = parsed.partition_digest
+    assert partition_digest is not None
+    retained = read_assistance_bundle(conn, (parsed.snapshot_digest, partition_digest))
+    if isinstance(retained, Err):
+        raise TypesafeFitError("load_partition", retained.error.detail)
+    contents = {artifact.digest: artifact.content for artifact in retained.value.artifacts}
+    try:
+        partition = FrozenPartition.model_validate_json(contents[partition_digest])
+        snapshot = CorpusSnapshot.model_validate_json(contents[parsed.snapshot_digest])
+    except (KeyError, ValidationError) as exc:
+        raise TypesafeFitError(
+            "load_partition", "retained partition or snapshot is invalid"
+        ) from exc
+    if partition.snapshot_digest != parsed.snapshot_digest:
+        raise TypesafeFitError("load_partition", "partition belongs to another snapshot")
+    snapshot_members = {member.evaluation_id: member for member in snapshot.members}
+    partition_members = {member.evaluation_id: member for member in partition.members}
+    if len(partition_members) != len(partition.members) or set(partition_members) != set(
+        snapshot_members
+    ):
+        raise TypesafeFitError(
+            "load_partition", "partition must cover each snapshot member exactly once"
+        )
+    if any(
+        member.input_digest != snapshot_members[evaluation_id].input_digest
+        for evaluation_id, member in partition_members.items()
+    ):
+        raise TypesafeFitError("load_partition", "partition input differs from snapshot")
+    return partition, snapshot
+
+
+def _json_bytes(value: object) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
+
+
+def _write_report(
+    out: Path,
+    *,
+    task: RelevanceTask,
+    weight_set_json: bytes,
+    inventory: dict[str, object],
+) -> None:
+    if out.exists():
+        raise TypesafeFitError("output_exists", f"refusing to replace {out}")
+    out.mkdir(parents=True)
+    plan = (
+        "# Typesafe relevance fitting plan\n\n"
+        "Fit an L2 logistic regression only on the pinned FrozenPartition train members. "
+        "The shadow scan remains non-gating and no held-out evaluation id is queried.\n\n"
+        f"- Snapshot: `{task.snapshot_digest}`\n"
+        f"- Partition: `{task.partition_digest}` (`train`)\n"
+    ).encode()
+    decisions = inventory["training_decisions"]
+    assert isinstance(decisions, list)
+    correct = sum(item["decision"] == item["human_relevant"] for item in decisions)
+    results = (
+        "# Typesafe relevance fitting results\n\n"
+        f"Fitted {len(decisions)} finalized training rows. "
+        f"The fitted gate reproduced {correct}/{len(decisions)} training labels.\n\n"
+        "The complete per-evaluation decisions are recorded in `inventory.json`; "
+        "`weight-set.json` is data for tests and future promotion only.\n"
+    ).encode()
+    files = {
+        "PLAN.md": plan,
+        "RESULTS.md": results,
+        "inventory.json": _json_bytes(inventory),
+        "weight-set.json": weight_set_json,
+    }
+    for name, content in files.items():
+        (out / name).write_bytes(content)
+    checksums = {
+        name: hashlib.sha256(content).hexdigest() for name, content in sorted(files.items())
+    }
+    (out / "checksums.json").write_bytes(_json_bytes(checksums))
+
+
+def run_fit(args: argparse.Namespace) -> int:
+    task = _parse_fit_task(args.task)
+    with read_only_connection(args.db_path) as conn:
+        partition, snapshot = _load_fit_inputs(task, conn)
+        train_ids = {
+            member.evaluation_id for member in partition.members if member.partition == "train"
+        }
+        revisions = {
+            member.evaluation_id: member.grade_revision_id
+            for member in snapshot.members
+            if member.evaluation_id in train_ids
+        }
+        stored_rows = ShadowRelevanceStore.fitting_rows(
+            conn,
+            catalogue_version=args.catalogue_version,
+            finalized_revisions=revisions,
+        )
+    fitted_ids = {row.evaluation_id for row in stored_rows}
+    if fitted_ids != train_ids:
+        missing = sorted(train_ids - fitted_ids)
+        unexpected = sorted(fitted_ids - train_ids)
+        raise TypesafeFitError(
+            "fit_unavailable",
+            f"training row coverage differs; missing={missing}, unexpected={unexpected}",
+        )
+    feature_rows: list[tuple[int, dict[str, float], bool]] = []
+    answers_by_id: dict[int, Answers] = {}
+    expected_labels = {
+        member.evaluation_id: member.is_relevant
+        for member in snapshot.members
+        if member.evaluation_id in train_ids
+    }
+    for row in stored_rows:
+        if row.human_relevant != expected_labels[row.evaluation_id]:
+            raise TypesafeFitError(
+                "label_mismatch", f"finalized label differs from snapshot for {row.evaluation_id}"
+            )
+        answers = Answers.model_validate(row.answers)
+        try:
+            features = extract_features(answers)
+        except ValueError as exc:
+            raise TypesafeFitError(
+                "invalid_answers",
+                f"invalid answers for evaluation {row.evaluation_id}: {exc}",
+            ) from exc
+        answers_by_id[row.evaluation_id] = answers
+        feature_rows.append((row.evaluation_id, features, row.human_relevant))
+    try:
+        weight_set = fit_weight_set(
+            feature_rows,
+            catalogue_version=args.catalogue_version,
+            c_fp=args.c_fp,
+            c_fn=args.c_fn,
+            fitted_at=datetime.now(UTC),
+        )
+    except ValueError as exc:
+        raise TypesafeFitError("fit_unavailable", str(exc)) from exc
+    gate_name = register_fitted_gate(weight_set)
+    decide = DECIDE_REGISTRY[gate_name]
+    training_decisions = [
+        {
+            "evaluation_id": evaluation_id,
+            "human_relevant": label,
+            "decision": decide(answers_by_id[evaluation_id]).eligible,
+            "p_eligible": decide(answers_by_id[evaluation_id]).p_eligible,
+        }
+        for evaluation_id, _features, label in feature_rows
+    ]
+    inventory: dict[str, object] = {
+        "format": "scout.typesafe-fit-inventory/v1",
+        "catalogue_version": args.catalogue_version,
+        "weight_set_version": weight_set.weight_set_version,
+        "row_digest": weight_set.row_digest,
+        "partition": "train",
+        "train_evaluation_ids": sorted(train_ids),
+        "fitted_evaluation_ids": [row[0] for row in feature_rows],
+        "training_decisions": training_decisions,
+    }
+    _write_report(
+        args.out,
+        task=task,
+        weight_set_json=(weight_set.model_dump_json(indent=2) + "\n").encode(),
+        inventory=inventory,
+    )
+    print(f"Wrote fitted gate {gate_name} and report to {args.out}")
+    return 0
 
 
 def run_typesafe(args: argparse.Namespace) -> int:
+    if getattr(args, "typesafe_command", "report") == "fit":
+        try:
+            return run_fit(args)
+        except (TypesafeFitError, OSError, sqlite3.Error, ValidationError) as exc:
+            print(f"Cannot fit typesafe gate: {exc}", file=sys.stderr)
+            return 2
     with read_only_connection(args.db_path) as conn:
         if not ShadowRelevanceStore.table_exists(conn):
             print("shadow_relevance_runs is not present; this database predates schema v47.")
