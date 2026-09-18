@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectReviewCosts, selectReviewStatus, selectReviewScore } from "@/lib/review-selectors";
+import { selectReviewCosts, selectReviewStatus, selectReviewScore, selectShadowRelevanceBadge } from "@/lib/review-selectors";
 import type { ReviewDisposition } from "@/types/review-queues";
 
 const observation: ReviewDisposition = {
@@ -39,5 +39,21 @@ describe("queue review projections", () => {
   });
   it("skip does not masquerade as a grade", () => {
     expect(selectReviewStatus({ grade: null, revisionId: null, disposition: observation })).toBe("skipped");
+  });
+});
+
+describe("shadow relevance badge projection", () => {
+  const run = { id: 1, evaluation_id: 2, eligible: true, p_eligible: 0.91,
+    uncertain: false, reason: "threshold met", details: { high: 2 },
+    account_label: null, account_confidence: null, status: "ok" as const,
+    error_detail: null, created_at: "2026-09-17T00:00:00Z" };
+  it("projects an eligible decision", () => {
+    expect(selectShadowRelevanceBadge(run)).toMatchObject({ label: "shadow eligible", tone: "positive" });
+  });
+  it("makes uncertainty visible", () => {
+    expect(selectShadowRelevanceBadge({ ...run, uncertain: true })).toMatchObject({ label: "shadow eligible?", tone: "warning" });
+  });
+  it("prefers error detail for failed rows", () => {
+    expect(selectShadowRelevanceBadge({ ...run, status: "error", error_detail: "backend timeout" })).toMatchObject({ label: "shadow error", tone: "error", title: "backend timeout" });
   });
 });
