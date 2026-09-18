@@ -73,3 +73,24 @@ threshold.
 
 For replaying recorded production phases against candidate prompts or models,
 see [Offline replay](operations/offline-replay.md).
+
+## Typesafe shadow visibility
+
+When schema v47 shadow data is available, each review evaluation shows the
+latest shadow relevance verdict beside the author-class badge. The badge is
+advisory: it includes eligibility, uncertainty, the stored reason, and the
+band distribution from the decision details without affecting review state.
+Older databases continue to render without the badge.
+
+Operators can compare the latest shadow verdict per evaluation with the LLM
+relevance result and any finalized human grade:
+
+```bash
+uv run scout typesafe report --since 2026-09-01T00:00:00Z
+uv run scout typesafe report --scan-id 42 --json
+```
+
+The summary includes agreement counts and an offline replay of the checked-in
+placeholder acceptance fixture, making catalogue or decision-mapping drift
+visible. If `shadow_relevance_runs` is absent, the command explains that the
+database predates schema v47 and exits successfully.

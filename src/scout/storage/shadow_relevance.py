@@ -66,6 +66,22 @@ class ShadowRun:
     created_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class ShadowReportRow:
+    evaluation_id: int
+    scan_id: int | None
+    created_at: str
+    status: Literal["ok", "error"]
+    eligible: bool | None
+    p_eligible: float | None
+    uncertain: bool | None
+    reason: str | None
+    error_detail: str | None
+    llm_relevant: bool
+    llm_score: float
+    human_grade: str | None
+
+
 def _json(value: dict[str, object] | None) -> str | None:
     return None if value is None else json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -168,3 +184,65 @@ class ShadowRelevanceStore:
             (created_at,),
         ).fetchall()
         return [_row(row) for row in rows]
+
+    @staticmethod
+    def table_exists(conn: sqlite3.Connection) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("shadow_relevance_runs",),
+        ).fetchone() is not None
+
+    @staticmethod
+    def report_rows(
+        conn: sqlite3.Connection, *, since: str | None = None, scan_id: int | None = None
+    ) -> list[ShadowReportRow]:
+        """Read the latest shadow run per evaluation for the operator report.
+
+        SQL lives in the typed repository; the CLI consumes only named rows.
+        A grade is exposed only when its immutable finalized revision exists.
+        """
+        condition = "sr.scan_id = ?" if scan_id is not None else "sr.created_at >= ?"
+        parameter: str | int = scan_id if scan_id is not None else since or ""
+        rows = conn.execute(
+            f"""
+            SELECT sr.evaluation_id, sr.scan_id, sr.created_at, sr.status,
+                   sr.eligible, sr.p_eligible, sr.uncertain,
+                   json_extract(sr.decision_json, '$.reason') AS reason,
+                   sr.error_detail, e.relevant AS llm_relevant, e.score AS llm_score,
+                   json_extract(gr.payload, '$.relevance_judgment') AS human_grade
+              FROM shadow_relevance_runs sr
+              JOIN evaluations e ON e.id = sr.evaluation_id
+              LEFT JOIN grades g ON g.id = (
+                   SELECT candidate.id FROM grades candidate
+                    WHERE candidate.evaluation_id = e.id
+                    ORDER BY candidate.id DESC LIMIT 1
+              )
+              LEFT JOIN grade_revisions gr ON gr.id = (
+                   SELECT revision.id FROM grade_revisions revision
+                    WHERE revision.grade_id = g.id
+                    ORDER BY revision.revision DESC LIMIT 1
+              )
+             WHERE {condition}
+               AND NOT EXISTS (
+                   SELECT 1 FROM shadow_relevance_runs newer
+                    WHERE newer.evaluation_id = sr.evaluation_id
+                      AND (newer.created_at > sr.created_at
+                           OR (newer.created_at = sr.created_at AND newer.id > sr.id))
+               )
+             ORDER BY sr.created_at, sr.id
+            """,  # noqa: S608 -- condition is selected from two constant strings
+            (parameter,),
+        ).fetchall()
+        return [
+            ShadowReportRow(
+                evaluation_id=row["evaluation_id"], scan_id=row["scan_id"],
+                created_at=row["created_at"], status=row["status"],
+                eligible=None if row["eligible"] is None else bool(row["eligible"]),
+                p_eligible=row["p_eligible"],
+                uncertain=None if row["uncertain"] is None else bool(row["uncertain"]),
+                reason=row["reason"], error_detail=row["error_detail"],
+                llm_relevant=bool(row["llm_relevant"]), llm_score=row["llm_score"],
+                human_grade=row["human_grade"],
+            )
+            for row in rows
+        ]

@@ -1,4 +1,4 @@
-import type { Grade } from "@/types/schema";
+import type { Grade, ShadowRelevanceRunRow } from "@/types/schema";
 import type { QueueReviewItem, ReviewCosts, ReviewDisposition, ReviewStatus, ReviewScorePresentation } from "@/types/review-queues";
 
 export function selectReviewScore(score: QueueReviewItem["score"]): ReviewScorePresentation | null {
@@ -48,5 +48,30 @@ export function selectReviewProgress(items: QueueReviewItem[]) {
     reviewed: items.filter((item) => item.status === "reviewed").length,
     skipped: items.filter((item) => item.status === "skipped").length,
     graded_elsewhere: items.filter((item) => item.status === "graded_elsewhere").length,
+  };
+}
+
+export interface ShadowRelevanceBadgeViewModel {
+  label: string;
+  tone: "positive" | "negative" | "warning" | "error";
+  title: string;
+  details: Record<string, unknown>;
+}
+
+export function selectShadowRelevanceBadge(
+  run: ShadowRelevanceRunRow | null | undefined,
+): ShadowRelevanceBadgeViewModel | null {
+  if (!run) return null;
+  if (run.status === "error") return {
+    label: "shadow error", tone: "error",
+    title: run.error_detail ?? "Shadow relevance run failed.", details: run.details,
+  };
+  const decision = run.eligible ? "eligible" : "ineligible";
+  const probability = run.p_eligible === null ? "" : ` (${run.p_eligible.toFixed(2)})`;
+  return {
+    label: run.uncertain ? `shadow ${decision}?` : `shadow ${decision}`,
+    tone: run.uncertain ? "warning" : run.eligible ? "positive" : "negative",
+    title: `${run.reason ?? "No reason recorded"}${probability}`,
+    details: run.details,
   };
 }

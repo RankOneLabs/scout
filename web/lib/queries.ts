@@ -25,6 +25,7 @@ import {
   type EnvironmentLease,
   type RecoveryOperation,
   type SourceProbeRun,
+  type ShadowRelevanceRunRow,
 } from "@/types/schema";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
 
@@ -1157,6 +1158,18 @@ function getReviewEvaluations({
     author_rule_version: number | null;
     author_matched_text: string | null;
     author_classified_at: string | null;
+    shadow_id: number | null;
+    shadow_evaluation_id: number | null;
+    shadow_eligible: number | null;
+    shadow_p_eligible: number | null;
+    shadow_uncertain: number | null;
+    shadow_reason: string | null;
+    shadow_details: string | null;
+    shadow_account_label: string | null;
+    shadow_account_confidence: number | null;
+    shadow_status: ShadowRelevanceRunRow["status"] | null;
+    shadow_error_detail: string | null;
+    shadow_created_at: string | null;
   }
 
   const authorClassificationSelect = tableNames.has("author_classifications")
@@ -1166,6 +1179,29 @@ function getReviewEvaluations({
         NULL AS author_matched_text, NULL AS author_classified_at`;
   const authorClassificationJoin = tableNames.has("author_classifications")
     ? "LEFT JOIN author_classifications ac ON ac.platform = p.platform AND ac.author_id = p.author_id"
+    : "";
+  const hasShadowRelevance = tableNames.has("shadow_relevance_runs");
+  const shadowSelect = hasShadowRelevance
+    ? `sr.id AS shadow_id, sr.evaluation_id AS shadow_evaluation_id,
+        sr.eligible AS shadow_eligible, sr.p_eligible AS shadow_p_eligible,
+        sr.uncertain AS shadow_uncertain,
+        json_extract(sr.decision_json, '$.reason') AS shadow_reason,
+        json_extract(sr.decision_json, '$.details') AS shadow_details,
+        sr.account_label AS shadow_account_label,
+        sr.account_confidence AS shadow_account_confidence,
+        sr.status AS shadow_status, sr.error_detail AS shadow_error_detail,
+        sr.created_at AS shadow_created_at`
+    : `NULL AS shadow_id, NULL AS shadow_evaluation_id,
+        NULL AS shadow_eligible, NULL AS shadow_p_eligible,
+        NULL AS shadow_uncertain, NULL AS shadow_reason, NULL AS shadow_details,
+        NULL AS shadow_account_label, NULL AS shadow_account_confidence,
+        NULL AS shadow_status, NULL AS shadow_error_detail, NULL AS shadow_created_at`;
+  const shadowJoin = hasShadowRelevance
+    ? `LEFT JOIN shadow_relevance_runs sr ON sr.id = (
+         SELECT candidate.id FROM shadow_relevance_runs candidate
+         WHERE candidate.evaluation_id = e.id
+         ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1
+       )`
     : "";
 
   const queryParams: Array<string | number> = [...params];
@@ -1204,10 +1240,12 @@ function getReviewEvaluations({
         pe.body AS resolved_evaluate_prompt,
         pr.body AS resolved_respond_prompt,
         pc.body AS resolved_critique_prompt,
-        ${authorClassificationSelect}
+        ${authorClassificationSelect},
+        ${shadowSelect}
       FROM evaluations e
       JOIN posts p ON p.id = e.post_id
       ${authorClassificationJoin}
+      ${shadowJoin}
       LEFT JOIN draft_comments d ON d.evaluation_id = e.id
       ${critiqueJoin}
       LEFT JOIN project_keywords pk ON pk.id = e.keyword_route_id
@@ -1272,6 +1310,38 @@ function getReviewEvaluations({
       parent_text: row.parent_text,
       parent_url: row.parent_url,
     });
+    let shadowRelevance: ShadowRelevanceRunRow | null | undefined;
+    if (hasShadowRelevance) {
+      if (row.shadow_id === null) {
+        shadowRelevance = null;
+      } else {
+        const { shadow_evaluation_id, shadow_status, shadow_created_at } = row;
+        if (
+          shadow_evaluation_id === null ||
+          shadow_status === null ||
+          shadow_created_at === null
+        ) {
+          throw new Error(`Shadow relevance run ${row.shadow_id} is missing required fields`);
+        }
+        shadowRelevance = {
+          id: row.shadow_id,
+          evaluation_id: shadow_evaluation_id,
+          eligible: row.shadow_eligible === null ? null : toBool(row.shadow_eligible),
+          p_eligible: row.shadow_p_eligible,
+          uncertain: row.shadow_uncertain === null ? null : toBool(row.shadow_uncertain),
+          reason: row.shadow_reason,
+          details: (() => {
+            try { return JSON.parse(row.shadow_details ?? "{}"); }
+            catch { return {}; }
+          })(),
+          account_label: row.shadow_account_label,
+          account_confidence: row.shadow_account_confidence,
+          status: shadow_status,
+          error_detail: row.shadow_error_detail,
+          created_at: shadow_created_at,
+        };
+      }
+    }
     return {
       id: row.id, post_id: row.post_id, relevant: toBool(row.relevant),
       score: row.score, reason: row.reason, relevant_to: parseRelevantTo(row.relevant_to),
@@ -1309,6 +1379,7 @@ function getReviewEvaluations({
       },
       gate_violations: violationsByEvaluation.get(row.id) ?? [],
       grade: gradesByEvaluation.get(row.id) ?? null,
+      ...(hasShadowRelevance ? { shadow_relevance: shadowRelevance } : {}),
     };
   });
 }
