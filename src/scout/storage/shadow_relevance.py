@@ -82,6 +82,13 @@ class ShadowReportRow:
     human_grade: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ShadowFitRow:
+    evaluation_id: int
+    answers: dict[str, object]
+    human_relevant: bool
+
+
 def _json(value: dict[str, object] | None) -> str | None:
     return None if value is None else json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -246,3 +253,61 @@ class ShadowRelevanceStore:
             )
             for row in rows
         ]
+
+    @staticmethod
+    def fitting_rows(
+        conn: sqlite3.Connection,
+        *,
+        catalogue_version: str,
+        finalized_revisions: dict[int, int],
+    ) -> list[ShadowFitRow]:
+        """Read only pinned train IDs, joined to their exact finalized revisions."""
+        if not finalized_revisions:
+            return []
+        selected = sorted(finalized_revisions.items())
+        values = ", ".join("(?, ?)" for _ in selected)
+        parameters: list[object] = [item for pair in selected for item in pair]
+        parameters.append(catalogue_version)
+        rows = conn.execute(
+            f"""
+            WITH selected(evaluation_id, grade_revision_id) AS (VALUES {values})
+            SELECT selected.evaluation_id, sr.answers_json, e.relevant AS llm_relevant,
+                   json_extract(gr.payload, '$.relevance_judgment') AS human_grade
+              FROM selected
+              JOIN evaluations e ON e.id = selected.evaluation_id
+              JOIN grade_revisions gr
+                ON gr.id = selected.grade_revision_id
+               AND gr.evaluation_id = selected.evaluation_id
+              JOIN shadow_relevance_runs sr ON sr.id = (
+                   SELECT candidate.id
+                     FROM shadow_relevance_runs candidate
+                    WHERE candidate.evaluation_id = selected.evaluation_id
+                      AND candidate.catalogue_version = ?
+                      AND candidate.status = 'ok'
+                      AND candidate.answers_json IS NOT NULL
+                    ORDER BY candidate.created_at DESC, candidate.id DESC
+                    LIMIT 1
+              )
+             ORDER BY selected.evaluation_id
+            """,  # noqa: S608 -- VALUES contains placeholders only
+            parameters,
+        ).fetchall()
+        output: list[ShadowFitRow] = []
+        for row in rows:
+            grade = row["human_grade"]
+            if grade == "correct":
+                relevant = bool(row["llm_relevant"])
+            elif grade == "false_positive":
+                relevant = False
+            elif grade == "false_negative":
+                relevant = True
+            else:
+                continue
+            output.append(
+                ShadowFitRow(
+                    evaluation_id=row["evaluation_id"],
+                    answers=json.loads(row["answers_json"]),
+                    human_relevant=relevant,
+                )
+            )
+        return output
