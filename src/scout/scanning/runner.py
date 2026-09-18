@@ -118,6 +118,7 @@ from scout.typesafe.shadow import ShadowRelevanceRunner
 from scout.verifier import GateViolation, verify_draft_content
 
 logger = logging.getLogger("scout.scanning.runner")
+_SHADOW_SETTLE_TIMEOUT_SECONDS = 0.1
 
 
 def _failure_to_dict(failure: PlatformFetchFailure) -> dict[str, object]:
@@ -889,10 +890,21 @@ async def score_messages(
         if cancel:
             task.cancel()
         try:
-            return await task
+            if cancel:
+                return await task
+            return await asyncio.wait_for(
+                asyncio.shield(task), timeout=_SHADOW_SETTLE_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            logger.warning("typesafe shadow task exceeded settle timeout and was cancelled")
+            return None
         except asyncio.CancelledError:
             current = asyncio.current_task()
             if not cancel and current is not None and current.cancelling():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
                 raise
             return None
         except Exception:

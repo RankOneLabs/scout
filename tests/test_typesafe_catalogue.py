@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from scout.typesafe.catalogue import CatalogueError, load_catalogue
 
@@ -36,3 +37,19 @@ def test_catalogue_rejects_unsupported_values(
     path.write_text(yaml.safe_dump(raw))
     with pytest.raises(CatalogueError, match=match):
         load_catalogue(path)
+
+
+def test_loaded_catalogue_is_deeply_immutable() -> None:
+    catalogue = load_catalogue(FIXTURE)
+    question = catalogue.document.questions[1]
+
+    with pytest.raises(ValidationError, match="frozen"):
+        catalogue.document.description = "changed"
+    with pytest.raises(TypeError):
+        catalogue.document.state.post[0] = "changed"
+    with pytest.raises(TypeError):
+        question.choices[0] = "changed"
+    with pytest.raises(TypeError, match="immutable"):
+        question.__pydantic_extra__["prompt"] = "changed"  # type: ignore[index]
+
+    assert load_catalogue(FIXTURE).version == catalogue.version

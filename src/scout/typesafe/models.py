@@ -7,33 +7,34 @@ from typing import Annotated, Literal, NewType
 from pydantic import BaseModel, ConfigDict, Field
 
 CatalogueVersion = NewType("CatalogueVersion", str)
+Probability = Annotated[float, Field(ge=0, le=1)]
 
 
 class ProbabilityAnswer(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["probability"] = "probability"
-    probability: float = Field(ge=0, le=1)
-    confidence: float = Field(default=1.0, ge=0, le=1)
+    probability: Probability
+    confidence: Probability = 1.0
 
 
 class ChoiceAnswer(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["choice"] = "choice"
-    probabilities: dict[str, float]
-    confidence: float = Field(ge=0, le=1)
+    probabilities: dict[str, Probability] = Field(min_length=1)
+    confidence: Probability
 
 
 class LevelProbability(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     level: str
-    probability: float = Field(ge=0, le=1)
+    probability: Probability
 
 
 class ScoreAnswer(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["score"] = "score"
     levels: list[LevelProbability]
-    confidence: float = Field(ge=0, le=1)
+    confidence: Probability
 
 
 Answer = Annotated[
@@ -51,7 +52,7 @@ class Usage(BaseModel):
 class Answers(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     answers: dict[str, Answer]
-    request_id: str
+    request_id: str = Field(min_length=1)
     model: str
     usage: Usage = Field(default_factory=Usage)
     latency_ms: int = Field(default=0, ge=0)

@@ -6,6 +6,9 @@ from collections.abc import Callable
 
 from scout.typesafe.models import Answers, ChoiceAnswer, DecisionRecord, ProbabilityAnswer
 
+RELEVANCE_QUESTION_ID = "relevance"
+ACCOUNT_TYPE_QUESTION_ID = "account_type"
+
 
 def derive_band(confidence: float) -> str:
     if confidence >= 0.8:
@@ -15,37 +18,40 @@ def derive_band(confidence: float) -> str:
     return "low"
 
 
-def _probability(answers: Answers) -> tuple[str, ProbabilityAnswer]:
-    for question_id, answer in answers.answers.items():
-        if isinstance(answer, ProbabilityAnswer):
-            return question_id, answer
-    raise ValueError("gate_v1 requires a probability answer")
+def _probability(answers: Answers) -> ProbabilityAnswer:
+    answer = answers.answers.get(RELEVANCE_QUESTION_ID)
+    if not isinstance(answer, ProbabilityAnswer):
+        raise ValueError("gate_v1 requires a 'relevance' probability answer")
+    return answer
+
+
+def _account_type(answers: Answers) -> ChoiceAnswer:
+    answer = answers.answers.get(ACCOUNT_TYPE_QUESTION_ID)
+    if not isinstance(answer, ChoiceAnswer):
+        raise ValueError("account annotation requires an 'account_type' choice answer")
+    return answer
 
 
 def account_annotation(answers: Answers) -> DecisionRecord:
-    for question_id, answer in answers.answers.items():
-        if isinstance(answer, ChoiceAnswer):
-            label, probability = max(answer.probabilities.items(), key=lambda item: item[1])
-            return DecisionRecord(
-                eligible=True,
-                p_eligible=1.0,
-                uncertain=answer.confidence < 0.5,
-                reason="account annotation pass-through",
-                account_label=label,
-                account_confidence=answer.confidence,
-                details={"question_id": question_id, "label_probability": probability},
-            )
-    raise ValueError("account_annotation requires a choice answer")
+    answer = _account_type(answers)
+    label, probability = max(answer.probabilities.items(), key=lambda item: item[1])
+    return DecisionRecord(
+        eligible=True,
+        p_eligible=1.0,
+        uncertain=answer.confidence < 0.5,
+        reason="account annotation pass-through",
+        account_label=label,
+        account_confidence=answer.confidence,
+        details={"question_id": ACCOUNT_TYPE_QUESTION_ID, "label_probability": probability},
+    )
 
 
 def gate_v1(answers: Answers) -> DecisionRecord:
-    question_id, answer = _probability(answers)
-    annotation: ChoiceAnswer | None = next(
-        (value for value in answers.answers.values() if isinstance(value, ChoiceAnswer)), None
-    )
+    answer = _probability(answers)
+    annotation = answers.answers.get(ACCOUNT_TYPE_QUESTION_ID)
     label: str | None = None
     account_confidence: float | None = None
-    if annotation is not None and annotation.probabilities:
+    if isinstance(annotation, ChoiceAnswer):
         label = max(annotation.probabilities.items(), key=lambda item: item[1])[0]
         account_confidence = annotation.confidence
     uncertain = answer.confidence < 0.5 or 0.4 < answer.probability < 0.6
@@ -60,7 +66,10 @@ def gate_v1(answers: Answers) -> DecisionRecord:
         ),
         account_label=label,
         account_confidence=account_confidence,
-        details={"question_id": question_id, "confidence_band": derive_band(answer.confidence)},
+        details={
+            "question_id": RELEVANCE_QUESTION_ID,
+            "confidence_band": derive_band(answer.confidence),
+        },
     )
 
 

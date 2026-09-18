@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from scout.typesafe.models import CatalogueVersion
 
@@ -25,12 +25,40 @@ class CatalogueError(ValueError):
     """A catalogue cannot be used by the production projection/decide path."""
 
 
+class _FrozenDict(dict[str, Any]):
+    """JSON-serializable mapping that rejects mutation at every public entry point."""
+
+    @staticmethod
+    def _immutable(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("catalogue question metadata is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable  # type: ignore[assignment]
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable  # type: ignore[assignment]
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _FrozenDict({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_freeze(item) for item in value)
+    return value
+
+
 class StateProjection(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-    post: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+    post: tuple[str, ...] = ()
     parent_context_only: bool = False
-    author: list[str] = Field(default_factory=list)
-    project: list[str] = Field(default_factory=list)
+    author: tuple[str, ...] = ()
+    project: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_fields(self) -> StateProjection:
@@ -51,17 +79,27 @@ class StateProjection(BaseModel):
 class Question(BaseModel):
     """Question metadata; unknown SDK fields are intentionally retained verbatim."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(frozen=True, extra="allow")
     id: str
+
+    def model_post_init(self, context: Any, /) -> None:
+        del context
+        extras = self.__pydantic_extra__
+        if extras:
+            object.__setattr__(
+                self,
+                "__pydantic_extra__",
+                _FrozenDict({key: _freeze(value) for key, value in extras.items()}),
+            )
 
 
 class CatalogueDocument(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid")
     id: str
     decide: str
     description: str
     state: StateProjection
-    questions: list[Question]
+    questions: tuple[Question, ...]
 
     @model_validator(mode="after")
     def validate_decide(self) -> CatalogueDocument:

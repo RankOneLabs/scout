@@ -78,7 +78,7 @@ class ShadowRelevanceRunner:
             request_id = fallback_request_id
             detail = f"{type(exc).__name__}: {exc}"
 
-        state_manager.shadow_relevance.record_shadow_run(
+        row = state_manager.shadow_relevance.record_shadow_run(
             ShadowRunWrite(
                 scan_id=scan_id,
                 post_id=post_id,
@@ -93,4 +93,4 @@ class ShadowRelevanceRunner:
             )
         )
         logger.warning("typesafe shadow evaluation failed for post %s: %s", post_id, detail)
-        return None
+        return row.id

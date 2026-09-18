@@ -82,6 +82,31 @@ def _row(row: sqlite3.Row) -> ShadowRun:
     return ShadowRun(**data)
 
 
+_IDEMPOTENT_FIELDS = (
+    "scan_id",
+    "post_id",
+    "backend",
+    "model",
+    "catalogue_id",
+    "catalogue_version",
+    "weight_set_version",
+    "request_id",
+    "state",
+    "answers",
+    "decision",
+    "eligible",
+    "p_eligible",
+    "uncertain",
+    "account_label",
+    "account_confidence",
+    "input_tokens",
+    "output_tokens",
+    "latency_ms",
+    "status",
+    "error_detail",
+)
+
+
 class ShadowRelevanceStore:
     def __init__(self, uow: UnitOfWork) -> None:
         self._uow = uow
@@ -106,14 +131,28 @@ class ShadowRelevanceStore:
                 (run.backend, run.request_id),
             ).fetchone()
         assert row is not None
-        return _row(row)
+        persisted = _row(row)
+        if any(
+            getattr(persisted, field) != getattr(run, field)
+            for field in _IDEMPOTENT_FIELDS
+        ):
+            raise sqlite3.IntegrityError(
+                "conflicting shadow relevance run for backend and request_id"
+            )
+        return persisted
 
     def backfill_evaluation_id(self, run_id: int, evaluation_id: int) -> bool:
         with self._uow.begin_immediate():
             cursor = self._uow.db.execute(
                 "UPDATE shadow_relevance_runs SET evaluation_id = ? "
-                "WHERE id = ? AND evaluation_id IS NULL",
-                (evaluation_id, run_id),
+                "WHERE id = ? AND evaluation_id IS NULL "
+                "AND EXISTS ("
+                "SELECT 1 FROM evaluations "
+                "WHERE evaluations.id = ? "
+                "AND evaluations.scan_id = shadow_relevance_runs.scan_id "
+                "AND evaluations.post_id = shadow_relevance_runs.post_id"
+                ")",
+                (evaluation_id, run_id, evaluation_id),
             )
         return cursor.rowcount == 1
 

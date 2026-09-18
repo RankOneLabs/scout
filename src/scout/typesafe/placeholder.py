@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -29,10 +30,12 @@ class PlaceholderBackend:
         payload = self._answers.get(str(post_id), self._answers["default"])
         try:
             answers = Answers.model_validate(payload)
-            if not known:
-                answers = answers.model_copy(
-                    update={"request_id": f"{answers.request_id}:{post_id}"}
-                )
+            base_request_id = (
+                answers.request_id if known else f"{answers.request_id}:{post_id}"
+            )
+            answers = answers.model_copy(
+                update={"request_id": f"{base_request_id}:{uuid4().hex}"}
+            )
             return Ok(answers)
         except Exception as exc:
             return Err(

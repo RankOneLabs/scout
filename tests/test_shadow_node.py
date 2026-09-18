@@ -144,15 +144,21 @@ async def test_shadow_backend_exception_becomes_error_row(
         scan_id = state.start_scan()
         message = _message("error-post")
         post_id = state.save_post(message, scan_id)
-        assert await runner.run(
+        run_id = await runner.run(
             state_manager=state,
             scan_id=scan_id,
             post_id=post_id,
             message=message,
             project=project,
-        ) is None
+        )
+        assert run_id is not None
+        evaluation_id = state.save_evaluation(
+            RelevanceResult(message, False, 0.1, "pipeline"), post_id, scan_id
+        )
+        assert state.shadow_relevance.backfill_evaluation_id(run_id, evaluation_id)
         row = state.shadow_relevance.list_runs_for_scan(scan_id)[0]
         assert row.status == "error"
+        assert row.evaluation_id == evaluation_id
         assert "backend down" in (row.error_detail or "")
         assert "typesafe shadow evaluation failed" in caplog.text
 
@@ -332,6 +338,51 @@ async def test_score_messages_leaves_no_shadow_tasks_on_early_exits(
             await call
 
     assert asyncio.all_tasks() == baseline
+
+
+@pytest.mark.asyncio
+async def test_score_messages_bounds_and_cancels_slow_shadow_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_shadow(monkeypatch)
+    _stub_pipeline_construction(monkeypatch)
+    shadow_cancelled = asyncio.Event()
+
+    async def pending_shadow(
+        self: ShadowRelevanceRunner, **kwargs: object
+    ) -> int | None:
+        del self, kwargs
+        try:
+            await asyncio.Future[None]()
+        finally:
+            shadow_cancelled.set()
+        return None
+
+    monkeypatch.setattr(ShadowRelevanceRunner, "run", pending_shadow)
+    monkeypatch.setattr(
+        scan_runner,
+        "run_pipeline",
+        AsyncMock(side_effect=RuntimeError("continue")),
+    )
+
+    with StateManager(":memory:") as state:
+        state.registry.upsert_project("agent-ops", "Agent Ops", "desc", "https://example.test")
+        state.registry.upsert_keyword("agent-ops", "agent")
+        route = state.load_runtime_registry().keywords[0]
+        scan_id = state.start_scan()
+        await asyncio.wait_for(
+            _score(
+                state,
+                scan_id,
+                [RoutedMessage(message=_message("known-post"), keyword_route=route)],
+                {"agent-ops": _project()},
+                tmp_path / "digest.md",
+            ),
+            timeout=1.0,
+        )
+
+    assert shadow_cancelled.is_set()
 
 
 @pytest.mark.asyncio
