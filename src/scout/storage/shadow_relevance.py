@@ -264,13 +264,14 @@ class ShadowRelevanceStore:
         """Read only pinned train IDs, joined to their exact finalized revisions."""
         if not finalized_revisions:
             return []
-        selected = sorted(finalized_revisions.items())
-        values = ", ".join("(?, ?)" for _ in selected)
-        parameters: list[object] = [item for pair in selected for item in pair]
-        parameters.append(catalogue_version)
+        selected = json.dumps(sorted(finalized_revisions.items()), separators=(",", ":"))
         rows = conn.execute(
-            f"""
-            WITH selected(evaluation_id, grade_revision_id) AS (VALUES {values})
+            """
+            WITH selected(evaluation_id, grade_revision_id) AS (
+                SELECT CAST(json_extract(value, '$[0]') AS INTEGER),
+                       CAST(json_extract(value, '$[1]') AS INTEGER)
+                  FROM json_each(?)
+            )
             SELECT selected.evaluation_id, sr.answers_json, e.relevant AS llm_relevant,
                    json_extract(gr.payload, '$.relevance_judgment') AS human_grade
               FROM selected
@@ -289,8 +290,8 @@ class ShadowRelevanceStore:
                     LIMIT 1
               )
              ORDER BY selected.evaluation_id
-            """,  # noqa: S608 -- VALUES contains placeholders only
-            parameters,
+            """,
+            (selected, catalogue_version),
         ).fetchall()
         output: list[ShadowFitRow] = []
         for row in rows:

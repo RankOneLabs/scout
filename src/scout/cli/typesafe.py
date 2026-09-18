@@ -97,9 +97,7 @@ def _task_bytes(value: str) -> bytes:
         raise TypesafeFitError("invalid_task", str(exc)) from exc
 
 
-def _load_fit_inputs(
-    task_value: str, db_path: str
-) -> tuple[RelevanceTask, FrozenPartition, CorpusSnapshot]:
+def _parse_fit_task(task_value: str) -> RelevanceTask:
     try:
         parsed = EXPERIMENT_TASK_ADAPTER.validate_json(_task_bytes(task_value))
     except ValidationError as exc:
@@ -112,18 +110,20 @@ def _load_fit_inputs(
             "train_partition_required",
             "fitting requires partition='train' with a partition_digest",
         )
-    try:
-        with read_only_connection(db_path) as conn:
-            retained = read_assistance_bundle(
-                conn, (parsed.snapshot_digest, parsed.partition_digest)
-            )
-    except (OSError, sqlite3.Error) as exc:
-        raise TypesafeFitError("load_partition", str(exc)) from exc
+    return parsed
+
+
+def _load_fit_inputs(
+    parsed: RelevanceTask, conn: sqlite3.Connection
+) -> tuple[FrozenPartition, CorpusSnapshot]:
+    partition_digest = parsed.partition_digest
+    assert partition_digest is not None
+    retained = read_assistance_bundle(conn, (parsed.snapshot_digest, partition_digest))
     if isinstance(retained, Err):
         raise TypesafeFitError("load_partition", retained.error.detail)
     contents = {artifact.digest: artifact.content for artifact in retained.value.artifacts}
     try:
-        partition = FrozenPartition.model_validate_json(contents[parsed.partition_digest])
+        partition = FrozenPartition.model_validate_json(contents[partition_digest])
         snapshot = CorpusSnapshot.model_validate_json(contents[parsed.snapshot_digest])
     except (KeyError, ValidationError) as exc:
         raise TypesafeFitError(
@@ -131,7 +131,20 @@ def _load_fit_inputs(
         ) from exc
     if partition.snapshot_digest != parsed.snapshot_digest:
         raise TypesafeFitError("load_partition", "partition belongs to another snapshot")
-    return parsed, partition, snapshot
+    snapshot_members = {member.evaluation_id: member for member in snapshot.members}
+    partition_members = {member.evaluation_id: member for member in partition.members}
+    if len(partition_members) != len(partition.members) or set(partition_members) != set(
+        snapshot_members
+    ):
+        raise TypesafeFitError(
+            "load_partition", "partition must cover each snapshot member exactly once"
+        )
+    if any(
+        member.input_digest != snapshot_members[evaluation_id].input_digest
+        for evaluation_id, member in partition_members.items()
+    ):
+        raise TypesafeFitError("load_partition", "partition input differs from snapshot")
+    return partition, snapshot
 
 
 def _json_bytes(value: object) -> bytes:
@@ -180,23 +193,29 @@ def _write_report(
 
 
 def run_fit(args: argparse.Namespace) -> int:
-    task, partition, snapshot = _load_fit_inputs(args.task, args.db_path)
-    train_ids = {
-        member.evaluation_id for member in partition.members if member.partition == "train"
-    }
-    revisions = {
-        member.evaluation_id: member.grade_revision_id
-        for member in snapshot.members
-        if member.evaluation_id in train_ids
-    }
-    if set(revisions) != train_ids:
-        raise TypesafeFitError("load_partition", "train members are absent from the snapshot")
-    # Partition and snapshot are fully loaded and checked before this fit-row read.
+    task = _parse_fit_task(args.task)
     with read_only_connection(args.db_path) as conn:
+        partition, snapshot = _load_fit_inputs(task, conn)
+        train_ids = {
+            member.evaluation_id for member in partition.members if member.partition == "train"
+        }
+        revisions = {
+            member.evaluation_id: member.grade_revision_id
+            for member in snapshot.members
+            if member.evaluation_id in train_ids
+        }
         stored_rows = ShadowRelevanceStore.fitting_rows(
             conn,
             catalogue_version=args.catalogue_version,
             finalized_revisions=revisions,
+        )
+    fitted_ids = {row.evaluation_id for row in stored_rows}
+    if fitted_ids != train_ids:
+        missing = sorted(train_ids - fitted_ids)
+        unexpected = sorted(fitted_ids - train_ids)
+        raise TypesafeFitError(
+            "fit_unavailable",
+            f"training row coverage differs; missing={missing}, unexpected={unexpected}",
         )
     feature_rows: list[tuple[int, dict[str, float], bool]] = []
     answers_by_id: dict[int, Answers] = {}
@@ -211,10 +230,15 @@ def run_fit(args: argparse.Namespace) -> int:
                 "label_mismatch", f"finalized label differs from snapshot for {row.evaluation_id}"
             )
         answers = Answers.model_validate(row.answers)
+        try:
+            features = extract_features(answers)
+        except ValueError as exc:
+            raise TypesafeFitError(
+                "invalid_answers",
+                f"invalid answers for evaluation {row.evaluation_id}: {exc}",
+            ) from exc
         answers_by_id[row.evaluation_id] = answers
-        feature_rows.append(
-            (row.evaluation_id, extract_features(answers), row.human_relevant)
-        )
+        feature_rows.append((row.evaluation_id, features, row.human_relevant))
     try:
         weight_set = fit_weight_set(
             feature_rows,

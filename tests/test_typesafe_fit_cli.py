@@ -202,6 +202,43 @@ def test_fit_writes_september_report_and_registered_gate_reproduces_decisions(
     DECIDE_REGISTRY.pop(name)
 
 
+def test_fit_refuses_incomplete_training_rows(tmp_path, capsys) -> None:
+    db_path = tmp_path / "fit.db"
+    task, _answers = _seed_fit_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM shadow_relevance_runs WHERE evaluation_id = 2")
+    out = tmp_path / "evidence"
+    assert run_typesafe(_args(db_path, task, out)) == 2
+    assert "missing=[2]" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_fit_reports_duplicate_score_levels_as_invalid_answers(tmp_path, capsys) -> None:
+    db_path = tmp_path / "fit.db"
+    task, _answers = _seed_fit_db(db_path)
+    duplicate = {
+        "answers": {
+            "quality": {
+                "kind": "score",
+                "levels": [
+                    {"level": "high", "probability": 0.4},
+                    {"level": "high", "probability": 0.6},
+                ],
+                "confidence": 0.7,
+            }
+        },
+        "request_id": "duplicate",
+        "model": "placeholder/v1",
+    }
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE shadow_relevance_runs SET answers_json = ? WHERE evaluation_id = 1",
+            (json.dumps(duplicate),),
+        )
+    assert run_typesafe(_args(db_path, task, tmp_path / "evidence")) == 2
+    assert "invalid_answers" in capsys.readouterr().err
+
+
 def test_env_example_lists_every_typesafe_variable_read_by_config() -> None:
     config = Path("src/scout/config.py").read_text()
     names = set(re.findall(r'["\'](TYPESAFE_[A-Z0-9_]+)["\']', config))

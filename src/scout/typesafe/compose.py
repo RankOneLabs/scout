@@ -90,7 +90,11 @@ def apply_weight_set(answers: Answers, weight_set: WeightSet) -> DecisionRecord:
         coefficient * features.get(key, 0.0)
         for key, coefficient in weight_set.weights.items()
     )
-    probability = 1.0 / (1.0 + math.exp(-logit))
+    if logit >= 0:
+        probability = 1.0 / (1.0 + math.exp(-logit))
+    else:
+        exp_logit = math.exp(logit)
+        probability = exp_logit / (1.0 + exp_logit)
     eligible = probability >= weight_set.threshold
     return DecisionRecord(
         eligible=eligible,
