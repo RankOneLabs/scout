@@ -17,6 +17,15 @@ Copy `.env.example` for a complete template.
 | `TRACE_DB_PATH` | `scout_traces.db` | Jig trace database |
 | `FEEDBACK_DB_PATH` | `scout_feedback.db` | Jig feedback database |
 
+## Typesafe shadow relevance
+
+| Variable | Default | Description |
+|---|---:|---|
+| `TYPESAFE_SHADOW_MODE` | `false` | Run the non-gating shadow relevance node for agent-ops routes |
+| `TYPESAFE_SHADOW_BACKEND` | `placeholder` | Shadow backend; only `placeholder` is registered in this release |
+| `TYPESAFE_CATALOGUE_PATH` | packaged `agent-ops-relevance.v0-fixture.yaml` | Validated catalogue YAML path |
+| `TYPESAFE_PLACEHOLDER_ANSWERS_PATH` | unset | Placeholder answer fixture path; required when shadow mode is enabled |
+
 ## Platform limits
 
 | Variable | Default | Description |
