@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
+from scout.typesafe.fitting import extract_features
 from scout.typesafe.models import Answers, ChoiceAnswer, DecisionRecord, ProbabilityAnswer
+from scout.typesafe.weights import WeightSet
 
 RELEVANCE_QUESTION_ID = "relevance"
 ACCOUNT_TYPE_QUESTION_ID = "account_type"
@@ -78,3 +81,43 @@ DECIDE_REGISTRY: dict[str, Decide] = {
     "gate_v1": gate_v1,
     "account_annotation": account_annotation,
 }
+
+
+def apply_weight_set(answers: Answers, weight_set: WeightSet) -> DecisionRecord:
+    """Apply portable weights as a pure transform; fitting is never imported here."""
+    features = extract_features(answers)
+    logit = weight_set.bias + sum(
+        coefficient * features.get(key, 0.0)
+        for key, coefficient in weight_set.weights.items()
+    )
+    probability = 1.0 / (1.0 + math.exp(-logit))
+    eligible = probability >= weight_set.threshold
+    return DecisionRecord(
+        eligible=eligible,
+        p_eligible=probability,
+        uncertain=(
+            weight_set.uncertain_band.lower
+            <= probability
+            <= weight_set.uncertain_band.upper
+        ),
+        reason=(
+            "fitted probability meets cost threshold"
+            if eligible
+            else "fitted probability below cost threshold"
+        ),
+        details={
+            "weight_set_version": weight_set.weight_set_version,
+            "threshold": weight_set.threshold,
+        },
+    )
+
+
+def register_fitted_gate(weight_set: WeightSet) -> str:
+    """Register one explicit fitted gate for tests and future promotion only."""
+    name = f"fitted_gate/{weight_set.weight_set_version}"
+
+    def decide(answers: Answers) -> DecisionRecord:
+        return apply_weight_set(answers, weight_set)
+
+    DECIDE_REGISTRY[name] = decide
+    return name
