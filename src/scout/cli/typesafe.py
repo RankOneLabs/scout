@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
-from pathlib import Path
 
 from scout.storage.db import read_only_connection
 from scout.storage.shadow_relevance import ShadowRelevanceStore
-from scout.typesafe.reporting import build_report, render_text, replay_acceptance_fixture
+from scout.typesafe.reporting import (
+    FixtureReplayUnavailableError,
+    build_report,
+    render_text,
+    replay_acceptance_fixture,
+)
 
 
 def _iso8601(value: str) -> str:
@@ -35,7 +39,6 @@ def add_typesafe_parser(
 
 
 def run_typesafe(args: argparse.Namespace) -> int:
-    fixture = Path(__file__).parents[3] / "tests/fixtures/typesafe/acceptance-cases.json"
     with read_only_connection(args.db_path) as conn:
         if not ShadowRelevanceStore.table_exists(conn):
             print("shadow_relevance_runs is not present; this database predates schema v47.")
@@ -43,6 +46,11 @@ def run_typesafe(args: argparse.Namespace) -> int:
         rows = ShadowRelevanceStore.report_rows(
             conn, since=args.since, scan_id=args.scan_id
         )
-    report = build_report(rows, replay_acceptance_fixture(fixture))
+    try:
+        fixture_check = replay_acceptance_fixture()
+    except FixtureReplayUnavailableError as exc:
+        print(f"Cannot produce typesafe report: {exc}")
+        return 1
+    report = build_report(rows, fixture_check)
     print(report.model_dump_json(indent=2) if args.json else render_text(report))
     return 0

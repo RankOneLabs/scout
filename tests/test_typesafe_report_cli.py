@@ -1,8 +1,15 @@
 import argparse
 import sqlite3
+from importlib.resources import files
 
 from scout.cli.typesafe import run_typesafe
-from scout.typesafe.reporting import TypesafeReport
+from scout.typesafe.reporting import FixtureReplayUnavailableError, TypesafeReport
+
+
+def test_acceptance_fixture_is_packaged_with_scout() -> None:
+    fixture = files("scout.typesafe").joinpath("acceptance-cases.json")
+    assert fixture.is_file()
+    assert '"gate_v1"' in fixture.read_text()
 
 
 def _args(path, **overrides):
@@ -16,6 +23,28 @@ def test_report_missing_table_is_a_clean_noop(tmp_path, capsys) -> None:
     sqlite3.connect(db_path).close()
     assert run_typesafe(_args(db_path)) == 0
     assert "predates schema v47" in capsys.readouterr().out
+
+
+def test_report_explains_when_packaged_fixture_is_unavailable(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    db_path = tmp_path / "report.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE shadow_relevance_runs (id INTEGER PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "scout.storage.shadow_relevance.ShadowRelevanceStore.report_rows",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "scout.cli.typesafe.replay_acceptance_fixture",
+        lambda: (_ for _ in ()).throw(FixtureReplayUnavailableError("fixture missing")),
+    )
+
+    assert run_typesafe(_args(db_path)) == 1
+    assert "Cannot produce typesafe report: fixture missing" in capsys.readouterr().out
 
 
 def test_report_lists_decisions_grade_summary_and_round_trips_json(tmp_path, capsys) -> None:

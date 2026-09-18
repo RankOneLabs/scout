@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -52,8 +54,18 @@ class TypesafeReport(BaseModel):
     placeholder_fixture_replay: FixtureReplayCheck
 
 
-def replay_acceptance_fixture(path: Path) -> FixtureReplayCheck:
-    fixture = json.loads(path.read_text())
+class FixtureReplayUnavailableError(RuntimeError):
+    """Raised when the packaged acceptance fixture cannot be loaded."""
+
+
+def replay_acceptance_fixture(path: Path | Traversable | None = None) -> FixtureReplayCheck:
+    fixture_path = path or files("scout.typesafe").joinpath("acceptance-cases.json")
+    try:
+        fixture = json.loads(fixture_path.read_text())
+    except (FileNotFoundError, OSError) as exc:
+        raise FixtureReplayUnavailableError(
+            "packaged typesafe acceptance fixture is unavailable"
+        ) from exc
     failures: list[str] = []
     for case in fixture["cases"]:
         name = case["decide"]
