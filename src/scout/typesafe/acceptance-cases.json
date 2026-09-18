@@ -21,6 +21,25 @@
         "answers": {"account_type": {"kind": "choice", "probabilities": {"organization": 0.7, "unknown": 0.3}, "confidence": 0.7}}
       },
       "expected": {"eligible": true, "p_eligible": 1.0, "uncertain": false, "reason": "account annotation pass-through", "account_label": "organization", "account_confidence": 0.7, "details": {"question_id": "account_type", "label_probability": 0.7}}
+    },
+    {
+      "decide": "agent_ops_relevance/v1",
+      "answers": {
+        "request_id": "accept-agent-ops", "model": "fixture", "latency_ms": 1,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "answers": {
+          "exclusion": {"kind": "choice", "probabilities": {"none": 0.9, "hype": 0.1}, "confidence": 0.9},
+          "operational_claim": {"kind": "probability", "probability": 0.8},
+          "reasoned_practice": {"kind": "probability", "probability": 0.2},
+          "operational_question": {"kind": "probability", "probability": 0.1},
+          "point_in_own_text": {"kind": "probability", "probability": 0.9},
+          "on_topic_pointer": {"kind": "probability", "probability": 0.1},
+          "general_building": {"kind": "probability", "probability": 0.1},
+          "band": {"kind": "score", "levels": [{"level": "0", "probability": 0.1}, {"level": "1", "probability": 0.1}, {"level": "2", "probability": 0.2}, {"level": "3", "probability": 0.6}], "confidence": 0.6},
+          "account_type": {"kind": "choice", "probabilities": {"individual_practitioner": 0.8, "brand_or_company": 0.2}, "confidence": 0.8}
+        }
+      },
+      "expected": {"eligible": true, "p_eligible": 0.6, "uncertain": false, "reason": "band substantive probability 0.600", "account_label": "individual_practitioner", "account_confidence": 0.8, "details": {"band_probabilities": {"0": 0.1, "1": 0.1, "2": 0.2, "3": 0.6}, "exclusion": "none", "exclusion_probability": 0.09999999999999998, "derived_band": "substantive"}}
     }
   ]
 }

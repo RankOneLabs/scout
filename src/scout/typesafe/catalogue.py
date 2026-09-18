@@ -13,12 +13,15 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from scout.typesafe.models import CatalogueVersion
 
 ALLOWED_STATE_FIELDS = {
-    "post": frozenset({"id", "platform", "channel_name", "content", "created_at", "url"}),
+    "post": frozenset(
+        {"id", "platform", "channel", "channel_name", "content", "created_at", "text", "url"}
+    ),
+    "parent_context_only": frozenset({"author_name", "text"}),
     "author": frozenset({"name", "handle"}),
     "project": frozenset({"key", "name", "description", "link"}),
 }
 UNAVAILABLE_STATE_FIELDS = frozenset({"bio", "followers", "following", "posts"})
-REGISTERED_DECIDES = frozenset({"gate_v1", "account_annotation"})
+REGISTERED_DECIDES = frozenset({"gate_v1", "account_annotation", "agent_ops_relevance/v1"})
 
 
 class CatalogueError(ValueError):
@@ -56,7 +59,7 @@ def _freeze(value: Any) -> Any:
 class StateProjection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
     post: tuple[str, ...] = ()
-    parent_context_only: bool = False
+    parent_context_only: tuple[str, ...] | bool = False
     author: tuple[str, ...] = ()
     project: tuple[str, ...] = ()
 
@@ -73,6 +76,11 @@ class StateProjection(BaseModel):
             unknown = fields - ALLOWED_STATE_FIELDS[group]
             if unknown:
                 raise ValueError(f"unknown {group} state fields: {sorted(unknown)}")
+        parent_fields = self.parent_context_only
+        if not isinstance(parent_fields, bool):
+            unknown = set(parent_fields) - ALLOWED_STATE_FIELDS["parent_context_only"]
+            if unknown:
+                raise ValueError(f"unknown parent_context_only state fields: {sorted(unknown)}")
         return self
 
 
@@ -100,6 +108,17 @@ class CatalogueDocument(BaseModel):
     description: str
     state: StateProjection
     questions: tuple[Question, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_question_map(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not isinstance(value.get("questions"), dict):
+            return value
+        normalized = dict(value)
+        normalized["questions"] = [
+            {"id": question_id, **question} for question_id, question in value["questions"].items()
+        ]
+        return normalized
 
     @model_validator(mode="after")
     def validate_decide(self) -> CatalogueDocument:
@@ -131,11 +150,28 @@ def _canonical(document: CatalogueDocument) -> bytes:
     ).encode()
 
 
+def _stringify_boolean_keys(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            ("true" if key is True else "false" if key is False else key): _stringify_boolean_keys(
+                item
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_stringify_boolean_keys(item) for item in value]
+    return value
+
+
 def load_catalogue(path: str | Path) -> Catalogue:
     try:
-        raw: Any = yaml.safe_load(Path(path).read_text())
+        raw: Any = _stringify_boolean_keys(yaml.safe_load(Path(path).read_text()))
         document = CatalogueDocument.model_validate(raw)
     except (OSError, yaml.YAMLError, ValidationError) as exc:
         raise CatalogueError(str(exc)) from exc
-    version = CatalogueVersion(hashlib.sha256(_canonical(document)).hexdigest())
+    version = CatalogueVersion(
+        hashlib.sha256(
+            json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+    )
     return Catalogue(document=document, version=version)

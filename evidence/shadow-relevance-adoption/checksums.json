@@ -1,0 +1,11 @@
+{
+  "algorithm": "sha256",
+  "catalogue_version_canonical_json": "019c2b2ad3872710e0324d190a918bdfd5030612b013a8d6885186d261366e46",
+  "files": {
+    "exported-answers.json": "0c760d3d77c0016d696bd78a9005bb1d9ffbd6e8717b907266106520e5af3af4",
+    "src/assay/investigations/relevance/catalogues/agent-ops-relevance.v1.yaml": "27c54ff7daf18383fcee7c947ef11290b81a6e24bfc55c3e1779c1bea590b88e",
+    "src/assay/investigations/relevance/mappings.py": "e8dd0d63b2ae0a08843415e0d1a4b6ba13405c678aed4cc158820557622bae1b",
+    "src/assay/investigations/relevance/state.py": "0aafd2b546f39f9ce0603ab597ac21611ecb8d3a97ef948a81c7b017d165ef44"
+  },
+  "population_export_sha256": "6c3d18de02e35f33a432be9f9bda57d36d22478a69fad94c42d924d4ccc9782a"
+}

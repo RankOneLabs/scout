@@ -1,0 +1,126 @@
+id: agent-ops-relevance
+decide: agent_ops_relevance/v1
+description: agent-ops-relevance/v1 decision rule as System One questions
+state:
+  post: [platform, channel, url, text]
+  parent_context_only: [author_name, text]
+  author: [name, handle]
+  project: [key, name, description]
+questions:
+  exclusion:
+    type: choice
+    instructions:
+      question: Does the post's own text fall under a hard exclusion?
+      judge: Judge the actual subject, not a matching word; workload cost is an operations topic, not funding news.
+    criteria:
+      non_english: {what: The post is not substantially in English.}
+      coding_assistant: {what: Personal coding-assistant productivity or code generation without an agent-operations point.}
+      hardware: {what: Hardware products, chips, or infrastructure hardware without an agent-operations point.}
+      funding_or_market: {what: Funding rounds, valuations, acquisitions, stock, or market news.}
+      event_promo: {what: Conference, meetup, webinar, livestream, or event promotion.}
+      hype: {what: Enthusiasm, slogans, or predictions carrying no concrete information.}
+      none: {what: No hard exclusion applies.}
+  topic_production_failures:
+    type: noul
+    instructions: Is the post's subject production failures while operating agents?
+    criteria:
+      true: {what: Concrete failures, incidents, regressions, or reliability problems in deployed agent systems.}
+      false: {what: No production agent failure is the subject.}
+  topic_observability:
+    type: noul
+    instructions: Is the post's subject observability for operating agents?
+    criteria:
+      true: {what: Tracing, logging, monitoring, debugging, telemetry, or diagnosis of running agents.}
+      false: {what: No agent observability topic is present.}
+  topic_unreliable_tools:
+    type: noul
+    instructions: Is the post's subject unreliable tools or external calls while operating agents?
+    criteria:
+      true: {what: Retries, timeouts, rate limits, partial failures, idempotency, or flaky tool execution.}
+      false: {what: No unreliable-tool operations topic is present.}
+  topic_orchestration_state:
+    type: noul
+    instructions: Is the post's subject orchestration or durable state for operating agents?
+    criteria:
+      true: {what: Multi-agent orchestration, durable execution, checkpoints, state handoff, recovery, or scheduling.}
+      false: {what: No orchestration or state-management topic is present.}
+  topic_guardrails_credentials:
+    type: noul
+    instructions: Is the post's subject guardrails, permissions, or credentials for operating agents?
+    criteria:
+      true: {what: Authorization, sandboxing, secrets, credential scope, tool permissions, or runtime guardrails.}
+      false: {what: No guardrail, permission, or credential topic is present.}
+  topic_approval_audit_deploy:
+    type: noul
+    instructions: Is the post's subject approval, auditability, rollback, or deployment of agents?
+    criteria:
+      true: {what: Human approval, audit trails, release controls, rollback, deployment practice, or change review.}
+      false: {what: No approval, audit, rollback, or deployment topic is present.}
+  topic_cost_capacity:
+    type: noul
+    instructions: Is the post's subject workload cost or capacity while operating agents?
+    criteria:
+      true: {what: Runtime cost, token or request budgets, throughput, concurrency, queues, or capacity planning.}
+      false: {what: No operational cost or capacity topic is present.}
+  topic_evals_vs_deployment:
+    type: noul
+    instructions: Is the post's subject the gap between passing evals and safe deployment?
+    criteria:
+      true: {what: Production behavior diverging from evaluations, deployment readiness, live monitoring, or eval blind spots.}
+      false: {what: No eval-to-deployment operations gap is present.}
+  operational_claim:
+    type: noul
+    instructions: Does the post's own text state a specific operational claim, result, or failure about running agents?
+    criteria:
+      true: {what: A concrete failure and cause, measured result, or specific operational finding.}
+      false: {what: Operational terms are mentioned without stating a concrete claim or result.}
+  reasoned_practice:
+    type: noul
+    instructions: Does the post describe a practice for operating agents together with the reason for it?
+    criteria:
+      true: {what: A concrete operating practice and why it is used.}
+      false: {what: No practice is given, or a practice is stated without a reason.}
+  operational_question:
+    type: noul
+    instructions: Does the post ask a concrete question about how others handle an operational problem?
+    criteria:
+      true: {what: A specific, answerable question about operating agent systems.}
+      false: {what: No operational question, or only a rhetorical or hype question.}
+  point_in_own_text:
+    type: noul
+    instructions: Is the point made in the post's own text rather than only in a link, title, image, or parent post?
+    criteria:
+      true: {what: The post text itself contains the substantive point.}
+      false: {what: The point exists only outside the post's own text.}
+  on_topic_pointer:
+    type: noul
+    instructions: Is this an on-topic link, product or paper announcement, roundup, agreement reply, or name-check about operating agents that makes no point of its own?
+    criteria:
+      true: {what: On-topic pointer or reaction without a substantive point in its own text.}
+      false: {what: Not merely a pointer, announcement, roundup, agreement, or name-check.}
+  general_building:
+    type: noul
+    instructions: Is this general content about building agents with no operational point?
+    criteria:
+      true: {what: Agent construction, prompting, frameworks, or capabilities without a point about operating agents.}
+      false: {what: Not general agent-building content, or it makes an operational point.}
+  band:
+    type: score
+    instructions:
+      question: Classify the post's own text into the highest-precedence relevance situation.
+      apply_in_order: [hard exclusion, substantive point, on-topic pointer, general building, out of scope]
+      note: Parent context can clarify the post but cannot supply a missing point.
+    criteria:
+      - {summary: out_of_scope, signals: [unrelated content, hard exclusion applies]}
+      - {summary: building, signals: [general agent-building content, no operational point]}
+      - {summary: pointer, signals: [on-topic resource or announcement, no point of its own]}
+      - {summary: substantive, signals: [specific operational claim, result, failure, reasoned practice, or concrete question in the post text]}
+  account_type:
+    type: choice
+    instructions: Classify the author account from name and handle only. This annotation must not affect relevance.
+    criteria:
+      individual_practitioner: {what: A person who builds or operates software themselves.}
+      brand_or_company: {what: A product, vendor, organization, or company account.}
+      aggregator_or_feed: {what: A news feed, link aggregator, digest, or auto-poster.}
+      executive_or_founder_voice: {what: A named executive or founder posting in that capacity.}
+      bot: {what: An automated account with no human author.}

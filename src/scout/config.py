@@ -171,7 +171,7 @@ TYPESAFE_SHADOW_BACKEND: Literal["placeholder"] = cast(
     Literal["placeholder"], _typesafe_backend
 )
 _default_typesafe_catalogue = str(
-    runtime_resource("typesafe", "catalogues", "agent-ops-relevance.v0-fixture.yaml")
+    runtime_resource("typesafe", "catalogues", "agent-ops-relevance.v1.yaml")
 )
 TYPESAFE_CATALOGUE_PATH: str = (
     os.getenv("TYPESAFE_CATALOGUE_PATH", "").strip() or _default_typesafe_catalogue

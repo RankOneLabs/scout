@@ -14,8 +14,10 @@ def build_state(
     post_values: dict[str, object] = {
         "id": message.platform_id,
         "platform": message.platform,
+        "channel": message.channel_name,
         "channel_name": message.channel_name,
         "content": message.content,
+        "text": message.content,
         "created_at": message.created_at.isoformat(),
         "url": message.url,
     }
@@ -34,7 +36,21 @@ def build_state(
         "author": {field: author_values[field] for field in projection.author},
         "project": {field: project_values[field] for field in projection.project},
     }
-    if projection.parent_context_only:
+    if isinstance(projection.parent_context_only, tuple):
+        parent_values: dict[str, object] = (
+            {}
+            if message.parent is None
+            else {
+                "author_name": message.parent.author.name,
+                "text": message.parent.text,
+            }
+        )
+        state["parent_context_only"] = (
+            None
+            if message.parent is None
+            else {field: parent_values[field] for field in projection.parent_context_only}
+        )
+    elif projection.parent_context_only:
         state["parent_context"] = (
             None
             if message.parent is None

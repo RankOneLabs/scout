@@ -89,7 +89,7 @@ def test_report_lists_decisions_grade_summary_and_round_trips_json(tmp_path, cap
     assert report.summary.shadow_llm_agree == 1
     assert report.summary.shadow_llm_disagree == 1
     assert report.placeholder_fixture_replay.passed
-    assert report.placeholder_fixture_replay.checked == 2
+    assert report.placeholder_fixture_replay.checked == 3
 
     assert run_typesafe(_args(db_path)) == 0
     text = capsys.readouterr().out
