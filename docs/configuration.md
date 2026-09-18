@@ -17,6 +17,45 @@ Copy `.env.example` for a complete template.
 | `TRACE_DB_PATH` | `scout_traces.db` | Jig trace database |
 | `FEEDBACK_DB_PATH` | `scout_feedback.db` | Jig feedback database |
 
+## Typesafe shadow relevance
+
+| Variable | Default | Description |
+|---|---:|---|
+| `TYPESAFE_SHADOW_MODE` | `false` | Run the non-gating shadow relevance node for agent-ops routes |
+| `TYPESAFE_SHADOW_BACKEND` | `placeholder` | Shadow backend; only `placeholder` is registered in this release |
+| `TYPESAFE_API_KEY` | unset/off | Placeholder for the remote backend; unused until the backend cohort lands |
+| `TYPESAFE_CATALOGUE_PATH` | packaged `agent-ops-relevance.v0-fixture.yaml` | Validated catalogue YAML path |
+| `TYPESAFE_PLACEHOLDER_ANSWERS_PATH` | unset | Placeholder answer fixture path; required when shadow mode is enabled |
+
+The offline fitter accepts an inline `RelevanceTask` JSON document (or a path
+to one), one catalogue version, and operator-selected false-positive and
+false-negative costs:
+
+```bash
+uv run scout typesafe fit \
+  --task relevance-task.json \
+  --catalogue-version <sha256> \
+  --c-fp 1 --c-fn 1 \
+  --out evidence/shadow-relevance-2026-09-17/
+```
+
+Only a task with `partition: "train"` and a retained `partition_digest` is
+accepted. The command refuses `all` and `heldout` before opening the database,
+then loads and verifies the `FrozenPartition` before querying training rows.
+The report command's `--since` cutoff is inclusive and requires an ISO-8601
+timestamp with an explicit `Z` or numeric timezone offset; date-only and
+timezone-naive values are rejected.
+It writes `weight-set.json`, `PLAN.md`, `RESULTS.md`, `checksums.json`, and
+`inventory.json`. The default costs are both `1`; their ratio determines the
+decision threshold and uncertainty band and both values are retained in the
+weight set. The pinned September agent-ops task is `partition: "all"` with no
+digest, so it cannot be fitted until the label-packet work pins a partition.
+With the default symmetric costs (`c_fp = c_fn = 1`), the threshold is `0.5`
+and the uncertainty band is the single point `[0.5, 0.5]`; only a prediction
+of exactly `0.5` is marked uncertain. Operators who require a wider uncertainty
+zone must choose asymmetric costs or define a different policy in a future
+version rather than assuming the defaults create a margin around the threshold.
+
 ## Platform limits
 
 | Variable | Default | Description |

@@ -33,6 +33,8 @@ allow-direct-references = true
 "contracts" = "scout/contracts"
 "scripts" = "scripts"
 "web/grading_schema.json" = "scout/web/grading_schema.json"
+"src/scout/typesafe/acceptance-cases.json" = "scout/typesafe/acceptance-cases.json"
+"src/scout/typesafe/catalogues/agent-ops-relevance.v0-fixture.yaml" = "scout/typesafe/catalogues/agent-ops-relevance.v0-fixture.yaml"
 
 [dependency-groups]
 dev = [

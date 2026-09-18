@@ -7,6 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
@@ -14,6 +15,7 @@ from scout.config import (
     FARCASTER_MAX_PAGES,
     FARCASTER_SIGNER_UUID,
     NEYNAR_API_URL,
+    Account,
     Message,
     PublishedPost,
 )
@@ -38,6 +40,31 @@ from scout.result import Err, Ok, Result
 from scout.scanning.schemas import validate_farcaster_byte_length
 
 logger = logging.getLogger(__name__)
+
+_FARCASTER_POST_HOSTS = frozenset({
+    "farcaster.xyz",
+    "warpcast.com",
+    "www.farcaster.xyz",
+    "www.warpcast.com",
+})
+
+
+def handle_from_farcaster_url(url: str | None) -> str | None:
+    """Return the author segment from a canonical Farcaster post URL."""
+    if not url:
+        return None
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or host not in _FARCASTER_POST_HOSTS:
+        return None
+    path = [unquote(segment) for segment in parsed.path.split("/") if segment]
+    if len(path) < 2 or path[0] == "~":
+        return None
+    handle = path[0].removeprefix("@")
+    return handle or None
 
 
 def _utc_now() -> datetime:
@@ -568,16 +595,32 @@ class FarcasterScanner:
         channel: dict[str, object] = cast.get("channel") or {}  # type: ignore[assignment]
         username = str(author.get("username", ""))
         url = f"https://warpcast.com/{username}/{cast_hash[:10]}" if username else ""
+        profile = author.get("profile")
+        profile_data = profile if isinstance(profile, dict) else {}
+        bio = profile_data.get("bio")
+        bio_data = bio if isinstance(bio, dict) else {}
+
+        def optional_int(value: object) -> int | None:
+            if not isinstance(value, (int, str)):
+                return None
+            try:
+                return int(value)
+            except ValueError:
+                return None
 
         return Message(
             platform="farcaster",
             platform_id=cast_hash,
             channel_name=str(channel.get("id", "home")),
             channel_id=str(channel.get("id", "")),
-            author_name=str(
-                author.get("display_name", author.get("username", "unknown")),
+            author=Account(
+                platform="farcaster", id=str(author.get("fid", "")),
+                name=str(author.get("display_name", author.get("username", "unknown"))),
+                handle=username or None,
+                bio=str(bio_data["text"]) if bio_data.get("text") is not None else None,
+                followers=optional_int(author.get("follower_count")),
+                following=optional_int(author.get("following_count")),
             ),
-            author_id=str(author.get("fid", "")),
             content=text,
             created_at=created_at,
             url=url,

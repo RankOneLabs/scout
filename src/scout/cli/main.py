@@ -113,10 +113,12 @@ def parse_args() -> argparse.Namespace:
 
     subparsers = parser.add_subparsers(dest="subcommand")
     from scout.cli.analysis import add_analysis_parser
+    from scout.cli.typesafe import add_typesafe_parser
     from scout.cli.watermark import add_watermark_parser
 
     add_analysis_parser(subparsers, DB_PATH)
     add_watermark_parser(subparsers, DB_PATH)
+    add_typesafe_parser(subparsers, DB_PATH)
     preflight_p = subparsers.add_parser("preflight", help="Read-only Phase 1 deployment gate")
     preflight_p.add_argument("--dossier-root", required=True)
     preflight_p.add_argument("--db-path", default=DB_PATH)
@@ -290,6 +292,30 @@ def parse_args() -> argparse.Namespace:
     gc_convergence_repair_p.add_argument("--apply", action="store_true")
 
     from scout.cli.replay import positive_int
+
+    replay_parser = subparsers.add_parser(
+        "replay", help="Reproducible replay population commands"
+    )
+    replay_sub = replay_parser.add_subparsers(dest="replay_command", required=True)
+    export_population_p = replay_sub.add_parser(
+        "export-population",
+        help="Export a stable relevance population as JSON lines",
+    )
+    export_population_p.add_argument(
+        "task_config",
+        nargs="?",
+        help="Pinned RelevanceTask JSON (omit with --all-evaluations)",
+    )
+    export_population_p.add_argument(
+        "--all-evaluations",
+        action="store_true",
+        help="Export every stored evaluation for --project-key from the live database",
+    )
+    export_population_p.add_argument(
+        "--project-key",
+        default=None,
+        help="Project to export with --all-evaluations",
+    )
 
     feedback_parser = subparsers.add_parser(
         "feedback", help="Offline replay and comparison commands"
@@ -701,6 +727,10 @@ def main() -> None:
         report = run_preflight(args.db_path, args.dossier_root)
         print(json.dumps(report, indent=2, sort_keys=True))
         raise SystemExit(1 if report["errors"] else 0)
+    if args.subcommand == "typesafe":
+        from scout.cli.typesafe import run_typesafe
+
+        raise SystemExit(run_typesafe(args))
     if args.subcommand == "watermark":
         from scout.cli.watermark import run_watermark
 
@@ -970,6 +1000,12 @@ def main() -> None:
                 grid_report_feedback(args)
             else:
                 grid_expand_feedback(args)
+        return
+    if args.subcommand == "replay":
+        from scout.cli.replay import export_population
+
+        if args.replay_command == "export-population":
+            export_population(args)
         return
     if args.stats:
         show_stats()

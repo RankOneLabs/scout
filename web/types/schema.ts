@@ -170,6 +170,22 @@ export interface Evaluation {
   dossier_summary_id?: string | null;
 }
 
+/** Latest schema-v47 shadow relevance run projected for review. */
+export interface ShadowRelevanceRunRow {
+  id: number;
+  evaluation_id: number;
+  eligible: boolean | null;
+  p_eligible: number | null;
+  uncertain: boolean | null;
+  reason: string | null;
+  details: Record<string, unknown>;
+  account_label: string | null;
+  account_confidence: number | null;
+  status: "ok" | "error";
+  error_detail: string | null;
+  created_at: string;
+}
+
 export interface DraftComment {
   id: number;
   post_id: number;
@@ -240,6 +256,8 @@ export interface ReviewEvaluation extends EvaluationWithRoute {
   critique: Critique | null;
   gate_violations: GateBlock[];
   grade: Grade | null;
+  /** Omitted for pre-v47 databases; null when v47 exists but has no run. */
+  shadow_relevance?: ShadowRelevanceRunRow | null;
 }
 
 export interface PostWithEvaluation extends Post {

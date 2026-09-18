@@ -13,7 +13,7 @@ import os
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -97,7 +97,7 @@ from scout.scanning.agent import (
     build_scout_phase_configs,
     resolve_mode_for_message,
 )
-from scout.scanning.author_class import classify_author, handle_from_url
+from scout.scanning.author_class import classify_author
 from scout.scanning.digest import (
     append_to_digest,
     finalize_digest,
@@ -113,9 +113,12 @@ from scout.storage.state import (
     StateManager,
     SurfaceRateLimitedError,
 )
+from scout.typesafe.routes import is_agent_ops_route
+from scout.typesafe.shadow import ShadowRelevanceRunner
 from scout.verifier import GateViolation, verify_draft_content
 
 logger = logging.getLogger("scout.scanning.runner")
+_SHADOW_SETTLE_TIMEOUT_SECONDS = 0.1
 
 
 def _failure_to_dict(failure: PlatformFetchFailure) -> dict[str, object]:
@@ -809,9 +812,9 @@ def _annotate_author(state: StateManager, msg: Message) -> None:
     failure is logged and the post still flows into evaluation, because
     the class is advisory for reviewers, not an input to any model call.
     """
-    if not msg.author_id:
+    if not msg.author_id.strip():
         return
-    classification = classify_author(msg.author_name, handle_from_url(msg.url))
+    classification = classify_author(msg.author.name, msg.author.handle)
     try:
         state.record_author_classification(
             platform=msg.platform,
@@ -869,6 +872,52 @@ async def score_messages(
     """
     if feedback_snapshot is None:
         raise ValueError("score_messages requires this scan's feedback_snapshot")
+    shadow_runner: ShadowRelevanceRunner | None = None
+    if _config.TYPESAFE_SHADOW_MODE:
+        try:
+            if not _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH:
+                raise ValueError(
+                    "TYPESAFE_PLACEHOLDER_ANSWERS_PATH is required when "
+                    "TYPESAFE_SHADOW_MODE=true"
+                )
+            shadow_runner = ShadowRelevanceRunner.placeholder(
+                _config.TYPESAFE_CATALOGUE_PATH,
+                _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH,
+            )
+        except Exception:
+            logger.warning(
+                "typesafe shadow initialization failed; shadow disabled for this scan",
+                exc_info=True,
+            )
+    shadow_tasks: set[asyncio.Task[int | None]] = set()
+
+    async def _settle_shadow_task(
+        task: asyncio.Task[int | None], *, cancel: bool = False
+    ) -> int | None:
+        if cancel:
+            task.cancel()
+        try:
+            if cancel:
+                return await task
+            return await asyncio.wait_for(
+                asyncio.shield(task), timeout=_SHADOW_SETTLE_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            logger.warning("typesafe shadow task exceeded settle timeout and was cancelled")
+            return None
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if not cancel and current is not None and current.cancelling():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+            return None
+        except Exception:
+            logger.warning("typesafe shadow task failed", exc_info=True)
+            return None
+    account_observed_at = datetime.now(UTC)
     phase_run_identity = {
         p.phase: PhaseRunIdentity(snapshot_phase_id=p.snapshot_phase_id, model=model)
         for p, model in (
@@ -982,12 +1031,22 @@ async def score_messages(
             continue
 
         _annotate_author(state, msg)
+        if msg.author_id.strip():
+            try:
+                account = msg.author
+                if account.observed_at is None:
+                    account = replace(account, observed_at=account_observed_at)
+                state.record_account_snapshot(account)
+            except (sqlite3.Error, ValueError):
+                logger.warning(
+                    "account snapshot failed for %s:%r", msg.platform, msg.author_id, exc_info=True
+                )
 
         # Author blocks are checked from live SQLite state for every candidate,
         # so a block added from the web UI also stops later items in an active
         # scan. Posts remain persisted above for audit/deduplication, but no
         # prompt is built and no LLM call is made for the blocked account.
-        if msg.author_id and state.is_author_blocked(
+        if msg.author_id.strip() and state.is_author_blocked(
             platform=msg.platform,
             author_id=msg.author_id,
         ) is True:
@@ -998,6 +1057,19 @@ async def score_messages(
                 msg.author_name,
             )
             continue
+
+        shadow_route = is_agent_ops_route(routed.keyword_route)
+        logger.info(
+            "Typesafe shadow route: post=%s project_key=%s selected=%s",
+            msg.platform_id,
+            routed.keyword_route.project_key if routed.keyword_route else None,
+            shadow_route,
+        )
+        shadow_project: ProjectTarget | None = None
+        if shadow_runner is not None and shadow_route:
+            route = routed.keyword_route
+            assert route is not None
+            shadow_project = projects.get(route.project_key)
 
         resolved_mode = resolve_mode_for_message(base_mode_cfg, routed.keyword_route)
         phase_configs = _get_phase_configs(resolved_mode)
@@ -1012,11 +1084,25 @@ async def score_messages(
             critic=phase_run_identity["critic"],
         )
 
+        shadow_task: asyncio.Task[int | None] | None = None
+        if shadow_runner is not None and shadow_project is not None:
+            shadow_task = asyncio.create_task(
+                shadow_runner.run(
+                    state_manager=state,
+                    scan_id=scan_id,
+                    post_id=post_id,
+                    message=msg,
+                    project=shadow_project,
+                )
+            )
+            shadow_tasks.add(shadow_task)
+
         # No Db transaction is open across this await: save_post above
         # already committed, and evaluation is pure LLM/network I/O with
         # no database access of its own. Each phase's own _run_phase call
         # opens its short, independent evaluation_phase_runs insert
         # transaction only after that phase's trace is verified durable.
+        shadow_run_id: int | None = None
         try:
             result = await run_pipeline(
                 pipeline,
@@ -1040,6 +1126,9 @@ async def score_messages(
                     error_kind="cancelled",
                     error_message="scan cancelled during evaluation",
                 )
+            await asyncio.gather(
+                *(_settle_shadow_task(task, cancel=True) for task in shadow_tasks)
+            )
             raise
         except Exception:
             # Recoverable incomplete post: preserved as saved-but-unevaluated,
@@ -1058,6 +1147,10 @@ async def score_messages(
                 exc_info=True,
             )
             continue
+        finally:
+            if shadow_task is not None:
+                shadow_run_id = await _settle_shadow_task(shadow_task)
+                shadow_tasks.discard(shadow_task)
 
         match result.step_outputs.get("score_and_draft"):
             case Ok(candidate):
@@ -1095,7 +1188,13 @@ async def score_messages(
         # Classification and invariant errors propagate rather than being
         # caught here — a programmer defect must be loud, not folded into
         # an unevaluated scoring_error.
-        decision = classify_outcome(candidate, msg, _dossiers)
+        try:
+            decision = classify_outcome(candidate, msg, _dossiers)
+        except BaseException:
+            await asyncio.gather(
+                *(_settle_shadow_task(task, cancel=True) for task in shadow_tasks)
+            )
+            raise
 
         route_id = routed.keyword_route.id if routed.keyword_route else None
         dossier_summary_id = (
@@ -1126,8 +1225,9 @@ async def score_messages(
                 "No dossier loaded for project %r; gate_blocked", decision.project_key
             )
 
+        evaluation_id: int
         try:
-            persist_outcome(state, decision, context)
+            evaluation_id = persist_outcome(state, decision, context)
         except SurfaceRateLimitedError as error:
             # StateManager has already committed the authoritative
             # gate_blocked evaluation and author_rate gate_blocks row under
@@ -1157,6 +1257,7 @@ async def score_messages(
                 AUTHOR_RATE_EVALUATOR_VERSION, msg.platform_id,
                 error.persisted_evaluation_id, error.gate_block_ids,
             )
+            evaluation_id = error.persisted_evaluation_id
         except sqlite3.Error as e:
             # persist_outcome's own begin_immediate() context has already
             # rolled back every row for this post's outcome — post_id
@@ -1176,7 +1277,20 @@ async def score_messages(
                     error_kind="persistence_error",
                     error_message=f"persist_outcome failed: {e}",
                 )
+            await asyncio.gather(
+                *(_settle_shadow_task(task, cancel=True) for task in shadow_tasks)
+            )
             raise
+
+        if shadow_run_id is not None:
+            try:
+                state.shadow_relevance.backfill_evaluation_id(shadow_run_id, evaluation_id)
+            except Exception:
+                logger.warning(
+                    "typesafe evaluation_id backfill failed for post %s",
+                    msg.platform_id,
+                    exc_info=True,
+                )
 
         if decision.status != "surfaced":
             if decision.status == "gate_blocked":
@@ -1208,6 +1322,9 @@ async def score_messages(
                     exc_info=True,
                 )
         print(block)
+
+    if shadow_tasks:
+        await asyncio.gather(*(_settle_shadow_task(task) for task in shadow_tasks))
 
     digest_ok = digest_writable
     if digest_writable:

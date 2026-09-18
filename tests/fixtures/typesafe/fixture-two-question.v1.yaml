@@ -1,0 +1,16 @@
+id: fixture-two-question
+decide: gate_v1
+description: Two-question catalogue for deterministic contract tests.
+state:
+  post: [id, platform, content, created_at, url]
+  parent_context_only: true
+  author: [name, handle]
+  project: [key, name, description, link]
+questions:
+  - id: relevance
+    type: probability
+    prompt: Is the post relevant?
+  - id: account_type
+    type: choice
+    prompt: Classify the author account.
+    choices: [individual, organization, aggregator, unknown]

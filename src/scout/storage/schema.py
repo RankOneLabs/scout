@@ -9,7 +9,66 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 45
+LATEST_SCHEMA_VERSION = 47
+
+SHADOW_RELEVANCE_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS shadow_relevance_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id INTEGER NOT NULL REFERENCES scans(id),
+        post_id INTEGER NOT NULL REFERENCES posts(id),
+        evaluation_id INTEGER REFERENCES evaluations(id),
+        backend TEXT NOT NULL,
+        model TEXT NOT NULL,
+        catalogue_id TEXT NOT NULL,
+        catalogue_version TEXT NOT NULL,
+        weight_set_version TEXT,
+        request_id TEXT NOT NULL,
+        state_json TEXT NOT NULL CHECK(json_valid(state_json)),
+        answers_json TEXT CHECK(answers_json IS NULL OR json_valid(answers_json)),
+        decision_json TEXT CHECK(decision_json IS NULL OR json_valid(decision_json)),
+        eligible INTEGER,
+        p_eligible REAL,
+        uncertain INTEGER,
+        account_label TEXT,
+        account_confidence REAL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        latency_ms INTEGER,
+        status TEXT NOT NULL CHECK(status IN ('ok', 'error')),
+        error_detail TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(backend, request_id)
+    )""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_scan_idx
+        ON shadow_relevance_runs(scan_id, id)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_post_idx
+        ON shadow_relevance_runs(post_id, id)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_evaluation_idx
+        ON shadow_relevance_runs(evaluation_id)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_eligible_idx
+        ON shadow_relevance_runs(eligible)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_p_eligible_idx
+        ON shadow_relevance_runs(p_eligible)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_uncertain_idx
+        ON shadow_relevance_runs(uncertain)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_account_label_idx
+        ON shadow_relevance_runs(account_label)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_account_confidence_idx
+        ON shadow_relevance_runs(account_confidence)""",
+    """CREATE INDEX IF NOT EXISTS shadow_relevance_runs_created_idx
+        ON shadow_relevance_runs(created_at, id)""",
+)
+
+ACCOUNT_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS accounts (
+        platform TEXT NOT NULL, account_id TEXT NOT NULL, observed_at TEXT NOT NULL,
+        name TEXT NOT NULL, handle TEXT, bio TEXT, followers INTEGER, following INTEGER,
+        posts INTEGER, created_at TEXT, verified INTEGER,
+        PRIMARY KEY (platform, account_id, observed_at)
+    )""",
+    """CREATE INDEX IF NOT EXISTS accounts_latest_idx
+        ON accounts(platform, account_id, observed_at DESC)""",
+)
 
 REVIEW_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS review_dispositions (
@@ -1155,6 +1214,8 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(AUTHOR_CLASSIFICATION_SCHEMA_STATEMENTS)};
 {';'.join(COVERAGE_SCHEMA_STATEMENTS)};
 {';'.join(LEASE_AND_RECOVERY_SCHEMA_STATEMENTS)};
+{';'.join(ACCOUNT_SCHEMA_STATEMENTS)};
+{';'.join(SHADOW_RELEVANCE_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

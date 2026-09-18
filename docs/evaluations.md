@@ -73,3 +73,39 @@ threshold.
 
 For replaying recorded production phases against candidate prompts or models,
 see [Offline replay](operations/offline-replay.md).
+
+## Typesafe shadow visibility
+
+When schema v47 shadow data is available, each review evaluation shows the
+latest shadow relevance verdict beside the author-class badge. The badge is
+advisory: it includes eligibility, uncertainty, the stored reason, and the
+band distribution from the decision details without affecting review state.
+Older databases continue to render without the badge.
+
+Operators can compare the latest shadow verdict per evaluation with the LLM
+relevance result and any finalized human grade:
+
+```bash
+uv run scout typesafe report --since 2026-09-01T00:00:00Z
+uv run scout typesafe report --scan-id 42 --json
+```
+
+Human agreement includes only the latest grade revision when both it and the
+current grade row are finalized under the current schema; an invalidating
+revision does not fall back to an older label.
+`--since` is an inclusive instant cutoff and requires an explicit timezone
+(`Z` or a numeric offset). Equivalent offsets are normalized to UTC.
+
+The summary includes agreement counts and an offline replay of the checked-in
+placeholder acceptance fixture, making catalogue or decision-mapping drift
+visible. If `shadow_relevance_runs` is absent, the command explains that the
+database predates schema v47 and exits successfully.
+
+The review badge and this report are observational views of the same stored
+shadow rows; neither gates an evaluation. A train-only fitted report can be
+produced with `scout typesafe fit` once a task pins a `FrozenPartition`. Its
+September evidence directory contains the predeclared `PLAN.md`, observed
+`RESULTS.md`, a per-evaluation `inventory.json`, `checksums.json`, and the
+versioned `weight-set.json`. The current pinned September agent-ops task has
+partition `all` and no digest, so real-row fitting remains deliberately blocked;
+placeholder-backend rows over a synthesized partition exercise the command.

@@ -19,9 +19,9 @@ from scout.config import (
     BLUESKY_IDENTIFIER,
     BLUESKY_LANGS,
     BLUESKY_MAX_PAGES,
+    Account,
     Message,
     PublishedPost,
-    SourceAuthor,
     SourceParent,
 )
 from scout.errors import (
@@ -519,8 +519,7 @@ class BlueskyScanner:
                     platform_id=msg.platform_id,
                     channel_name=msg.channel_name,
                     channel_id=msg.channel_id,
-                    author_name=msg.author_name,
-                    author_id=msg.author_id,
+                    author=msg.author,
                     content=msg.content,
                     created_at=msg.created_at,
                     url=msg.url,
@@ -533,8 +532,7 @@ class BlueskyScanner:
                     platform_id=msg.platform_id,
                     channel_name=msg.channel_name,
                     channel_id=msg.channel_id,
-                    author_name=msg.author_name,
-                    author_id=msg.author_id,
+                    author=msg.author,
                     content=msg.content,
                     created_at=msg.created_at,
                     url=msg.url,
@@ -636,7 +634,10 @@ class BlueskyScanner:
 
             resolved[uri] = SourceParent(
                 id=uri,
-                author=SourceAuthor(id=author_did, name=author_name),
+                author=Account(
+                    platform="bluesky", id=author_did, name=author_name,
+                    handle=author_handle or None,
+                ),
                 text=text,
                 url=url,
             )
@@ -1079,8 +1080,10 @@ class BlueskyScanner:
             platform_id=uri,
             channel_name="bluesky",
             channel_id="",
-            author_name=display_name,
-            author_id=str(author.get("did", "")),
+            author=Account(
+                platform="bluesky", id=str(author.get("did", "")), name=display_name,
+                handle=handle or None,
+            ),
             content=text,
             created_at=created_at,
             url=url,

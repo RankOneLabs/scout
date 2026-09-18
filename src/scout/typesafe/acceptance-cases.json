@@ -1,0 +1,26 @@
+{
+  "description": "Synthetic acceptance cases for every registered decide function.",
+  "cases": [
+    {
+      "decide": "gate_v1",
+      "answers": {
+        "request_id": "accept-gate", "model": "fixture", "latency_ms": 1,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "answers": {
+          "relevance": {"kind": "probability", "probability": 0.9, "confidence": 0.9},
+          "account_type": {"kind": "choice", "probabilities": {"individual": 0.8, "unknown": 0.2}, "confidence": 0.8}
+        }
+      },
+      "expected": {"eligible": true, "p_eligible": 0.9, "uncertain": false, "reason": "eligible probability meets threshold", "account_label": "individual", "account_confidence": 0.8, "details": {"question_id": "relevance", "confidence_band": "high"}}
+    },
+    {
+      "decide": "account_annotation",
+      "answers": {
+        "request_id": "accept-account", "model": "fixture", "latency_ms": 1,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "answers": {"account_type": {"kind": "choice", "probabilities": {"organization": 0.7, "unknown": 0.3}, "confidence": 0.7}}
+      },
+      "expected": {"eligible": true, "p_eligible": 1.0, "uncertain": false, "reason": "account annotation pass-through", "account_label": "organization", "account_confidence": 0.7, "details": {"question_id": "account_type", "label_probability": 0.7}}
+    }
+  ]
+}

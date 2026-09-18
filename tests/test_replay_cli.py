@@ -5,9 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import hashlib
 import json
+import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from jig import SQLiteFeedbackLoop, SQLiteTracer
@@ -16,6 +20,7 @@ import scout.cli.replay as replay_cli
 import scout.replay.experiments as ee
 import scout.replay.reporting as rr
 from scout.replay.runtime import ReplayRuntime
+from scout.result import Ok
 from scout.storage.state import StateManager
 from tests.test_evaluation_experiments import (
     _GRADED_CANDIDATE_PAYLOAD,
@@ -27,6 +32,7 @@ from tests.test_evaluation_experiments import (
     _seed_reply_draft_correction,
     _submit_response,
 )
+from tests.test_population_export import _frozen_input
 
 
 def test_replay_worker_configuration_fixture_matches_python_producer() -> None:
@@ -104,6 +110,131 @@ class TestPositiveInt:
     def test_rejects_non_integer(self) -> None:
         with pytest.raises(argparse.ArgumentTypeError):
             replay_cli.positive_int("not-a-number")
+
+
+class TestExportPopulation:
+    def test_argparse_wires_top_level_replay_command(self, monkeypatch) -> None:
+        from scout.cli.main import parse_args
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "scout",
+                "replay",
+                "export-population",
+                "--all-evaluations",
+                "--project-key",
+                "agent-ops",
+            ],
+        )
+
+        args = parse_args()
+
+        assert (args.subcommand, args.replay_command) == ("replay", "export-population")
+        assert args.all_evaluations is True
+        assert args.project_key == "agent-ops"
+
+    def test_frozen_task_is_byte_stable_and_prints_digest(
+        self, state, tmp_path, monkeypatch, capfd
+    ) -> None:
+        config = tmp_path / "task.json"
+        config.write_text(json.dumps({"kind": "relevance", "snapshot_digest": "a" * 64}))
+        population = SimpleNamespace(
+            cases=(
+                SimpleNamespace(source=_frozen_input(20, author="bob.bsky.social")),
+                SimpleNamespace(source=_frozen_input(10, author="alice.bsky.social")),
+            )
+        )
+
+        class _StateContext:
+            def __enter__(self):
+                return state
+
+            def __exit__(self, *_args):
+                return None
+
+        monkeypatch.setattr(replay_cli, "StateManager", lambda db_path: _StateContext())
+        monkeypatch.setattr(
+            replay_cli, "load_relevance_population", lambda _state, _task: Ok(population)
+        )
+        args = argparse.Namespace(
+            task_config=str(config), all_evaluations=False, project_key=None
+        )
+
+        replay_cli.export_population(args)
+        first = capfd.readouterr()
+        replay_cli.export_population(args)
+        second = capfd.readouterr()
+
+        assert first.out == second.out
+        assert first.err == second.err
+        assert [json.loads(line)["evaluation_id"] for line in first.out.splitlines()] == [10, 20]
+        assert first.err.strip() == f"sha256: {hashlib.sha256(first.out.encode()).hexdigest()}"
+
+    def test_all_evaluations_prints_live_jsonl_and_digest(
+        self, state, monkeypatch, capfd
+    ) -> None:
+        state.conn.execute(
+            "INSERT INTO posts "
+            "(id, platform, platform_msg_id, channel_name, author_name, content, url) "
+            "VALUES (1, 'farcaster', 'cast-1', 'agent-ops', 'Alice', 'first', "
+            "'https://warpcast.com/alice/0x1')"
+        )
+        state.conn.execute(
+            "INSERT INTO evaluations "
+            "(id, post_id, relevant, score, project_key, surface_status) "
+            "VALUES (10, 1, 1, 0.9, 'agent-ops', 'surfaced')"
+        )
+
+        class _StateContext:
+            def __enter__(self):
+                return state
+
+            def __exit__(self, *_args):
+                return None
+
+        monkeypatch.setattr(replay_cli, "StateManager", lambda db_path: _StateContext())
+        args = argparse.Namespace(
+            task_config=None, all_evaluations=True, project_key="agent-ops"
+        )
+
+        replay_cli.export_population(args)
+
+        captured = capfd.readouterr()
+        rows = [json.loads(line) for line in captured.out.splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["evaluation_id"] == 10
+        assert rows[0]["author_handle"] == "alice"
+        assert captured.err.strip() == (
+            f"sha256: {hashlib.sha256(captured.out.encode()).hexdigest()}"
+        )
+
+    def test_sqlite_error_is_reported_without_traceback(
+        self, monkeypatch, capsys
+    ) -> None:
+        def _raise_sqlite_error(*, db_path: str) -> None:
+            assert db_path == replay_cli.DB_PATH
+            raise sqlite3.OperationalError("database unavailable")
+
+        monkeypatch.setattr(replay_cli, "StateManager", _raise_sqlite_error)
+        args = argparse.Namespace(
+            task_config=None, all_evaluations=True, project_key="agent-ops"
+        )
+
+        with pytest.raises(SystemExit) as error:
+            replay_cli.export_population(args)
+
+        assert error.value.code == 1
+        assert capsys.readouterr().err == (
+            "error: could not export population: database unavailable\n"
+        )
+
+    def test_requires_project_key_for_all_evaluations(self) -> None:
+        args = argparse.Namespace(task_config=None, all_evaluations=True, project_key=None)
+        with pytest.raises(SystemExit) as error:
+            replay_cli.export_population(args)
+        assert error.value.code == 2
 
 
 class TestReplayFeedbackPreview:

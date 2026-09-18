@@ -50,7 +50,7 @@ from paa_runtime import service as paa_service
 from paa_runtime.config import RuntimeConfig
 from paa_runtime.events import CURRENT_EVENT_SCHEMA
 
-from scout.config import GradeRecord, Message, RelevanceResult, SourceAuthor, SourceParent
+from scout.config import Account, GradeRecord, Message, RelevanceResult, SourceParent
 from scout.grading.correction import NORMALIZED_EDIT_DISTANCE_GRADER_VERSION
 from scout.paa.audit.runner import REPORT_SCHEMA_VERSION as AUDIT_REPORT_SCHEMA_VERSION
 from scout.paa.audit.runner import canonical_json, parse_utc
@@ -249,15 +249,18 @@ def build_fixture_source_database(db_path: Path) -> None:
             platform_id=SENTINELS["platform_msg_id"],
             channel_name="general",
             channel_id="ch-1",
-            author_name=SENTINELS["author_name"],
-            author_id=SENTINELS["author_id"],
+            author=Account(
+                platform="bluesky", id=SENTINELS["author_id"],
+                name=SENTINELS["author_name"], handle="reference-fixture.bsky.social",
+            ),
             content=SENTINELS["source_text"],
             created_at=datetime.fromisoformat(_FIXTURE_NOW),
             url=SENTINELS["url"],
             parent=SourceParent(
                 id=SENTINELS["parent_id"],
-                author=SourceAuthor(
-                    id=SENTINELS["parent_author_id"], name=SENTINELS["parent_author_name"]
+                author=Account(
+                    platform="bluesky", id=SENTINELS["parent_author_id"],
+                    name=SENTINELS["parent_author_name"], handle=None,
                 ),
                 text=SENTINELS["parent_text"],
                 url=SENTINELS["parent_url"],
@@ -367,8 +370,10 @@ def build_fixture_source_database(db_path: Path) -> None:
             platform_id="reference-fixture-correction-post",
             channel_name="general",
             channel_id="ch-1",
-            author_name="reference-fixture-correction-author",
-            author_id=SENTINELS["author_id"],
+            author=Account(
+                platform="bluesky", id=SENTINELS["author_id"],
+                name="reference-fixture-correction-author", handle=None,
+            ),
             content="reference fixture surfaced post content",
             created_at=datetime.fromisoformat(_FIXTURE_NOW),
             url="https://example.test/reference-fixture-correction-post",
@@ -767,8 +772,10 @@ async def _seed_and_run_experiment_batch(state: StateManager, tracer: Any, feedb
             platform_id=f"reference-fixture-experiment-post-{case_index}",
             channel_name="general",
             channel_id="ch-1",
-            author_name="reference-fixture-experiment-author",
-            author_id=f"reference-fixture-experiment-author-{case_index}",
+            author=Account(
+                platform="discord", id=f"reference-fixture-experiment-author-{case_index}",
+                name="reference-fixture-experiment-author", handle=None,
+            ),
             content="reference fixture experiment post",
             created_at=datetime.fromisoformat(_FIXTURE_NOW),
         )

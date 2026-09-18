@@ -1,0 +1,16 @@
+id: agent-ops-relevance
+decide: gate_v1
+description: Fixture-compatible agent operations shadow relevance catalogue.
+state:
+  post: [id, platform, content, created_at, url]
+  parent_context_only: true
+  author: [name, handle]
+  project: [key, name, description, link]
+questions:
+  - id: relevance
+    type: probability
+    prompt: Is this post relevant to the project?
+  - id: account_type
+    type: choice
+    prompt: What kind of account authored the post?
+    choices: [individual, organization, aggregator, unknown]

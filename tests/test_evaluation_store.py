@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.evaluations import ExperimentCASError, PhaseRunLinkageError
 from scout.storage.schema import LATEST_SCHEMA_VERSION
 from scout.storage.state import StateManager
@@ -26,8 +26,12 @@ def _make_discord_msg(platform_id: str = "m1") -> Message:
         platform_id=platform_id,
         channel_name="general",
         channel_id="c1",
-        author_name="bob",
-        author_id="u1",
+        author=Account(
+            platform="discord",
+            id="u1",
+            name="bob",
+            handle=None,
+        ),
         content="hello",
         created_at=datetime.now(UTC),
     )
@@ -53,8 +57,12 @@ class TestCritiqueFeedback:
             platform_id="m1",
             channel_name="ch",
             channel_id="c1",
-            author_name="a",
-            author_id="u1",
+            author=Account(
+                platform="test",
+                id="u1",
+                name="a",
+                handle=None,
+            ),
             content="content",
             created_at=datetime.now(UTC),
         )
@@ -107,8 +115,12 @@ class TestEvaluationPersistence:
             platform_id="route-1",
             channel_name="ch",
             channel_id="c1",
-            author_name="a",
-            author_id="u1",
+            author=Account(
+                platform="test",
+                id="u1",
+                name="a",
+                handle=None,
+            ),
             content="content",
             created_at=datetime.now(UTC),
         )
@@ -399,8 +411,12 @@ class TestMigration27FeedbackSnapshots:
             platform_id="feedback-snap-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -635,8 +651,12 @@ class TestMigration28FeedbackAuditFidelity:
             platform_id="m28-invalid",
             channel_name="general",
             channel_id="ch",
-            author_name="alice",
-            author_id="u",
+            author=Account(
+                platform="discord",
+                id="u",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -708,8 +728,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -851,8 +875,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -896,8 +924,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -928,8 +960,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -965,8 +1001,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1001,8 +1041,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-other",
             channel_name="general",
             channel_id="ch-1",
-            author_name="bob",
-            author_id="u2",
+            author=Account(
+                platform="discord",
+                id="u2",
+                name="bob",
+                handle=None,
+            ),
             content="other post",
             created_at=datetime.now(UTC),
         )
@@ -1016,8 +1060,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1065,8 +1113,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1102,8 +1154,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1148,8 +1204,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1187,8 +1247,12 @@ class TestMigration29EvaluationPhaseRuns:
             platform_id="phase-run-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1228,8 +1292,12 @@ class TestExperimentRunsAndAttempts:
             platform_id=platform_id,
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="post",
             created_at=datetime.now(UTC),
         )
@@ -1962,8 +2030,12 @@ class TestExperimentRunStatusProjection:
                 platform_id=f"post-{trace_id}",
                 channel_name="general",
                 channel_id="ch-1",
-                author_name="alice",
-                author_id="u1",
+                author=Account(
+                    platform="discord",
+                    id="u1",
+                    name="alice",
+                    handle=None,
+                ),
                 content="post",
                 created_at=datetime.now(UTC),
             )

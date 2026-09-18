@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from scout.config import Message
+from scout.config import Account, Message
 from scout.result import Ok
 from scout.storage.migrations import AutonomyEventsNotEmptyError
 from scout.storage.state import (
@@ -142,8 +142,12 @@ class TestCommit:
                 platform_id="commit-1",
                 channel_name="general",
                 channel_id="ch-1",
-                author_name="alice",
-                author_id="user-1",
+                author=Account(
+                    platform="discord",
+                    id="user-1",
+                    name="alice",
+                    handle=None,
+                ),
                 content="pending commit",
                 created_at=datetime.now(UTC),
             )

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from scout.config import GradeRecord, Message, RelevanceResult
+from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.state import HumanPositivePromotionInProgressError, StateManager
 
 
@@ -15,8 +15,12 @@ def _source(state: StateManager) -> tuple[int, int, int, Message]:
         platform_id="human-positive-1",
         channel_name="general",
         channel_id="channel-1",
-        author_name="alice",
-        author_id="alice-1",
+        author=Account(
+            platform="discord",
+            id="alice-1",
+            name="alice",
+            handle=None,
+        ),
         content="This should receive a response",
         created_at=datetime.now(UTC),
     )

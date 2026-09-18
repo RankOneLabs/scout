@@ -10,6 +10,7 @@ import pytest
 
 import scout.grading.service as grading
 from scout.config import (
+    Account,
     GradeRecord,
     GradingSignal,
     Message,
@@ -132,8 +133,12 @@ class TestGradeStorage:
             platform_id="grade-test-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Looking for agent tools",
             created_at=datetime.now(UTC),
         )
@@ -358,12 +363,22 @@ class TestGradeStorage:
 
         msg1 = Message(
             platform="discord", platform_id="gp-1", channel_name="ch",
-            channel_id="c1", author_name="a", author_id="u1",
+            channel_id="c1", author=Account(
+                                 platform="discord",
+                                 id="u1",
+                                 name="a",
+                                 handle=None,
+                             ),
             content="post 1", created_at=datetime.now(UTC),
         )
         msg2 = Message(
             platform="discord", platform_id="gp-2", channel_name="ch",
-            channel_id="c1", author_name="b", author_id="u2",
+            channel_id="c1", author=Account(
+                                 platform="discord",
+                                 id="u2",
+                                 name="b",
+                                 handle=None,
+                             ),
             content="post 2", created_at=datetime.now(UTC),
         )
         p1 = in_memory_state.save_post(msg1, scan_id)
@@ -410,7 +425,12 @@ class TestGradeStorage:
         ]):
             msg = Message(
                 platform="discord", platform_id=f"sig-{i}", channel_name="ch",
-                channel_id="c1", author_name="a", author_id="u1",
+                channel_id="c1", author=Account(
+                                     platform="discord",
+                                     id="u1",
+                                     name="a",
+                                     handle=None,
+                                 ),
                 content=f"post {i}", created_at=datetime.now(UTC),
             )
             pid = in_memory_state.save_post(msg, scan_id)
@@ -440,7 +460,12 @@ class TestGradeStorage:
         scan_id = in_memory_state.start_scan()
         msg = Message(
             platform="discord", platform_id="ec-1", channel_name="general",
-            channel_id="c1", author_name="alice", author_id="u1",
+            channel_id="c1", author=Account(
+                                 platform="discord",
+                                 id="u1",
+                                 name="alice",
+                                 handle=None,
+                             ),
             content="need agent tools", created_at=datetime.now(UTC),
         )
         post_id = in_memory_state.save_post(msg, scan_id)
@@ -465,7 +490,12 @@ class TestGradeStorage:
         scan_id = in_memory_state.start_scan()
         msg = Message(
             platform="discord", platform_id="ec-since", channel_name="general",
-            channel_id="c1", author_name="alice", author_id="u1",
+            channel_id="c1", author=Account(
+                                 platform="discord",
+                                 id="u1",
+                                 name="alice",
+                                 handle=None,
+                             ),
             content="timestamp boundary", created_at=datetime.now(UTC),
         )
         post_id = in_memory_state.save_post(msg, scan_id)
@@ -493,7 +523,12 @@ class TestGradeStorage:
         scan_id = in_memory_state.start_scan()
         msg = Message(
             platform="discord", platform_id="ec-2", channel_name="ch",
-            channel_id="c1", author_name="a", author_id="u1",
+            channel_id="c1", author=Account(
+                                 platform="discord",
+                                 id="u1",
+                                 name="a",
+                                 handle=None,
+                             ),
             content="post", created_at=datetime.now(UTC),
         )
         post_id = in_memory_state.save_post(msg, scan_id)
@@ -525,7 +560,12 @@ class TestGradeStorage:
         scan_id = in_memory_state.start_scan()
         msg = Message(
             platform="discord", platform_id="gi-1", channel_name="general",
-            channel_id="c1", author_name="alice", author_id="u1",
+            channel_id="c1", author=Account(
+                                 platform="discord",
+                                 id="u1",
+                                 name="alice",
+                                 handle=None,
+                             ),
             content="agent question", created_at=datetime.now(UTC),
         )
         post_id = in_memory_state.save_post(msg, scan_id)
@@ -565,8 +605,12 @@ class TestSaveGradeValidationBoundary:
             platform_id="boundary-test-1",
             channel_name="general",
             channel_id="ch-1",
-            author_name="alice",
-            author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="Looking for agent tools",
             created_at=datetime.now(UTC),
         )
@@ -948,7 +992,12 @@ class TestReviewScan:
         msg = Message(
             platform="discord", platform_id="review-1",
             channel_name="general", channel_id="c1",
-            author_name="alice", author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="agent question", created_at=datetime.now(UTC),
         )
         post_id = state.save_post(msg, scan_id)
@@ -1013,7 +1062,12 @@ class TestReviewScan:
         msg2 = Message(
             platform="discord", platform_id="review-2",
             channel_name="general", channel_id="c1",
-            author_name="bob", author_id="u2",
+            author=Account(
+                platform="discord",
+                id="u2",
+                name="bob",
+                handle=None,
+            ),
             content="another question", created_at=datetime.now(UTC),
         )
         post2_id = in_memory_state.save_post(msg2, scan_id)
@@ -1112,7 +1166,12 @@ class TestEditedTextCLI:
         msg = Message(
             platform="discord", platform_id="edit-1",
             channel_name="general", channel_id="c1",
-            author_name="alice", author_id="u1",
+            author=Account(
+                platform="discord",
+                id="u1",
+                name="alice",
+                handle=None,
+            ),
             content="agent question", created_at=datetime.now(UTC),
         )
         post_id = state.save_post(msg, scan_id)

@@ -13,7 +13,8 @@ import logging
 import sqlite3
 from datetime import UTC, datetime
 
-from scout.config import Message, SourceAuthor, SourceParent
+from scout.config import Account, Message, SourceParent
+from scout.scanning.author_class import handle_from_post_url
 from scout.storage.unit_of_work import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -131,9 +132,11 @@ class PostStore:
             ):
                 parent = SourceParent(
                     id=row["parent_id"],
-                    author=SourceAuthor(
+                    author=Account(
+                        platform=row["platform"],
                         id=row["parent_author_id"],
                         name=row["parent_author_name"] or "",
+                        handle=handle_from_post_url(row["platform"], row["parent_url"]),
                     ),
                     text=row["parent_text"],
                     url=row["parent_url"] or "",
@@ -144,8 +147,11 @@ class PostStore:
             platform_id=row["platform_msg_id"],
             channel_name=row["channel_name"] or "",
             channel_id=row["channel_id"] or "",
-            author_name=row["author_name"] or "unknown",
-            author_id=row["author_id"] or "",
+            author=Account(
+                platform=row["platform"], id=row["author_id"] or "",
+                name=row["author_name"] or "unknown",
+                handle=handle_from_post_url(row["platform"], row["url"]),
+            ),
             content=row["content"] or "",
             created_at=created_at,
             url=row["url"] or "",

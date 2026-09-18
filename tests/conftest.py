@@ -29,7 +29,7 @@ import pytest
 import yaml
 from pluggy import Result
 
-from scout.config import Message, RelevanceResult
+from scout.config import Account, Message, RelevanceResult
 from scout.dossiers.resolver import (
     DossierResolution,
     DossierResolutionError,
@@ -347,8 +347,12 @@ def sample_message() -> Message:
         platform_id="test-1",
         channel_name="general",
         channel_id="ch-1",
-        author_name="alice",
-        author_id="user-1",
+        author=Account(
+            platform="discord",
+            id="user-1",
+            name="alice",
+            handle=None,
+        ),
         content="Looking for bot detection solutions for our agent signup flow",
         created_at=datetime.now(UTC),
         url="https://discord.com/test",

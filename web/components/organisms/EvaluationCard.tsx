@@ -10,6 +10,7 @@ import { ExternalLink } from "@/components/atoms/ExternalLink";
 import { GradeControls } from "@/components/molecules/GradeControls";
 import { MatchedRouteSummary } from "@/components/molecules/MatchedRouteSummary";
 import { AuthorClassBadge } from "@/components/molecules/AuthorClassBadge";
+import { ShadowRelevanceBadge } from "@/components/molecules/ShadowRelevanceBadge";
 import { BlockAuthorButton } from "@/components/molecules/BlockAuthorButton";
 import { truncateContent, formatTimestamp } from "@/lib/transforms";
 
@@ -51,6 +52,7 @@ export function EvaluationCard({ evaluation, onGradeUpdate }: {
           <h4 className="text-xs font-medium uppercase text-gray-600 dark:text-gray-500">Original post</h4>
           <div className="flex items-center gap-3">
             <AuthorClassBadge classification={evaluation.post.author_classification} />
+            <ShadowRelevanceBadge run={evaluation.shadow_relevance} />
             <BlockAuthorButton
               platform={evaluation.post.platform}
               authorId={evaluation.post.author_id}

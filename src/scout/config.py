@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from dotenv import load_dotenv
 
@@ -160,6 +160,25 @@ KEYWORD_PREFILTER: bool = os.getenv("KEYWORD_PREFILTER", "true").lower() == "tru
 PROMPT_DIAGNOSTIC_ROUTE_THRESHOLD: int = _env_int(
     "PROMPT_DIAGNOSTIC_ROUTE_THRESHOLD", 1
 )
+
+# --- Non-gating typesafe shadow relevance ---
+TYPESAFE_SHADOW_MODE: bool = _env_bool("TYPESAFE_SHADOW_MODE", False)
+_typesafe_backend = os.getenv("TYPESAFE_SHADOW_BACKEND", "placeholder").strip().lower()
+if _typesafe_backend != "placeholder":
+    _env_errors.append("TYPESAFE_SHADOW_BACKEND must be 'placeholder'")
+    _typesafe_backend = "placeholder"
+TYPESAFE_SHADOW_BACKEND: Literal["placeholder"] = cast(
+    Literal["placeholder"], _typesafe_backend
+)
+_default_typesafe_catalogue = str(
+    runtime_resource("typesafe", "catalogues", "agent-ops-relevance.v0-fixture.yaml")
+)
+TYPESAFE_CATALOGUE_PATH: str = (
+    os.getenv("TYPESAFE_CATALOGUE_PATH", "").strip() or _default_typesafe_catalogue
+)
+TYPESAFE_PLACEHOLDER_ANSWERS_PATH: str = os.getenv(
+    "TYPESAFE_PLACEHOLDER_ANSWERS_PATH", ""
+).strip()
 
 # --- Dossier grounding ---
 # Root path of the read-only dossier-source checkout.
@@ -316,11 +335,20 @@ def build_search_queries(keywords: tuple[KeywordRoute, ...]) -> list[str]:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceAuthor:
-    """Platform-neutral author identity."""
+class Account:
+    """Platform-neutral account profile observed alongside a message."""
 
+    platform: str
     id: str
     name: str
+    handle: str | None
+    bio: str | None = None
+    followers: int | None = None
+    following: int | None = None
+    posts: int | None = None
+    created_at: datetime | None = None
+    verified: bool | None = None
+    observed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,7 +356,7 @@ class SourceParent:
     """Immediate parent post context resolved from a reply reference."""
 
     id: str
-    author: SourceAuthor
+    author: Account
     text: str
     url: str
 
@@ -341,13 +369,20 @@ class Message:
     platform_id: str  # Platform-specific message ID
     channel_name: str
     channel_id: str
-    author_name: str
-    author_id: str
+    author: Account
     content: str
     created_at: datetime
     url: str = ""
     parent: SourceParent | None = None
     parent_lookup_status: str = "not_applicable"  # not_applicable | resolved | failed
+
+    @property
+    def author_name(self) -> str:
+        return self.author.name
+
+    @property
+    def author_id(self) -> str:
+        return self.author.id
 
 
 @dataclass(frozen=True, slots=True)
