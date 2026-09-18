@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from scout.config import HUMAN_GRADE_SCHEMA_VERSION
 from scout.storage.unit_of_work import UnitOfWork
 
 
@@ -155,10 +156,7 @@ class ShadowRelevanceStore:
             ).fetchone()
         assert row is not None
         persisted = _row(row)
-        if any(
-            getattr(persisted, field) != getattr(run, field)
-            for field in _IDEMPOTENT_FIELDS
-        ):
+        if any(getattr(persisted, field) != getattr(run, field) for field in _IDEMPOTENT_FIELDS):
             raise sqlite3.IntegrityError(
                 "conflicting shadow relevance run for backend and request_id"
             )
@@ -194,10 +192,13 @@ class ShadowRelevanceStore:
 
     @staticmethod
     def table_exists(conn: sqlite3.Connection) -> bool:
-        return conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-            ("shadow_relevance_runs",),
-        ).fetchone() is not None
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("shadow_relevance_runs",),
+            ).fetchone()
+            is not None
+        )
 
     @staticmethod
     def report_rows(
@@ -206,17 +207,33 @@ class ShadowRelevanceStore:
         """Read the latest shadow run per evaluation for the operator report.
 
         SQL lives in the typed repository; the CLI consumes only named rows.
-        A grade is exposed only when its immutable finalized revision exists.
+        A grade is exposed only when its latest immutable revision and current
+        row are finalized under the current schema. An invalidating revision
+        never revives an older label.
         """
         condition = "sr.scan_id = ?" if scan_id is not None else "sr.created_at >= ?"
         parameter: str | int = scan_id if scan_id is not None else since or ""
+        parameters: tuple[object, ...] = (
+            HUMAN_GRADE_SCHEMA_VERSION,
+            HUMAN_GRADE_SCHEMA_VERSION,
+            HUMAN_GRADE_SCHEMA_VERSION,
+            parameter,
+        )
         rows = conn.execute(
             f"""
             SELECT sr.evaluation_id, sr.scan_id, sr.created_at, sr.status,
                    sr.eligible, sr.p_eligible, sr.uncertain,
                    json_extract(sr.decision_json, '$.reason') AS reason,
                    sr.error_detail, e.relevant AS llm_relevant, e.score AS llm_score,
-                   json_extract(gr.payload, '$.relevance_judgment') AS human_grade
+                   CASE WHEN g.schema_version = ? AND g.needs_regrade = 0
+                              AND gr.evaluation_id = e.id
+                              AND gr.schema_version = ?
+                              AND json_type(gr.payload, '$.schema_version') = 'integer'
+                              AND json_extract(gr.payload, '$.schema_version') = ?
+                              AND json_type(gr.payload, '$.needs_regrade') = 'integer'
+                              AND json_extract(gr.payload, '$.needs_regrade') = 0
+                        THEN json_extract(gr.payload, '$.relevance_judgment')
+                        ELSE NULL END AS human_grade
               FROM shadow_relevance_runs sr
               JOIN evaluations e ON e.id = sr.evaluation_id
               LEFT JOIN grades g ON g.id = (
@@ -238,17 +255,21 @@ class ShadowRelevanceStore:
                )
              ORDER BY sr.created_at, sr.id
             """,  # noqa: S608 -- condition is selected from two constant strings
-            (parameter,),
+            parameters,
         ).fetchall()
         return [
             ShadowReportRow(
-                evaluation_id=row["evaluation_id"], scan_id=row["scan_id"],
-                created_at=row["created_at"], status=row["status"],
+                evaluation_id=row["evaluation_id"],
+                scan_id=row["scan_id"],
+                created_at=row["created_at"],
+                status=row["status"],
                 eligible=None if row["eligible"] is None else bool(row["eligible"]),
                 p_eligible=row["p_eligible"],
                 uncertain=None if row["uncertain"] is None else bool(row["uncertain"]),
-                reason=row["reason"], error_detail=row["error_detail"],
-                llm_relevant=bool(row["llm_relevant"]), llm_score=row["llm_score"],
+                reason=row["reason"],
+                error_detail=row["error_detail"],
+                llm_relevant=bool(row["llm_relevant"]),
+                llm_score=row["llm_score"],
                 human_grade=row["human_grade"],
             )
             for row in rows

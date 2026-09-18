@@ -90,6 +90,10 @@ uv run scout typesafe report --since 2026-09-01T00:00:00Z
 uv run scout typesafe report --scan-id 42 --json
 ```
 
+Human agreement includes only the latest grade revision when both it and the
+current grade row are finalized under the current schema; an invalidating
+revision does not fall back to an older label.
+
 The summary includes agreement counts and an offline replay of the checked-in
 placeholder acceptance fixture, making catalogue or decision-mapping drift
 visible. If `shadow_relevance_runs` is absent, the command explains that the

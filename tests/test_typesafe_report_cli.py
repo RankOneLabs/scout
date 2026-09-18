@@ -53,17 +53,21 @@ def test_report_lists_decisions_grade_summary_and_round_trips_json(tmp_path, cap
     conn.executescript(
         """
         CREATE TABLE evaluations (id INTEGER PRIMARY KEY, relevant INTEGER, score REAL);
-        CREATE TABLE grades (id INTEGER PRIMARY KEY, evaluation_id INTEGER);
+        CREATE TABLE grades (
+          id INTEGER PRIMARY KEY, evaluation_id INTEGER,
+          schema_version INTEGER, needs_regrade INTEGER);
         CREATE TABLE grade_revisions (
-          id INTEGER PRIMARY KEY, grade_id INTEGER, revision INTEGER, payload TEXT);
+          id INTEGER PRIMARY KEY, grade_id INTEGER, evaluation_id INTEGER,
+          revision INTEGER, schema_version INTEGER, payload TEXT);
         CREATE TABLE shadow_relevance_runs (
           id INTEGER PRIMARY KEY, evaluation_id INTEGER, scan_id INTEGER,
           created_at TEXT, status TEXT, eligible INTEGER, p_eligible REAL,
           uncertain INTEGER, decision_json TEXT, error_detail TEXT);
         INSERT INTO evaluations VALUES (1, 1, .82), (2, 0, .21);
-        INSERT INTO grades VALUES (9, 1);
+        INSERT INTO grades VALUES (9, 1, 3, 0);
         INSERT INTO grade_revisions VALUES
-          (10, 9, 1, '{"relevance_judgment":"correct"}');
+          (10, 9, 1, 1, 3,
+           '{"relevance_judgment":"correct","schema_version":3,"needs_regrade":0}');
         INSERT INTO shadow_relevance_runs VALUES
           (1, 1, 7, '2026-09-16T00:00:00Z', 'ok', 0, .4, 0,
            '{"reason":"old"}', NULL),
@@ -80,10 +84,16 @@ def test_report_lists_decisions_grade_summary_and_round_trips_json(tmp_path, cap
     report = TypesafeReport.model_validate_json(capsys.readouterr().out)
     assert [item.evaluation_id for item in report.evaluations] == [1, 2]
     assert report.evaluations[0].model_dump() == {
-        "evaluation_id": 1, "scan_id": 7, "shadow_status": "ok",
-        "shadow_eligible": True, "shadow_p_eligible": .91,
-        "shadow_uncertain": False, "shadow_reason": "threshold met",
-        "llm_relevant": True, "llm_score": .82, "human_grade": "correct",
+        "evaluation_id": 1,
+        "scan_id": 7,
+        "shadow_status": "ok",
+        "shadow_eligible": True,
+        "shadow_p_eligible": 0.91,
+        "shadow_uncertain": False,
+        "shadow_reason": "threshold met",
+        "llm_relevant": True,
+        "llm_score": 0.82,
+        "human_grade": "correct",
     }
     assert report.evaluations[1].human_grade is None
     assert report.summary.shadow_llm_agree == 1
