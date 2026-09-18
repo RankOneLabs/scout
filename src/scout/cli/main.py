@@ -113,8 +113,8 @@ def parse_args() -> argparse.Namespace:
 
     subparsers = parser.add_subparsers(dest="subcommand")
     from scout.cli.analysis import add_analysis_parser
-    from scout.cli.watermark import add_watermark_parser
     from scout.cli.typesafe import add_typesafe_parser
+    from scout.cli.watermark import add_watermark_parser
 
     add_analysis_parser(subparsers, DB_PATH)
     add_watermark_parser(subparsers, DB_PATH)
