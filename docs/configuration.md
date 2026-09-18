@@ -23,8 +23,30 @@ Copy `.env.example` for a complete template.
 |---|---:|---|
 | `TYPESAFE_SHADOW_MODE` | `false` | Run the non-gating shadow relevance node for agent-ops routes |
 | `TYPESAFE_SHADOW_BACKEND` | `placeholder` | Shadow backend; only `placeholder` is registered in this release |
+| `TYPESAFE_API_KEY` | unset/off | Placeholder for the remote backend; unused until the backend cohort lands |
 | `TYPESAFE_CATALOGUE_PATH` | packaged `agent-ops-relevance.v0-fixture.yaml` | Validated catalogue YAML path |
 | `TYPESAFE_PLACEHOLDER_ANSWERS_PATH` | unset | Placeholder answer fixture path; required when shadow mode is enabled |
+
+The offline fitter accepts an inline `RelevanceTask` JSON document (or a path
+to one), one catalogue version, and operator-selected false-positive and
+false-negative costs:
+
+```bash
+uv run scout typesafe fit \
+  --task relevance-task.json \
+  --catalogue-version <sha256> \
+  --c-fp 1 --c-fn 1 \
+  --out evidence/shadow-relevance-2026-09-17/
+```
+
+Only a task with `partition: "train"` and a retained `partition_digest` is
+accepted. The command refuses `all` and `heldout` before opening the database,
+then loads and verifies the `FrozenPartition` before querying training rows.
+It writes `weight-set.json`, `PLAN.md`, `RESULTS.md`, `checksums.json`, and
+`inventory.json`. The default costs are both `1`; their ratio determines the
+decision threshold and uncertainty band and both values are retained in the
+weight set. The pinned September agent-ops task is `partition: "all"` with no
+digest, so it cannot be fitted until the label-packet work pins a partition.
 
 ## Platform limits
 

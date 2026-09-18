@@ -94,3 +94,12 @@ The summary includes agreement counts and an offline replay of the checked-in
 placeholder acceptance fixture, making catalogue or decision-mapping drift
 visible. If `shadow_relevance_runs` is absent, the command explains that the
 database predates schema v47 and exits successfully.
+
+The review badge and this report are observational views of the same stored
+shadow rows; neither gates an evaluation. A train-only fitted report can be
+produced with `scout typesafe fit` once a task pins a `FrozenPartition`. Its
+September evidence directory contains the predeclared `PLAN.md`, observed
+`RESULTS.md`, a per-evaluation `inventory.json`, `checksums.json`, and the
+versioned `weight-set.json`. The current pinned September agent-ops task has
+partition `all` and no digest, so real-row fitting remains deliberately blocked;
+placeholder-backend rows over a synthesized partition exercise the command.
