@@ -2,7 +2,9 @@ import argparse
 import sqlite3
 from importlib.resources import files
 
-from scout.cli.typesafe import run_typesafe
+import pytest
+
+from scout.cli.typesafe import add_typesafe_parser, run_typesafe
 from scout.typesafe.reporting import FixtureReplayUnavailableError, TypesafeReport
 
 
@@ -16,6 +18,16 @@ def _args(path, **overrides):
     values = {"db_path": str(path), "since": None, "scan_id": 7, "json": False}
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+@pytest.mark.parametrize("value", ["2026-09-18", "2026-09-18T07:00:00"])
+def test_since_requires_explicit_timezone(value, capsys) -> None:
+    parser = argparse.ArgumentParser()
+    add_typesafe_parser(parser.add_subparsers(dest="command"), "scout.db")
+    with pytest.raises(SystemExit) as error:
+        parser.parse_args(["typesafe", "report", "--since", value])
+    assert error.value.code == 2
+    assert "explicit timezone" in capsys.readouterr().err
 
 
 def test_report_missing_table_is_a_clean_noop(tmp_path, capsys) -> None:
@@ -100,6 +112,18 @@ def test_report_lists_decisions_grade_summary_and_round_trips_json(tmp_path, cap
     assert report.summary.shadow_llm_disagree == 1
     assert report.placeholder_fixture_replay.passed
     assert report.placeholder_fixture_replay.checked == 2
+
+    parser = argparse.ArgumentParser()
+    add_typesafe_parser(parser.add_subparsers(dest="command"), "scout.db")
+    parsed = parser.parse_args(
+        [
+            "typesafe", "report", "--since", "2026-09-16T17:00:00-07:00",
+            "--json", "--db-path", str(db_path),
+        ]
+    )
+    assert run_typesafe(parsed) == 0
+    offset_report = TypesafeReport.model_validate_json(capsys.readouterr().out)
+    assert [item.evaluation_id for item in offset_report.evaluations] == [1, 2]
 
     assert run_typesafe(_args(db_path)) == 0
     text = capsys.readouterr().out

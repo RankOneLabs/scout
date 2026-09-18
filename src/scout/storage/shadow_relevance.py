@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from scout.config import HUMAN_GRADE_SCHEMA_VERSION
+from scout.storage.timestamps import parse_aware_utc
 from scout.storage.unit_of_work import UnitOfWork
 
 
@@ -211,17 +212,15 @@ class ShadowRelevanceStore:
         row are finalized under the current schema. An invalidating revision
         never revives an older label.
         """
-        condition = "sr.scan_id = ?" if scan_id is not None else "sr.created_at >= ?"
-        parameter: str | int = scan_id if scan_id is not None else since or ""
+        cutoff = None if since is None else parse_aware_utc(since)
         parameters: tuple[object, ...] = (
             HUMAN_GRADE_SCHEMA_VERSION,
             HUMAN_GRADE_SCHEMA_VERSION,
             HUMAN_GRADE_SCHEMA_VERSION,
-            parameter,
         )
         rows = conn.execute(
-            f"""
-            SELECT sr.evaluation_id, sr.scan_id, sr.created_at, sr.status,
+            """
+            SELECT sr.id AS shadow_run_id, sr.evaluation_id, sr.scan_id, sr.created_at, sr.status,
                    sr.eligible, sr.p_eligible, sr.uncertain,
                    json_extract(sr.decision_json, '$.reason') AS reason,
                    sr.error_detail, e.relevant AS llm_relevant, e.score AS llm_score,
@@ -246,17 +245,28 @@ class ShadowRelevanceStore:
                     WHERE revision.grade_id = g.id
                     ORDER BY revision.revision DESC LIMIT 1
               )
-             WHERE {condition}
-               AND NOT EXISTS (
-                   SELECT 1 FROM shadow_relevance_runs newer
-                    WHERE newer.evaluation_id = sr.evaluation_id
-                      AND (newer.created_at > sr.created_at
-                           OR (newer.created_at = sr.created_at AND newer.id > sr.id))
-               )
              ORDER BY sr.created_at, sr.id
-            """,  # noqa: S608 -- condition is selected from two constant strings
+            """,
             parameters,
         ).fetchall()
+        latest: dict[int, tuple[datetime, sqlite3.Row]] = {}
+        for row in rows:
+            instant = parse_aware_utc(row["created_at"])
+            current = latest.get(row["evaluation_id"])
+            if current is None or (instant, row["shadow_run_id"]) > (
+                current[0],
+                current[1]["shadow_run_id"],
+            ):
+                latest[row["evaluation_id"]] = (instant, row)
+        selected = latest.values()
+        if scan_id is not None:
+            rows = [row for _instant, row in selected if row["scan_id"] == scan_id]
+        else:
+            assert cutoff is not None
+            rows = [row for instant, row in selected if instant >= cutoff]
+        rows = sorted(
+            rows, key=lambda row: (parse_aware_utc(row["created_at"]), row["shadow_run_id"])
+        )
         return [
             ShadowReportRow(
                 evaluation_id=row["evaluation_id"],

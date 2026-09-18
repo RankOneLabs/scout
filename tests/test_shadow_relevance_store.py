@@ -161,3 +161,37 @@ def test_report_hides_grade_after_latest_revision_invalidates_it() -> None:
         rows = ShadowRelevanceStore.report_rows(state.conn, scan_id=scan_id)
         assert len(rows) == 1
         assert rows[0].human_grade is None
+
+
+def test_report_since_compares_instants_and_microseconds() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE evaluations (id INTEGER PRIMARY KEY, relevant INTEGER, score REAL);
+        CREATE TABLE grades (
+          id INTEGER PRIMARY KEY, evaluation_id INTEGER,
+          schema_version INTEGER, needs_regrade INTEGER);
+        CREATE TABLE grade_revisions (
+          id INTEGER PRIMARY KEY, grade_id INTEGER, evaluation_id INTEGER,
+          revision INTEGER, schema_version INTEGER, payload TEXT);
+        CREATE TABLE shadow_relevance_runs (
+          id INTEGER PRIMARY KEY, evaluation_id INTEGER, scan_id INTEGER,
+          created_at TEXT, status TEXT, eligible INTEGER, p_eligible REAL,
+          uncertain INTEGER, decision_json TEXT, error_detail TEXT);
+        INSERT INTO evaluations VALUES (1, 1, .9), (2, 1, .9), (3, 1, .9);
+        INSERT INTO shadow_relevance_runs VALUES
+          (1, 1, 7, '2026-09-18T01:00:00+00:00', 'ok', 1, .9, 0, '{}', NULL),
+          (2, 2, 7, '2026-09-18T07:00:00Z', 'ok', 1, .9, 0, '{}', NULL),
+          (3, 3, 7, '2026-09-18T07:00:00.000001+00:00', 'ok', 1, .9, 0, '{}', NULL);
+        """
+    )
+
+    rows = ShadowRelevanceStore.report_rows(conn, since="2026-09-18T00:00:00-07:00")
+    assert [row.evaluation_id for row in rows] == [2, 3]
+    assert [
+        row.evaluation_id
+        for row in ShadowRelevanceStore.report_rows(conn, since="2026-09-18T07:00:00.000001Z")
+    ] == [3]
+    with pytest.raises(ValueError, match="explicit timezone"):
+        ShadowRelevanceStore.report_rows(conn, since="2026-09-18T07:00:00")

@@ -93,6 +93,8 @@ uv run scout typesafe report --scan-id 42 --json
 Human agreement includes only the latest grade revision when both it and the
 current grade row are finalized under the current schema; an invalidating
 revision does not fall back to an older label.
+`--since` is an inclusive instant cutoff and requires an explicit timezone
+(`Z` or a numeric offset). Equivalent offsets are normalized to UTC.
 
 The summary includes agreement counts and an offline replay of the checked-in
 placeholder acceptance fixture, making catalogue or decision-mapping drift

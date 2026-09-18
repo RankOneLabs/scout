@@ -22,6 +22,7 @@ from scout.replay.tasks import EXPERIMENT_TASK_ADAPTER, RelevanceTask
 from scout.result import Err
 from scout.storage.db import read_only_connection
 from scout.storage.shadow_relevance import ShadowRelevanceStore
+from scout.storage.timestamps import parse_aware_utc
 from scout.typesafe.compose import DECIDE_REGISTRY, register_fitted_gate
 from scout.typesafe.fitting import extract_features, fit_weight_set
 from scout.typesafe.models import Answers
@@ -46,10 +47,11 @@ class TypesafeFitError(RuntimeError):
 
 def _iso8601(value: str) -> str:
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_aware_utc(value).isoformat()
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be an ISO-8601 timestamp") from exc
-    return value
+        raise argparse.ArgumentTypeError(
+            "must be an ISO-8601 timestamp with an explicit timezone"
+        ) from exc
 
 
 def add_typesafe_parser(
@@ -61,7 +63,11 @@ def add_typesafe_parser(
         "report", help="Compare shadow, LLM, and finalized human decisions"
     )
     selector = report.add_mutually_exclusive_group(required=True)
-    selector.add_argument("--since", type=_iso8601)
+    selector.add_argument(
+        "--since",
+        type=_iso8601,
+        help="inclusive ISO-8601 instant with an explicit timezone (Z or numeric offset)",
+    )
     selector.add_argument("--scan-id", type=int)
     report.add_argument("--json", action="store_true")
     report.add_argument("--db-path", default=db_path)

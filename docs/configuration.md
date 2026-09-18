@@ -42,6 +42,9 @@ uv run scout typesafe fit \
 Only a task with `partition: "train"` and a retained `partition_digest` is
 accepted. The command refuses `all` and `heldout` before opening the database,
 then loads and verifies the `FrozenPartition` before querying training rows.
+The report command's `--since` cutoff is inclusive and requires an ISO-8601
+timestamp with an explicit `Z` or numeric timezone offset; date-only and
+timezone-naive values are rejected.
 It writes `weight-set.json`, `PLAN.md`, `RESULTS.md`, `checksums.json`, and
 `inventory.json`. The default costs are both `1`; their ratio determines the
 decision threshold and uncertainty band and both values are retained in the
