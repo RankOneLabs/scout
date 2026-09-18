@@ -1310,6 +1310,38 @@ function getReviewEvaluations({
       parent_text: row.parent_text,
       parent_url: row.parent_url,
     });
+    let shadowRelevance: ShadowRelevanceRunRow | null | undefined;
+    if (hasShadowRelevance) {
+      if (row.shadow_id === null) {
+        shadowRelevance = null;
+      } else {
+        const { shadow_evaluation_id, shadow_status, shadow_created_at } = row;
+        if (
+          shadow_evaluation_id === null ||
+          shadow_status === null ||
+          shadow_created_at === null
+        ) {
+          throw new Error(`Shadow relevance run ${row.shadow_id} is missing required fields`);
+        }
+        shadowRelevance = {
+          id: row.shadow_id,
+          evaluation_id: shadow_evaluation_id,
+          eligible: row.shadow_eligible === null ? null : toBool(row.shadow_eligible),
+          p_eligible: row.shadow_p_eligible,
+          uncertain: row.shadow_uncertain === null ? null : toBool(row.shadow_uncertain),
+          reason: row.shadow_reason,
+          details: (() => {
+            try { return JSON.parse(row.shadow_details ?? "{}"); }
+            catch { return {}; }
+          })(),
+          account_label: row.shadow_account_label,
+          account_confidence: row.shadow_account_confidence,
+          status: shadow_status,
+          error_detail: row.shadow_error_detail,
+          created_at: shadow_created_at,
+        };
+      }
+    }
     return {
       id: row.id, post_id: row.post_id, relevant: toBool(row.relevant),
       score: row.score, reason: row.reason, relevant_to: parseRelevantTo(row.relevant_to),
@@ -1347,24 +1379,7 @@ function getReviewEvaluations({
       },
       gate_violations: violationsByEvaluation.get(row.id) ?? [],
       grade: gradesByEvaluation.get(row.id) ?? null,
-      ...(hasShadowRelevance ? {
-        shadow_relevance: row.shadow_id === null ? null : {
-          id: row.shadow_id,
-          evaluation_id: row.shadow_evaluation_id!,
-          eligible: row.shadow_eligible === null ? null : toBool(row.shadow_eligible),
-          p_eligible: row.shadow_p_eligible,
-          uncertain: row.shadow_uncertain === null ? null : toBool(row.shadow_uncertain),
-          reason: row.shadow_reason,
-          details: (() => {
-            try { return JSON.parse(row.shadow_details ?? "{}"); }
-            catch { return {}; }
-          })(),
-          account_label: row.shadow_account_label,
-          account_confidence: row.shadow_account_confidence,
-          status: row.shadow_status!, error_detail: row.shadow_error_detail,
-          created_at: row.shadow_created_at!,
-        },
-      } : {}),
+      ...(hasShadowRelevance ? { shadow_relevance: shadowRelevance } : {}),
     };
   });
 }

@@ -263,7 +263,7 @@ describe("ScanDetailView coverage presentation", () => {
       React.createElement(ScanDetailView, {
         scan: makeScanDetail({
           latest_probe_run: {
-            probe_run_id: 4,
+            id: 4,
             environment: "production",
             started_at: "2026-05-15T00:00:00Z",
             completed_at: null,
@@ -273,6 +273,7 @@ describe("ScanDetailView coverage presentation", () => {
             window_hours: 6,
             limits_json: "{}",
             detail_json: "{}",
+            created_at: "2026-05-15T00:00:00Z",
           },
         }),
         posts: [],
