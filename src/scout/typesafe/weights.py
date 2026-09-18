@@ -9,6 +9,24 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class _FrozenWeights(dict[str, float]):
+    """JSON-object-compatible weights that cannot change after validation."""
+
+    @staticmethod
+    def _immutable(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("weight set weights are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable  # type: ignore[assignment]
+    popitem = _immutable  # type: ignore[assignment]
+    setdefault = _immutable  # type: ignore[assignment]
+    update = _immutable
+    __ior__ = _immutable  # type: ignore[assignment]
+
+
 class UncertainBand(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -86,4 +104,5 @@ class WeightSet(BaseModel):
         )
         if self.weight_set_version != expected:
             raise ValueError("weight_set_version does not match model contents")
+        object.__setattr__(self, "weights", _FrozenWeights(self.weights))
         return self

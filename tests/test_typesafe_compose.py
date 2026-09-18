@@ -4,7 +4,7 @@ from importlib.resources import files
 import pytest
 from pydantic import ValidationError
 
-from scout.typesafe.compose import DECIDE_REGISTRY, apply_weight_set
+from scout.typesafe.compose import DECIDE_REGISTRY, apply_weight_set, register_fitted_gate
 from scout.typesafe.fitting import fit_weight_set
 from scout.typesafe.models import Answers, DecisionRecord
 
@@ -75,6 +75,26 @@ def test_answers_rejects_empty_request_id() -> None:
         Answers.model_validate({"request_id": "", "model": "fixture", "answers": {}})
 
 
+def test_answers_rejects_duplicate_score_levels() -> None:
+    with pytest.raises(ValidationError, match="levels must be unique"):
+        Answers.model_validate(
+            {
+                "request_id": "request",
+                "model": "fixture",
+                "answers": {
+                    "quality": {
+                        "kind": "score",
+                        "levels": [
+                            {"level": "high", "probability": 0.4},
+                            {"level": "high", "probability": 0.6},
+                        ],
+                        "confidence": 0.7,
+                    }
+                },
+            }
+        )
+
+
 def test_fitted_gate_handles_extreme_negative_logit() -> None:
     from datetime import UTC, datetime
 
@@ -94,6 +114,37 @@ def test_fitted_gate_handles_extreme_negative_logit() -> None:
             }
         ),
         fitted,
+        fitted.catalogue_version,
     )
     assert decision.p_eligible == 0.0
     assert not decision.eligible
+
+
+def test_fitted_gate_rejects_catalogue_version_mismatch_before_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    fitted = fit_weight_set(
+        [(1, {"q": 0.1}, False), (2, {"q": 0.9}, True)],
+        catalogue_version="a" * 64,
+        c_fp=1.0,
+        c_fn=1.0,
+        fitted_at=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+    answers = Answers.model_validate(
+        {
+            "request_id": "request",
+            "model": "fixture",
+            "answers": {"q": {"kind": "probability", "probability": 1.0}},
+        }
+    )
+    monkeypatch.setattr(
+        "scout.typesafe.compose.extract_features",
+        lambda _answers: (_ for _ in ()).throw(AssertionError("must not extract")),
+    )
+
+    with pytest.raises(ValueError, match="catalogue version"):
+        apply_weight_set(answers, fitted, "b" * 64)
+    with pytest.raises(ValueError, match="catalogue version"):
+        register_fitted_gate(fitted, "b" * 64)

@@ -207,7 +207,7 @@ def test_fit_writes_september_report_and_registered_gate_reproduces_decisions(
     assert inventory["train_evaluation_ids"] == [1, 2]
     assert 999 not in inventory["fitted_evaluation_ids"]
     weight_set = WeightSet.model_validate_json((out / "weight-set.json").read_bytes())
-    name = register_fitted_gate(weight_set)
+    name = register_fitted_gate(weight_set, weight_set.catalogue_version)
     actual = {
         evaluation_id: DECIDE_REGISTRY[name](Answers.model_validate(document)).eligible
         for evaluation_id, document in answers.items()

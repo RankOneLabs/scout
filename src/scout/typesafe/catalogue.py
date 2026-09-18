@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic_core import PydanticSerializationError
 
 from scout.typesafe.models import CatalogueVersion
 
@@ -135,7 +136,15 @@ def load_catalogue(path: str | Path) -> Catalogue:
     try:
         raw: Any = yaml.safe_load(Path(path).read_text())
         document = CatalogueDocument.model_validate(raw)
-    except (OSError, yaml.YAMLError, ValidationError) as exc:
+        version = CatalogueVersion(hashlib.sha256(_canonical(document)).hexdigest())
+    except (
+        OSError,
+        UnicodeError,
+        yaml.YAMLError,
+        ValidationError,
+        PydanticSerializationError,
+        TypeError,
+        ValueError,
+    ) as exc:
         raise CatalogueError(str(exc)) from exc
-    version = CatalogueVersion(hashlib.sha256(_canonical(document)).hexdigest())
     return Catalogue(document=document, version=version)

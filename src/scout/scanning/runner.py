@@ -874,14 +874,21 @@ async def score_messages(
         raise ValueError("score_messages requires this scan's feedback_snapshot")
     shadow_runner: ShadowRelevanceRunner | None = None
     if _config.TYPESAFE_SHADOW_MODE:
-        if not _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH:
-            raise ValueError(
-                "TYPESAFE_PLACEHOLDER_ANSWERS_PATH is required when TYPESAFE_SHADOW_MODE=true"
+        try:
+            if not _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH:
+                raise ValueError(
+                    "TYPESAFE_PLACEHOLDER_ANSWERS_PATH is required when "
+                    "TYPESAFE_SHADOW_MODE=true"
+                )
+            shadow_runner = ShadowRelevanceRunner.placeholder(
+                _config.TYPESAFE_CATALOGUE_PATH,
+                _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH,
             )
-        shadow_runner = ShadowRelevanceRunner.placeholder(
-            _config.TYPESAFE_CATALOGUE_PATH,
-            _config.TYPESAFE_PLACEHOLDER_ANSWERS_PATH,
-        )
+        except Exception:
+            logger.warning(
+                "typesafe shadow initialization failed; shadow disabled for this scan",
+                exc_info=True,
+            )
     shadow_tasks: set[asyncio.Task[int | None]] = set()
 
     async def _settle_shadow_task(

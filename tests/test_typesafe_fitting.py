@@ -98,3 +98,17 @@ def test_weight_set_version_rejects_tampered_model_contents() -> None:
     document["bias"] += 1.0
     with pytest.raises(ValidationError, match="weight_set_version"):
         WeightSet.model_validate(document)
+
+
+def test_weight_set_weights_are_immutable_and_serialize_as_an_object() -> None:
+    fitted = fit_weight_set(
+        [(1, {"q": 0.1}, False), (2, {"q": 0.9}, True)],
+        catalogue_version="a" * 64,
+        c_fp=1.0,
+        c_fn=1.0,
+        fitted_at=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+
+    with pytest.raises(TypeError, match="immutable"):
+        fitted.weights["q"] = 2.0
+    assert isinstance(fitted.model_dump(mode="json")["weights"], dict)

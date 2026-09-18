@@ -83,8 +83,18 @@ DECIDE_REGISTRY: dict[str, Decide] = {
 }
 
 
-def apply_weight_set(answers: Answers, weight_set: WeightSet) -> DecisionRecord:
+def _validate_catalogue_version(weight_set: WeightSet, catalogue_version: str) -> None:
+    if weight_set.catalogue_version != catalogue_version:
+        raise ValueError(
+            "weight set catalogue version does not match the active catalogue"
+        )
+
+
+def apply_weight_set(
+    answers: Answers, weight_set: WeightSet, catalogue_version: str
+) -> DecisionRecord:
     """Apply portable weights as a pure transform; fitting is never imported here."""
+    _validate_catalogue_version(weight_set, catalogue_version)
     features = extract_features(answers)
     logit = weight_set.bias + sum(
         coefficient * features.get(key, 0.0)
@@ -116,12 +126,13 @@ def apply_weight_set(answers: Answers, weight_set: WeightSet) -> DecisionRecord:
     )
 
 
-def register_fitted_gate(weight_set: WeightSet) -> str:
+def register_fitted_gate(weight_set: WeightSet, catalogue_version: str) -> str:
     """Register one explicit fitted gate for tests and future promotion only."""
+    _validate_catalogue_version(weight_set, catalogue_version)
     name = f"fitted_gate/{weight_set.weight_set_version}"
 
     def decide(answers: Answers) -> DecisionRecord:
-        return apply_weight_set(answers, weight_set)
+        return apply_weight_set(answers, weight_set, catalogue_version)
 
     DECIDE_REGISTRY[name] = decide
     return name

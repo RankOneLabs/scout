@@ -250,6 +250,38 @@ async def test_score_messages_shadow_mode_is_non_gating_and_backfills_evaluation
 
 
 @pytest.mark.asyncio
+async def test_score_messages_disables_shadow_when_initialization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _enable_shadow(monkeypatch)
+    monkeypatch.setattr(config, "TYPESAFE_CATALOGUE_PATH", str(tmp_path / "missing.yaml"))
+    _stub_pipeline_construction(monkeypatch)
+    pipeline_call = AsyncMock(side_effect=RuntimeError("continue"))
+    monkeypatch.setattr(scan_runner, "run_pipeline", pipeline_call)
+
+    with StateManager(":memory:") as state:
+        state.registry.upsert_project("agent-ops", "Agent Ops", "desc", "https://example.test")
+        state.registry.upsert_keyword("agent-ops", "agent")
+        route = state.load_runtime_registry().keywords[0]
+        scan_id = state.start_scan()
+
+        await _score(
+            state,
+            scan_id,
+            [RoutedMessage(message=_message("known-post"), keyword_route=route)],
+            {"agent-ops": _project()},
+            tmp_path / "digest.md",
+        )
+
+        assert state.shadow_relevance.list_runs_for_scan(scan_id) == []
+
+    pipeline_call.assert_awaited_once()
+    assert "shadow initialization failed; shadow disabled" in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("blocked,project_key", [(True, "agent-ops"), (False, "other")])
 async def test_score_messages_skips_shadow_for_blocked_or_non_agent_ops_posts(
     monkeypatch: pytest.MonkeyPatch,

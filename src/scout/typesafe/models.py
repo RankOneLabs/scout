@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, NewType
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CatalogueVersion = NewType("CatalogueVersion", str)
 Probability = Annotated[float, Field(ge=0, le=1)]
@@ -35,6 +35,13 @@ class ScoreAnswer(BaseModel):
     kind: Literal["score"] = "score"
     levels: list[LevelProbability]
     confidence: Probability
+
+    @model_validator(mode="after")
+    def levels_are_unique(self) -> ScoreAnswer:
+        names = [item.level for item in self.levels]
+        if len(names) != len(set(names)):
+            raise ValueError("score answer levels must be unique")
+        return self
 
 
 Answer = Annotated[

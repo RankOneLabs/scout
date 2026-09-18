@@ -53,3 +53,21 @@ def test_loaded_catalogue_is_deeply_immutable() -> None:
         question.__pydantic_extra__["prompt"] = "changed"  # type: ignore[index]
 
     assert load_catalogue(FIXTURE).version == catalogue.version
+
+
+def test_catalogue_wraps_source_decoding_errors(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-utf8.yaml"
+    path.write_bytes(b"\xff")
+
+    with pytest.raises(CatalogueError):
+        load_catalogue(path)
+
+
+def test_catalogue_wraps_canonicalization_errors(tmp_path: Path) -> None:
+    raw = yaml.safe_load(FIXTURE.read_text())
+    raw["questions"][0]["metadata"] = b"\xff"
+    path = tmp_path / "invalid-binary.yaml"
+    path.write_text(yaml.safe_dump(raw))
+
+    with pytest.raises(CatalogueError):
+        load_catalogue(path)

@@ -199,11 +199,13 @@ def test_typesafe_backend_rejects_unregistered_name(
     import scout.config as config_module
 
     monkeypatch.setenv("TYPESAFE_SHADOW_BACKEND", "typesafe")
-    reloaded = importlib.reload(config_module)
-    assert reloaded.TYPESAFE_SHADOW_BACKEND == "placeholder"
-    assert any("TYPESAFE_SHADOW_BACKEND" in error for error in reloaded.get_env_errors())
-    monkeypatch.delenv("TYPESAFE_SHADOW_BACKEND")
-    importlib.reload(config_module)
+    try:
+        reloaded = importlib.reload(config_module)
+        assert reloaded.TYPESAFE_SHADOW_BACKEND == "placeholder"
+        assert any("TYPESAFE_SHADOW_BACKEND" in error for error in reloaded.get_env_errors())
+    finally:
+        monkeypatch.delenv("TYPESAFE_SHADOW_BACKEND")
+        importlib.reload(config_module)
 
 
 class TestLeaseAndRecoveryConfig:

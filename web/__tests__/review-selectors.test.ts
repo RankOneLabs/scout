@@ -48,12 +48,22 @@ describe("shadow relevance badge projection", () => {
     account_label: null, account_confidence: null, status: "ok" as const,
     error_detail: null, created_at: "2026-09-17T00:00:00Z" };
   it("projects an eligible decision", () => {
-    expect(selectShadowRelevanceBadge(run)).toMatchObject({ label: "shadow eligible", tone: "positive" });
+    expect(selectShadowRelevanceBadge({ ...run, account_label: "individual", account_confidence: 0.8 })).toMatchObject({
+      label: "shadow eligible", tone: "positive", title: expect.stringContaining("account: individual (0.80)"),
+    });
   });
   it("makes uncertainty visible", () => {
     expect(selectShadowRelevanceBadge({ ...run, uncertain: true })).toMatchObject({ label: "shadow eligible?", tone: "warning" });
   });
   it("prefers error detail for failed rows", () => {
-    expect(selectShadowRelevanceBadge({ ...run, status: "error", error_detail: "backend timeout" })).toMatchObject({ label: "shadow error", tone: "error", title: "backend timeout" });
+    expect(selectShadowRelevanceBadge({ ...run, status: "error", error_detail: "backend timeout" })).toMatchObject({
+      label: "shadow error", tone: "error", title: expect.stringContaining("backend timeout"),
+    });
+  });
+  it("preserves a missing eligibility decision", () => {
+    expect(selectShadowRelevanceBadge({ ...run, eligible: null, uncertain: null })).toMatchObject({
+      label: "shadow unavailable", tone: "warning",
+      title: expect.stringContaining("account classification unavailable"),
+    });
   });
 });

@@ -241,10 +241,10 @@ def run_fit(args: argparse.Namespace) -> int:
             raise TypesafeFitError(
                 "label_mismatch", f"finalized label differs from snapshot for {row.evaluation_id}"
             )
-        answers = Answers.model_validate(row.answers)
         try:
+            answers = Answers.model_validate(row.answers)
             features = extract_features(answers)
-        except ValueError as exc:
+        except (ValidationError, ValueError) as exc:
             raise TypesafeFitError(
                 "invalid_answers",
                 f"invalid answers for evaluation {row.evaluation_id}: {exc}",
@@ -261,7 +261,7 @@ def run_fit(args: argparse.Namespace) -> int:
         )
     except ValueError as exc:
         raise TypesafeFitError("fit_unavailable", str(exc)) from exc
-    gate_name = register_fitted_gate(weight_set)
+    gate_name = register_fitted_gate(weight_set, args.catalogue_version)
     decide = DECIDE_REGISTRY[gate_name]
     training_decisions = [
         {
