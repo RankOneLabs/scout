@@ -1,11 +1,11 @@
 # Validate the schema, not just the model
 
 Scout finds social posts about AI agents and drafts replies to them. Before it drafts
-anything, it scores each post for reply relevance: whether the post is
-worth replying to. That score decides whether Scout responds, flags the post for review, or
-drops it. To measure how well it makes that call, I need a set of correct answers, and I
-wrote those answers myself. The labels on this page are my attempts to pin down what reply
-relevance means.
+anything, it classifies each post for reply relevance: whether the post is worth replying to.
+That classification decides whether Scout responds, flags the post for review, or drops it.
+To measure how well it makes that call, I need a set of correct answers, and I wrote those
+answers myself. The labels on this page are my attempts to pin down what reply relevance
+means.
 
 I didn't know the right labels up front. Before scoring the model, I tested my labels and my
 own consistency as a grader.
@@ -68,9 +68,10 @@ because the link may or may not hold enough to reply to. Respond, review or drop
 from those answers in code.
 
 Round 2 showed why the steps help. The direct decision matched the computed one only 59% of
-the time, and of 12 posts that moved from review to respond, I had already marked 7 as
-substantive the first time, so my direct call had disagreed with my own substance call. I
-stopped grading the decision directly.
+the time. Of 12 posts that moved from review to respond, I had already marked 7 as
+substantive the first time. What I hadn't made explicit was that enough substance in the
+post itself was sufficient to respond, even when it included a link. The new labels made
+that rule explicit, and I stopped grading the decision directly.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
@@ -95,8 +96,9 @@ Grading by hand early is how I found out which labels were broken.
 
 - Each label asks one question: exclusion first, then substance. Respond, review or drop is
   computed from them in code instead of graded directly, and the content band is gone.
-- Model accuracy against these labels will be reported next to my 81% self-agreement,
-  because my labels aren't yet a stable ground truth.
+- Model results against these labels will be reported next to my own agreement on the same
+  measure: 81% for the complete decision, 86% for the final action. My labels aren't yet a
+  stable ground truth.
 
 ## Next steps
 
