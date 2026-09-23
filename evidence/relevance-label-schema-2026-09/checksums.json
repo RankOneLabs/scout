@@ -1,0 +1,15 @@
+{
+  "source_repository": "RankOneLabs/assay",
+  "source_commit": "360a28923ff40cd1f576ac6dd73e3202d9f23dc9",
+  "implementation_path": "experiments/typesafe_relevance/repeatability.py",
+  "instrument_digest": "cdfd4b0577371ddebc06eadbb67553da348807603bc283e779bba1983481148c",
+  "population_digest": "39cbde32c11c3afc8bdc04d571f3aaabe6750d79ace91ee2c008983e842d4945",
+  "files": {
+    "README.md": "4decfdf65959dc32fec3584fe982fc913a064d5e522e5648d15b91ae02522ec0",
+    "grading-round-comparison.json": "97608e2ea6c18368e1d3831683c77e3905420b5e0efe824f0d327f53f92494c6",
+    "interpretations.json": "a94201b1cc33ea8d5827590b0c88ca853a21bdbad47453df11986787cc3b4519",
+    "preregistration.json": "c253841f8b66097a5932505d5a44add2ba1cf3cfb410b741674e5f392393b9c3",
+    "sitting-comparison.json": "73796a63970f25def9073fe115c8095629d0156d870146c51d571e67668fb71e",
+    "summary.json": "87dcb2f3e02d468552290e3ac2618aae8fd63257ddedd687447f9f2050d92b12"
+  }
+}

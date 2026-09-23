@@ -1,0 +1,15 @@
+{
+  "definitions": {
+    "status": "These are manually checked paraphrases of submitted notes, except the explicitly marked later clarification. They are interpretations, not graded labels, causes, or calibrated probabilities."
+  },
+  "records": [
+    {"evaluation_id": 47133, "review_case_id": 12, "source": "submitted_second_round_note", "interpretation": "The exclusion was removed, while the available substance was still judged too slight to route beyond drop."},
+    {"evaluation_id": 47406, "review_case_id": 13, "source": "submitted_second_round_note", "interpretation": "The reviewer described a close sufficiency judgment favoring none over in_post."},
+    {"evaluation_id": 47559, "review_case_id": 14, "source": "submitted_second_round_note", "interpretation": "The reviewer narrowly favored substance in the post over a pointer requiring review."},
+    {"evaluation_id": 47320, "review_case_id": 26, "source": "submitted_second_round_note", "interpretation": "A close sufficiency judgment favored none; the earlier round also recorded uncertainty about whether the material was substantive."},
+    {"evaluation_id": 47447, "review_case_id": 30, "source": "submitted_second_round_note", "interpretation": "The second-round judgment favored none over in_post on a close boundary."},
+    {"evaluation_id": 47204, "review_case_id": 54, "source": "submitted_second_round_note", "interpretation": "The reviewer saw some content but judged it insufficiently concrete."},
+    {"evaluation_id": 48349, "review_case_id": 63, "source": "post_submission_clarification", "interpretation": "A later reviewer clarification suggests the earlier pointer reading was mistaken; this is a likely reading correction, not a proven cause of the label change.", "status": "likely_reading_correction"},
+    {"evaluation_id": 47399, "review_case_id": 75, "source": "submitted_second_round_note", "interpretation": "The reviewer favored none on a close sufficiency judgment; the first round had already recorded uncertainty about missing context."}
+  ]
+}

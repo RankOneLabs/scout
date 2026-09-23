@@ -1,0 +1,272 @@
+{
+  "original_comparison": {
+    "population_count": 79,
+    "exact_exclusion_agreement": {
+      "numerator": 61,
+      "denominator": 79,
+      "definition": "September 19 and September 20 exclusion categories are identical.",
+      "evidence_status": "posthoc_exploratory"
+    },
+    "binary_exclusion_agreement": {
+      "numerator": 64,
+      "denominator": 79,
+      "definition": "Both sittings agree whether exclusion is none.",
+      "evidence_status": "posthoc_exploratory"
+    },
+    "directional_exclusion_changes": {
+      "numerator": 13,
+      "denominator": 18,
+      "definition": "Among changed exact exclusion labels, count none to an excluded category.",
+      "evidence_status": "posthoc_exploratory"
+    },
+    "exclusion_change_breakdown": {
+      "none_to_excluded": {
+        "numerator": 13,
+        "denominator": 18,
+        "definition": "Changed exclusion labels moving from none to excluded.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "excluded_to_none": {
+        "numerator": 2,
+        "denominator": 18,
+        "definition": "Changed exclusion labels moving from excluded to none.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "category_to_category": {
+        "numerator": 3,
+        "denominator": 18,
+        "definition": "Changed exclusion labels moving between two excluded categories.",
+        "evidence_status": "posthoc_exploratory"
+      }
+    },
+    "disposition_agreement": {
+      "numerator": 47,
+      "denominator": 79,
+      "definition": "September 19 disposition equals September 20 derived route; disposition fused content and reply preference.",
+      "evidence_status": "metric_retired"
+    },
+    "review_to_respond_already_substantive": {
+      "numerator": 7,
+      "denominator": 12,
+      "definition": "Among September 19 review cases that route to respond in September 20, count those already banded substantive.",
+      "evidence_status": "preregistered_inconclusive"
+    },
+    "primary_concordance": {
+      "numerator": 37,
+      "denominator": 51,
+      "definition": "Among September 19 substantive or pointer bands, count September 20 substance in_post or pointer respectively, including nulls as disagreement.",
+      "evidence_status": "preregistered_inconclusive"
+    },
+    "posthoc_stable_exclusion_concordance": {
+      "numerator": 37,
+      "denominator": 42,
+      "definition": "Apply the primary band-to-substance concordance only where both exclusions are none.",
+      "evidence_status": "posthoc_exploratory"
+    },
+    "stable_exclusion_disposition_rate": {
+      "numerator": 36,
+      "denominator": 61,
+      "definition": "Among cases with identical exclusion categories, compare September 19 disposition with September 20 derived route.",
+      "evidence_status": "metric_retired"
+    }
+  },
+  "second_grading_round": {
+    "collection_mode": "second_grading_round",
+    "population_count": 79,
+    "primary_status": "preregistered_below_floor",
+    "approved_at": "2026-09-21T21:39:27Z",
+    "sitting_submitted_at": "2026-09-22T01:56:39Z",
+    "preregistered_floor": {
+      "numerator": 72,
+      "denominator": 79,
+      "definition": "Minimum acceptable complete-chain exact agreements approved before the repeat sitting.",
+      "evidence_status": "preregistered_threshold"
+    },
+    "complete_decision_agreement": {
+      "numerator": 64,
+      "denominator": 79,
+      "definition": "The complete exclusion/substance decision matches exactly between first and second rounds.",
+      "evidence_status": "preregistered_below_floor"
+    },
+    "exact_exclusion_agreement": {
+      "numerator": 71,
+      "denominator": 79,
+      "definition": "Exact exclusion category agrees across rounds.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "binary_exclusion_agreement": {
+      "numerator": 71,
+      "denominator": 79,
+      "definition": "Both rounds agree whether the case is excluded.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "substance_agreement_among_both_nonexcluded": {
+      "numerator": 44,
+      "denominator": 51,
+      "definition": "Substance agrees where exclusion is none in both rounds.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "derived_route_agreement": {
+      "numerator": 68,
+      "denominator": 79,
+      "definition": "Derived respond/review/drop route agrees across rounds.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "complete_decision_differences": {
+      "numerator": 15,
+      "denominator": 79,
+      "definition": "Complete decision chains differ.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "derived_route_differences": {
+      "numerator": 11,
+      "denominator": 79,
+      "definition": "Derived routes differ.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "label_different_route_same": {
+      "numerator": 4,
+      "denominator": 15,
+      "definition": "Among differing complete decisions, derived route stays the same.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "exclusion_changes": {
+      "numerator": 8,
+      "denominator": 79,
+      "definition": "Exact exclusion category changes.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "substance_changes": {
+      "numerator": 7,
+      "denominator": 79,
+      "definition": "Substance changes while both rounds have exclusion none.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "substance_changes_toward_none": {
+      "numerator": 6,
+      "denominator": 7,
+      "definition": "Among substance changes, the second-round substance is none.",
+      "evidence_status": "preregistered_diagnostic"
+    },
+    "exclusion_changes_with_note": {
+      "numerator": 1,
+      "denominator": 8,
+      "definition": "Exclusion changes with a second-round note.",
+      "evidence_status": "posthoc_exploratory"
+    },
+    "route_totals_first_round": {
+      "respond": {
+        "numerator": 35,
+        "denominator": 79,
+        "definition": "First-round derived route is respond.",
+        "evidence_status": "preregistered_diagnostic"
+      },
+      "review": {
+        "numerator": 13,
+        "denominator": 79,
+        "definition": "First-round derived route is review.",
+        "evidence_status": "preregistered_diagnostic"
+      },
+      "drop": {
+        "numerator": 31,
+        "denominator": 79,
+        "definition": "First-round derived route is drop.",
+        "evidence_status": "preregistered_diagnostic"
+      }
+    },
+    "route_totals_second_round": {
+      "respond": {
+        "numerator": 32,
+        "denominator": 79,
+        "definition": "Second-round derived route is respond.",
+        "evidence_status": "preregistered_diagnostic"
+      },
+      "review": {
+        "numerator": 12,
+        "denominator": 79,
+        "definition": "Second-round derived route is review.",
+        "evidence_status": "preregistered_diagnostic"
+      },
+      "drop": {
+        "numerator": 35,
+        "denominator": 79,
+        "definition": "Second-round derived route is drop.",
+        "evidence_status": "preregistered_diagnostic"
+      }
+    },
+    "notes_breakdown": {
+      "differing_cases_with_second_round_note": {
+        "numerator": 8,
+        "denominator": 15,
+        "definition": "Differing complete decisions with a second-round note.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "substance_changes_with_note": {
+        "numerator": 7,
+        "denominator": 7,
+        "definition": "Substance changes with a second-round note.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "substance_changes_where_note_names_earlier_answer": {
+        "numerator": 6,
+        "denominator": 7,
+        "definition": "Substance changes whose valid split note names the first-round substance.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "reading_correction_by_later_clarification": {
+        "numerator": 1,
+        "denominator": 7,
+        "definition": "The one manually checked post-submission clarification marks case 63 as a likely reading correction.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "exclusion_changes_with_note": {
+        "numerator": 1,
+        "denominator": 8,
+        "definition": "Exclusion changes with a second-round note.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "exclusion_changes_unexplained": {
+        "numerator": 7,
+        "denominator": 8,
+        "definition": "Exclusion changes without a second-round note.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "action_changing_exclusion_changes_unexplained": {
+        "numerator": 4,
+        "denominator": 4,
+        "definition": "Route-changing exclusion differences without a second-round note.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "agreeing_cases_with_split_note": {
+        "numerator": 4,
+        "denominator": 12,
+        "definition": "Valid split-note cases whose complete decision held.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "split_note_cases_total": {
+        "numerator": 12,
+        "denominator": 79,
+        "definition": "Cases with a valid second-round two-label numeric split note.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "split_note_cases_that_held": {
+        "numerator": 4,
+        "denominator": 12,
+        "definition": "Valid split-note cases whose complete decision held.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "complete_decision_within_stated_uncertainty": {
+        "numerator": 70,
+        "denominator": 79,
+        "definition": "Exact agreements plus substance differences whose valid split note names the earlier answer; exploratory sensitivity reading.",
+        "evidence_status": "posthoc_exploratory"
+      },
+      "complete_decision_within_stated_uncertainty_plus_correction": {
+        "numerator": 71,
+        "denominator": 79,
+        "definition": "Prior sensitivity reading plus the single likely reading correction from a later clarification; exploratory only.",
+        "evidence_status": "posthoc_exploratory"
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "format": "assay.relevance-repeatability-preregistration/v1",
+  "status": "frozen-approved-amended-before-opening",
+  "approved_by": "steve",
+  "approved_at": "2026-09-21T21:39:27Z",
+  "approval_scope": "The preregistration and numerical thresholds were approved before the repeat packet was opened. Before any case was exposed, the reviewer removed the waiting period and directed immediate opening; the amendment changes no instrument, population, measure, or threshold.",
+  "title": "Scout relevance within-reviewer repeatability",
+  "purpose": "Measure whether the same reviewer reproduces the complete relevance decision chain under a frozen schema. This is not an accuracy, inter-reviewer, generalization, account-relevance, agent-accuracy, or annotation-causality study.",
+  "instrument_version": "scout-relevance-repeatability-instrument/v1",
+  "instrument_digest": "cdfd4b0577371ddebc06eadbb67553da348807603bc283e779bba1983481148c",
+  "component_digests": {
+    "exclusion_question": "78278a131b48cf4dac214fecc372d3eefc35d75c6e56bbd63a66573c2484eeff",
+    "substance_question_and_examples": "3c2b8a89f9be41f181ae79b232df265b261df8a43e63625185b973bfd9f0267e"
+  },
+  "population": {
+    "n": 79,
+    "digest_method": "SHA-256 of canonical JSON containing the sorted evaluation_id list and n; no production text or identity fields",
+    "digest": "39cbde32c11c3afc8bdc04d571f3aaabe6750d79ace91ee2c008983e842d4945"
+  },
+  "baseline": {
+    "eligible": true,
+    "sitting": "relevance-substance-2026-09/two-chain",
+    "submitted_at": "2026-09-20T16:33:51.387Z",
+    "packet_digest": "77b23e1811e0e90e25039aef8ec23a78002e197102726475edddb6caa21ad6a4",
+    "plan_digest": "50a8418358d5d43fbff49e683b6274702473c4d2a9022b80772e720bb15ae595",
+    "eligibility_basis": "The recorded packet used the same exclusion-first chain and the in_post/pointer/none content-sufficiency distinction over all 79 cases. The reviewer clarified before the repeat packet was opened that 'reply you would post' meant enough substantive reply material for the study's agent-work scope, not personal expertise, willingness, or account preference. The clarification changes no baseline label."
+  },
+  "comparison": {
+    "sittings": [
+      "relevance-substance-2026-09/two-chain",
+      "scout-relevance-repeatability-sitting-1"
+    ],
+    "minimum_interval": "none; open immediately after approval",
+    "earliest_repeat_open_at": null,
+    "actual_interval_rule": "No interval analysis is required. Acknowledge in interpretation that the immediate repeat may retain memory effects.",
+    "randomization": "Sort all 79 evaluation_ids by SHA-256(seed + ':display:' + decimal evaluation_id), assign opaque case_id values 1..79 after sorting, and expose neither evaluation_id nor seed-derived metadata in the interface.",
+    "repeat_seed": "scout-relevance-repeatability-2026-09/sitting-1/v1"
+  },
+  "measures": {
+    "primary": {
+      "name": "exact agreement on complete decision chain",
+      "representation": "excluded cases are excluded:<category>; non-excluded cases are exclusion:none|substance:<in_post|pointer|none>",
+      "denominator": 79
+    },
+    "secondary": [
+      {"name": "exact exclusion-category agreement", "denominator": 79},
+      {"name": "binary excluded/not-excluded agreement", "denominator": 79},
+      {"name": "substance agreement", "denominator": "cases with exclusion=none in both sittings"},
+      {"name": "cases entering or leaving the substance question", "denominator": 79},
+      {"name": "derived routing agreement", "denominator": 79, "mapping": "excluded->drop; in_post->respond; pointer->review; none->drop"},
+      {"name": "label distributions and complete transition tables", "denominator": 79}
+    ]
+  },
+  "missing_data": {
+    "unasked_substance": "Store null and exclude it from the substance denominator; never encode it as substance=none.",
+    "missing_label": "The interface rejects incomplete submission. No case is removed; no primary result is reported until all 79 complete chains exist.",
+    "ungradable_display": "A corrupted or unavailable case invalidates the sitting; repair and restart that sitting under the same frozen instrument. Ordinary ambiguity is graded with the closest allowed label and may receive a private note.",
+    "instrument_defect": "Version the instrument and restart the comparison; never pool definitions."
+  },
+  "decision_thresholds": {
+    "acceptable_repeatability": "at least 72/79 exact complete-chain agreements (91.14%)",
+    "unacceptable_repeatability": "at most 67/79 exact complete-chain agreements (84.81%)",
+    "inconclusive": "68/79 through 71/79",
+    "rationale": "A 90% practical floor allows at most about one unstable judgment in ten. The five-case indeterminate band separates that operational target from clearly material instability without presenting a sampling p-value for this fixed, previously studied census.",
+    "secondary_diagnostics": {
+      "exact_exclusion_category": "flag below 72/79",
+      "binary_excluded_not_excluded": "flag below 75/79",
+      "substance_among_both_clear": "flag below 90% with numerator and denominator reported",
+      "entered_or_left_substance": "flag above 4/79",
+      "derived_routing": "flag below 72/79"
+    }
+  },
+  "analysis_order": [
+    "Compute and record all preregistered measures without reading notes.",
+    "Then inspect private disagreement notes as exploratory ambiguity analysis.",
+    "Compare earlier results only when question and denominator are genuinely comparable."
+  ],
+  "uncertainty": "No uncertainty interval is primary. This is a fixed census of 79 previously studied cases, so a binomial interval would describe hypothetical repeated cases rather than generalization to fresh cases.",
+  "blinding": {
+    "visible": ["opaque case_id", "post text", "parent text under the frozen context policy", "frozen instructions"],
+    "hidden": ["evaluation_id", "authors", "handles", "URLs", "prior labels", "prior notes", "production decisions", "model outputs", "answer keys", "account information"],
+    "notes": "Optional and private; never used to revise the instrument mid-sitting."
+  },
+  "publication_boundary": "After grading, derive only allowlisted labels and derived values keyed by evaluation_id, aggregates and evidence status, the frozen preregistration, Assay implementation commit/path, safe digests, and SHA-256 checksums excluding the checksum file. Exclude text, authors, handles, URLs, notes, private keys, and private receipt locations."
+}

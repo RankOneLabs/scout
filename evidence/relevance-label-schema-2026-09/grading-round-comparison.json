@@ -1,0 +1,1225 @@
+{
+  "collection_mode": "second_grading_round",
+  "first_round_saved_at": "2026-09-20T16:33:51.387Z",
+  "second_round_saved_at": "2026-09-22T01:56:39.330Z",
+  "instrument_digest": "cdfd4b0577371ddebc06eadbb67553da348807603bc283e779bba1983481148c",
+  "population_digest": "39cbde32c11c3afc8bdc04d571f3aaabe6750d79ace91ee2c008983e842d4945",
+  "definitions": {
+    "exclusion_values": [
+      "coding_assistant",
+      "event_promo",
+      "funding_or_market",
+      "hardware",
+      "hype",
+      "non_english",
+      "none"
+    ],
+    "substance_values": [
+      "in_post",
+      "none",
+      "pointer"
+    ],
+    "unasked_substance": null,
+    "route_mapping": {
+      "excluded": "drop",
+      "in_post": "respond",
+      "pointer": "review",
+      "none": "drop"
+    },
+    "complete_decision_denominator": "All 79 joined evaluation_id values; excluded chains compare exclusion categories, clear chains compare substance labels.",
+    "exclusion_denominator": "All 79 joined evaluation_id values.",
+    "substance_denominator": "Only cases with exclusion none in both rounds.",
+    "note_denominator": "Rows in the subset named by each metric.",
+    "split_note_rule": "A second-round note is split_note only when it explicitly allocates two numeric percentages or fractions to two distinct allowed substance labels. Their normalized values must sum to 1 within 0.05. Malformed allocations are excluded and listed by evaluation_id. note_names_earlier_answer is true only when a valid split names the first-round substance label."
+  },
+  "malformed_split_notes": [
+    46877
+  ],
+  "rows": [
+    {
+      "evaluation_id": 45433,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 45439,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 45443,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 46102,
+      "first_round": {
+        "exclusion": "coding_assistant",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "coding_assistant",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 46865,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 46877,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47054,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47067,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47090,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47133,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47138,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47151,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47159,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47200,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47204,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47209,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47212,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47263,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47267,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47281,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47301,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47319,
+      "first_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47320,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47357,
+      "first_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47386,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47390,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47392,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47395,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47396,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47397,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47399,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47403,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47406,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47411,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47416,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47432,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47447,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47458,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47461,
+      "first_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47477,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47481,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47554,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47559,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47629,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47726,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 47737,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 47753,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48124,
+      "first_round": {
+        "exclusion": "coding_assistant",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "coding_assistant",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48293,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48303,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48349,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48355,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48396,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48718,
+      "first_round": {
+        "exclusion": "coding_assistant",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "coding_assistant",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48720,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48741,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48742,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48765,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48782,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48789,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48793,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48807,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48820,
+      "first_round": {
+        "exclusion": "hardware",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "hardware",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48844,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48856,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48859,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48860,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48866,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": true,
+      "note_names_earlier_answer": true
+    },
+    {
+      "evaluation_id": 48891,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48905,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48917,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48921,
+      "first_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "non_english",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48922,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48927,
+      "first_round": {
+        "exclusion": "funding_or_market",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "funding_or_market",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48931,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48934,
+      "first_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "event_promo",
+        "substance": null
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48936,
+      "first_round": {
+        "exclusion": "hype",
+        "substance": null
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "in_post"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48944,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "pointer"
+      },
+      "first_round_note_present": false,
+      "second_round_note_present": false,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    },
+    {
+      "evaluation_id": 48954,
+      "first_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "second_round": {
+        "exclusion": "none",
+        "substance": "none"
+      },
+      "first_round_note_present": true,
+      "second_round_note_present": true,
+      "split_note": false,
+      "note_names_earlier_answer": false
+    }
+  ]
+}
