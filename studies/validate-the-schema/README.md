@@ -4,9 +4,8 @@ Scout reads posts about AI agents and decides what to do with each one: respond,
 for review, or drop it. To measure how well it makes those calls, I need a set of correct
 answers. I wrote those answers myself.
 
-I didn't know the right labels up front. In applied ML you aren't necessarily a domain expert
-who knows the perfect schema from the start, but you can find it through experiments. Before
-scoring the model, I tested my labels and my own consistency as a grader.
+I didn't know the right labels up front. Before scoring the model, I tested my labels and my
+own consistency as a grader.
 
 ## What I did
 
@@ -69,18 +68,18 @@ the examples, so I retired the direct reply label.
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
 "where does most of the information live?" to "is there enough here to write a real reply
-without opening the link?" Only a retest catches drift like that.
+without opening the link?" The comparison surfaced that drift.
 
 **The notes explained some changes and not others.** On hard calls I wrote a short note,
 often a split like "60/40, in the post vs. not enough." All seven substance changes in
 round 3 had a note, and six of them named my earlier answer as the close runner-up. Those
-are genuinely borderline posts. Exclusion changes were the opposite: seven of eight had no
-note, including all four that changed the action. Those are the real problem, and nothing I
-wrote down explains them.
+notes show I considered both answers plausible. Exclusion changes were the opposite: seven
+of eight had no note, including all four that changed the action. Those are the real
+problem, and nothing I wrote down explains them.
 
 An LLM read the notes for me and sorted each changed decision by whether a note explained it
-and which answer the note named as runner-up. Notes are cheap to write and quick for a model
-to sort, even in the hundreds, so the extra information costs almost nothing to analyze.
+and which answer the note named as runner-up. Keeping those notes let me use an LLM to analyze
+distinctions that the class labels alone would have lost.
 
 Grading by hand early is how I found out which labels were broken.
 
