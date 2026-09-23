@@ -59,8 +59,8 @@
 <text class="l" x="16" y="391.0">Same, where exclusion held</text>
 <path class="planned" d="M335.0,377.0 H657.0 Q661.0,377.0 661.0,381.0 V391.0 Q661.0,395.0 657.0,395.0 H335.0 Z"><title>Same, where exclusion held: 37/42 (88%)</title></path>
 <text class="v" x="804" y="391.0" text-anchor="end">37/42 · 88%</text>
-<text class="l" x="16" y="430.0">Reply decision (old question)</text>
-<path class="retired" d="M335.0,421.0 H551.1 Q555.1,421.0 555.1,425.0 V435.0 Q555.1,439.0 551.1,439.0 H335.0 Z"><title>Reply decision (old question): 47/79 (59%)</title></path>
+<text class="l" x="16" y="430.0">Reply decision, graded directly</text>
+<path class="retired" d="M335.0,421.0 H551.1 Q555.1,421.0 555.1,425.0 V435.0 Q555.1,439.0 551.1,439.0 H335.0 Z"><title>Reply decision, graded directly: 47/79 (59%)</title></path>
 <text class="v" x="804" y="435.0" text-anchor="end">47/79 · 59%</text>
 <text class="tag" x="16" y="446.0">retired</text>
 <text class="g" x="16" y="478.0">Round 3: new labels, graded twice (79 posts)</text>

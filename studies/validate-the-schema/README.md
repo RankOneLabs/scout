@@ -36,7 +36,7 @@ round tested the labels, and what it found shaped the next one.
 | 2 | Exclusion category | 61/79 | 77% |
 | 2 | Content level | 37/51 | 73% |
 | 2 | Content level, where exclusion held | 37/42 | 88% |
-| 2 | Reply decision (retired) | 47/79 | 59% |
+| 2 | Reply decision, graded directly (retired) | 47/79 | 59% |
 | 3 | Complete decision (my bar: 72/79) | 64/79 | 81% |
 | 3 | Counting close calls as matches | 70/79 | 89% |
 | 3 | Exclusion category | 71/79 | 90% |
@@ -59,14 +59,14 @@ apart. Looking at the scale, the bottom rungs asked about the post's subject and
 rungs asked how much substance the post itself had, so every grade forced two judgments
 onto one rung.
 
-**So was the reply decision.** I also graded respond, review or drop directly, and that
-mixed "is there substance in this post?" with "is there a reply worth making?" The new
-labels ask one question each: should this post be excluded, and if not, how much
-substance does the post itself carry? Respond, review or drop is now computed from those
-answers in code and never graded directly. Round 2 bore this out: the old reply decision
-matched the computed one only 59% of the time, and of 12 posts that moved from review to
-respond, I had already marked 7 as substantive the first time. That fits the mixing I saw in
-the examples, so I retired the direct reply label.
+**The reply decision was graded in one step.** I also graded respond, review or drop
+directly, which meant weighing everything about a post at once. The new labels reach the
+same decision in two steps: should this post be excluded, and if not, how much substance
+does it carry? Respond, review or drop is computed from those answers in code. Round 2
+showed why the steps help. The direct decision matched the computed one only 59% of the
+time, and of 12 posts that moved from review to respond, I had already marked 7 as
+substantive the first time, so my direct call had disagreed with my own substance call. I
+stopped grading the decision directly.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
@@ -88,8 +88,8 @@ Grading by hand early is how I found out which labels were broken.
 
 ## What changed in how I grade
 
-- Each label asks one question: exclusion first, then substance. The action is derived from
-  them in code, and the content band and reply decision are gone.
+- Each label asks one question: exclusion first, then substance. Respond, review or drop is
+  computed from them in code instead of graded directly, and the content band is gone.
 - Model accuracy against these labels will be reported next to my 81% self-agreement,
   because my labels aren't yet a stable ground truth.
 
