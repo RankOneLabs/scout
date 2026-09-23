@@ -43,8 +43,9 @@ round tested the labels, and what it found shaped the next one.
 
 **I still didn't agree with myself enough.** In round 3, 64 of 79 decisions matched (81%),
 short of my 72 bar. 15 decisions changed, and 11 of those changed what Scout would actually
-do with the post. Even counting the close calls my notes had flagged as matches, it only
-gets to 70.
+do with the post. Six of the changes were close calls my notes had already flagged, with the
+other answer as runner-up. Counting those as matches brings it to 70 of 79 (89%), two short
+of the bar.
 
 ## The disagreements were the useful part
 
@@ -76,6 +77,9 @@ round 3 had a note, and six of them named my earlier answer as the close runner-
 are genuinely borderline posts. Exclusion changes were the opposite: seven of eight had no
 note, including all four that changed the action. Those are the real problem, and nothing I
 wrote down explains them.
+
+I went through the notes with an LLM. They're cheap to write and quick for a model to read
+and sort, even in the hundreds, so the extra information costs almost nothing to analyze.
 
 Grading by hand early is how I found out which labels were broken.
 
