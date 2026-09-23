@@ -62,16 +62,21 @@ onto one rung.
 **The reply decision was graded in one step.** I also graded respond, review or drop
 directly, which meant weighing everything about a post at once. The new labels reach the
 same decision in two steps: should this post be excluded, and if not, how much substance
-does it carry? Respond, review or drop is computed from those answers in code. Round 2
-showed why the steps help. The direct decision matched the computed one only 59% of the
-time, and of 12 posts that moved from review to respond, I had already marked 7 as
+does it carry? If the post alone has enough substance to reply to, it's in-post and gets a
+response, even if it also has a link. If the substance sits behind a link, it goes to review,
+because the link may or may not hold enough to reply to. Respond, review or drop is computed
+from those answers in code.
+
+Round 2 showed why the steps help. The direct decision matched the computed one only 59% of
+the time, and of 12 posts that moved from review to respond, I had already marked 7 as
 substantive the first time, so my direct call had disagreed with my own substance call. I
 stopped grading the decision directly.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
 "where does most of the information live?" to "is there enough here to write a real reply
-without opening the link?" The comparison surfaced that drift.
+without opening the link?" The comparison surfaced that drift, and the second reading is the
+definition I kept.
 
 **The notes explained some changes and not others.** On hard calls I wrote a short note,
 often a split like "60/40, in the post vs. not enough." All seven substance changes in
