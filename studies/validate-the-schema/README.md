@@ -4,10 +4,9 @@ Scout reads posts about AI agents and decides what to do with each one: respond,
 for review, or drop it. To measure how well it makes those calls, I need a set of correct
 answers. I wrote those answers myself.
 
-I didn't know the right labels up front, and in applied ML you usually don't. You're rarely
-the domain expert who can write the perfect schema on day one, so you find it by testing
-schemas and fixing what breaks. Before scoring the model, I tested my labels and my own
-consistency as a grader.
+I didn't know the right labels up front. In applied ML you aren't necessarily a domain expert
+who knows the perfect schema from the start, but you can find it through experiments. Before
+scoring the model, I tested my labels and my own consistency as a grader.
 
 ## What I did
 
@@ -17,14 +16,15 @@ round tested the labels, and what it found shaped the next one.
 1. **Old labels, graded twice.** I graded 30 of the posts with my first label set, then
    graded them again later, unmarked and in a different order among all 79.
 2. **Old vs. new labels.** I redesigned the labels and regraded all 79, without seeing
-   Scout's answers. The old and new labels don't line up one-to-one, so only some answers
+   Scout's answers. This round measures the effect of the redesign, mixed with any drift in
+   my own judgment. The old and new labels don't line up one-to-one, so only some answers
    compare directly.
 3. **New labels, graded twice.** I graded all 79 again with the same new labels, so the only
    thing that could change was me. My bar was 72 of 79 matching decisions (91%).
 
 ## Results
 
-![How often I agreed with myself, across three grading rounds](chart.svg)
+![How often my labels matched across three grading rounds](chart.svg)
 
 | Round | What matched | Matched | % |
 | --- | --- | ---: | ---: |
@@ -43,9 +43,9 @@ round tested the labels, and what it found shaped the next one.
 
 **I still didn't agree with myself enough.** In round 3, 64 of 79 decisions matched (81%),
 short of my 72 bar. 15 decisions changed, and 11 of those changed what Scout would actually
-do with the post. Six of the changes were close calls my notes had already flagged, with the
-other answer as runner-up. Counting those as matches brings it to 70 of 79 (89%), two short
-of the bar.
+do with the post. The strict 64 is the result. For context, six of the changes were substance
+calls where my new note named my earlier answer as the close runner-up. Counting those six as
+matches gives 70 of 79 (89%), still two short of the bar.
 
 ## The disagreements were the useful part
 
@@ -63,8 +63,8 @@ labels ask one question each: should this post be excluded, and if not, how much
 substance does the post itself carry? Respond, review or drop is now computed from those
 answers in code and never graded directly. Round 2 bore this out: the old reply decision
 matched the computed one only 59% of the time, and of 12 posts that moved from review to
-respond, I had already marked 7 as substantive the first time. That 59% came from a badly
-built question, so I retired it.
+respond, I had already marked 7 as substantive the first time. That fits the mixing I saw in
+the examples, so I retired the direct reply label.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
@@ -78,8 +78,9 @@ are genuinely borderline posts. Exclusion changes were the opposite: seven of ei
 note, including all four that changed the action. Those are the real problem, and nothing I
 wrote down explains them.
 
-I went through the notes with an LLM. They're cheap to write and quick for a model to read
-and sort, even in the hundreds, so the extra information costs almost nothing to analyze.
+An LLM read the notes for me and sorted each changed decision by whether a note explained it
+and which answer the note named as runner-up. Notes are cheap to write and quick for a model
+to sort, even in the hundreds, so the extra information costs almost nothing to analyze.
 
 Grading by hand early is how I found out which labels were broken.
 
@@ -87,8 +88,8 @@ Grading by hand early is how I found out which labels were broken.
 
 - Each label asks one question: exclusion first, then substance. The action is derived from
   them in code, and the content band and reply decision are gone.
-- Any accuracy number scored against these labels is reported alongside the 81%
-  self-agreement. The model can't be measured more precisely than its grader.
+- Model accuracy against these labels will be reported next to my 81% self-agreement,
+  because my labels aren't yet a stable ground truth.
 
 ## Next steps
 
