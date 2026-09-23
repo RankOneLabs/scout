@@ -5,9 +5,9 @@ for review, or drop it. To measure how well it makes those calls, I need a set o
 answers. I wrote those answers myself.
 
 I didn't know the right labels up front, and in applied ML you usually don't. You're rarely
-the domain expert who can write the perfect schema on day one. What you do have is the tools
-to test a schema and fix it. So before scoring the model, I tested the labels and the grader
-(me), and changed the labels until they held up.
+the domain expert who can write the perfect schema on day one, so you find it by testing
+schemas and fixing what breaks. Before scoring the model, I tested my labels and my own
+consistency as a grader.
 
 ## What I did
 
@@ -48,14 +48,13 @@ gets to 70.
 
 ## The disagreements were the useful part
 
-Each score told me whether a label was stable. Reading the disagreements told me why, and
-what to change.
+Reading the disagreements showed why each label was unstable and what to change.
 
 **The content band was asking two questions.** In round 1, exclusion held up (27 of 30),
 but the content band matched only 19 of 30 (63%). Six of the 11 misses were two rungs
-apart, not near misses. Looking at the scale, the bottom rungs asked about the post's
-subject and the top rungs asked how much substance the post itself had, so every grade
-forced two judgments onto one rung.
+apart. Looking at the scale, the bottom rungs asked about the post's subject and the top
+rungs asked how much substance the post itself had, so every grade forced two judgments
+onto one rung.
 
 **So was the reply decision.** I also graded respond, review or drop directly, and that
 mixed "is there substance in this post?" with "is there a reply worth making?" The new
@@ -63,30 +62,27 @@ labels ask one question each: should this post be excluded, and if not, how much
 substance does the post itself carry? Respond, review or drop is now computed from those
 answers in code and never graded directly. Round 2 bore this out: the old reply decision
 matched the computed one only 59% of the time, and of 12 posts that moved from review to
-respond, I had already marked 7 as substantive the first time. That 59% measures a badly
-built question, not Scout or me, so I retired it.
+respond, I had already marked 7 as substantive the first time. That 59% came from a badly
+built question, so I retired it.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
 "where does most of the information live?" to "is there enough here to write a real reply
-without opening the link?" A retest catches drift like that. A single pass of grading
-never shows it.
+without opening the link?" Only a retest catches drift like that.
 
 **The notes explained some changes and not others.** On hard calls I wrote a short note,
 often a split like "60/40, in the post vs. not enough." All seven substance changes in
 round 3 had a note, and six of them named my earlier answer as the close runner-up. Those
-are genuine borderline posts, not carelessness. Exclusion changes were the opposite: seven
-of eight had no note, including all four that changed the action. Those are the real
-problem, and nothing I wrote down explains them.
+are genuinely borderline posts. Exclusion changes were the opposite: seven of eight had no
+note, including all four that changed the action. Those are the real problem, and nothing I
+wrote down explains them.
 
-Early human grading isn't only about producing an answer key. It's how you find the right
-schema.
+Grading by hand early is how I found out which labels were broken.
 
 ## What changed in how I grade
 
 - Each label asks one question: exclusion first, then substance. The action is derived from
-  them in code.
-- The content band and the reply decision, which each mixed two questions, are gone.
+  them in code, and the content band and reply decision are gone.
 - Any accuracy number scored against these labels is reported alongside the 81%
   self-agreement. The model can't be measured more precisely than its grader.
 
@@ -97,6 +93,6 @@ schema.
 - **Add a "need the thread" option.** On three posts, my notes said I couldn't judge
   without the surrounding conversation.
 - **Retest** after those changes.
-- **Bring in a second grader** on a sample. Retesting myself shows whether I'm consistent,
-  not whether I'm right.
+- **Bring in a second grader** on a sample. Retesting myself only shows whether I'm
+  consistent.
 - **Then score the model**, with the grader's agreement shown next to the result.
