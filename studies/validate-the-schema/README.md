@@ -1,8 +1,11 @@
 # Validate the schema, not just the model
 
-Scout reads posts about AI agents and decides what to do with each one: respond, flag it
-for review, or drop it. To measure how well it makes those calls, I need a set of correct
-answers. I wrote those answers myself.
+Scout watches Discord, Farcaster and Bluesky for posts about AI agents and drafts replies to
+them. Before it drafts anything, it scores each post for reply relevance: whether the post is
+worth replying to. That score decides whether Scout responds, flags the post for review, or
+drops it. To measure how well it makes that call, I need a set of correct answers, and I
+wrote those answers myself. The labels on this page are my attempts to pin down what reply
+relevance means.
 
 I didn't know the right labels up front. Before scoring the model, I tested my labels and my
 own consistency as a grader.
