@@ -19,7 +19,10 @@ LATEST_SCHEMA_VERSION = 48
 RELEVANCE_DECISION_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS relevance_decisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_uid TEXT NOT NULL UNIQUE,
         evaluation_id INTEGER NOT NULL UNIQUE REFERENCES evaluations(id),
+        selected_for_holdout INTEGER NOT NULL DEFAULT 0
+            CHECK(selected_for_holdout IN (0, 1)),
         phase_run_id INTEGER REFERENCES evaluation_phase_runs(id),
         classifier TEXT NOT NULL CHECK(classifier IN ('llm', 'jev')),
         model TEXT NOT NULL,
@@ -72,6 +75,12 @@ RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS: tuple[str, ...] = (
             label IS NULL OR label IN ('exclusion', 'in_post', 'pointer', 'none')
         ),
         label_source TEXT,
+        label_provenance_json TEXT CHECK(
+            label_provenance_json IS NULL OR json_valid(label_provenance_json)
+        ),
+        key_provenance_json TEXT CHECK(
+            key_provenance_json IS NULL OR json_valid(key_provenance_json)
+        ),
         labelled_at TEXT,
         target_evaluation_id INTEGER UNIQUE REFERENCES evaluations(id),
         attempts INTEGER NOT NULL DEFAULT 0,

@@ -29,6 +29,7 @@ from scout.scanning.jev import (
     validate_answers,
 )
 from scout.scanning.jev_catalogue import load_jev_catalogue
+from scout.scanning.jev_router import route
 from scout.scanning.jev_state import (
     JevProject,
     build_jev_state,
@@ -322,6 +323,29 @@ def test_a_boolean_noul_is_rejected() -> None:
     assert "non-numeric" in result.error.detail
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_noul_is_rejected(value: float) -> None:
+    body = _noul_body(_questions())
+    body["answers"]["needs_thread"] = {"type": "noul", "noul": value}
+    result = validate_answers(body, _questions())
+    assert isinstance(result, Err)
+    assert "non-finite" in result.error.detail
+
+
+def test_an_extra_exclusion_is_preserved_for_the_router() -> None:
+    body = _noul_body(_questions(), 0.0)
+    body["answers"]["excl_new"] = {"type": "noul", "noul": 0.9}
+    result = validate_answers(body, _questions())
+    assert isinstance(result, Ok)
+    assert result.value.probabilities["excl_new"] == 0.9
+
+
+def test_a_malformed_extra_exclusion_is_rejected() -> None:
+    body = _noul_body(_questions(), 0.0)
+    body["answers"]["excl_new"] = {"type": "noul", "noul": float("inf")}
+    assert isinstance(validate_answers(body, _questions()), Err)
+
+
 def test_a_non_object_body_is_rejected() -> None:
     result = validate_answers(["not", "an", "object"], _questions())
     assert isinstance(result, Err)
@@ -477,6 +501,25 @@ async def test_a_malformed_answer_vector_becomes_a_typed_failure() -> None:
     result = await call_jev(_request(), transport=httpx.MockTransport(handler))
     assert isinstance(result, Err)
     assert result.error.status == 200
+
+
+@pytest.mark.asyncio
+async def test_transport_preserves_extra_exclusion_that_changes_reference_route() -> None:
+    """Pinned assay route() drops this vector; filtering to asked names responded."""
+    body = _noul_body(_questions(), 0.0)
+    body["answers"]["answerable_from_post"]["noul"] = 0.9
+    body["answers"]["about_agent_work"]["noul"] = 0.9
+    body["answers"]["excl_new"] = {"type": "noul", "noul": 0.95}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    received = await call_jev(_request(), transport=httpx.MockTransport(handler))
+    assert isinstance(received, Ok)
+    decision = route(received.value.probabilities)
+    assert isinstance(decision, Ok)
+    assert (decision.value.action, decision.value.exclusion) == ("drop", "new")
+    assert decision.value.features["excl_new"] == 0.95
 
 
 @pytest.mark.asyncio

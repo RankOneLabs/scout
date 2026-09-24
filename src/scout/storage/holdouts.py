@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -70,6 +71,7 @@ class RelevanceDecisionWrite:
     classifier: ClassifierName
     model: str
     action: ClassifierAction
+    selected_for_holdout: bool = False
     reason: str | None = None
     phase_run_id: int | None = None
     catalogue_id: str | None = None
@@ -84,7 +86,9 @@ class RelevanceDecision:
     """One recorded decision, read back."""
 
     id: int
+    decision_uid: str
     evaluation_id: int
+    selected_for_holdout: bool
     phase_run_id: int | None
     classifier: ClassifierName
     model: str
@@ -137,6 +141,29 @@ class HoldoutWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class LabelProvenance:
+    format: str
+    packet: str
+    packet_digest: str
+    plan_digest: str
+    reviewer: str
+    saved_at: str
+    case_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class KeyProvenance:
+    format: str
+    name: str
+    digest: str
+    plan_digest: str
+    sitting: str
+    case_id: int
+    evaluation_id: int
+    project_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class Holdout:
     """One holdout row, read back."""
 
@@ -157,6 +184,8 @@ class Holdout:
     release_action: ClassifierAction | None
     label: HoldoutLabel | None
     label_source: str | None
+    label_provenance: LabelProvenance | None
+    key_provenance: KeyProvenance | None
     labelled_at: str | None
     target_evaluation_id: int | None
     attempts: int
@@ -188,6 +217,7 @@ def _now() -> str:
 
 def _decision_row(row: sqlite3.Row) -> RelevanceDecision:
     data = dict(row)
+    data["selected_for_holdout"] = bool(data["selected_for_holdout"])
     answers_json = data.pop("answers_json")
     decision_json = data.pop("decision_json")
     return RelevanceDecision(
@@ -200,7 +230,18 @@ def _decision_row(row: sqlite3.Row) -> RelevanceDecision:
 def _holdout_row(row: sqlite3.Row) -> Holdout:
     data = dict(row)
     frozen = json.loads(data.pop("frozen_input_json"))
-    return Holdout(**data, frozen_input=FrozenHoldoutInput(**frozen))
+    label_json = data.pop("label_provenance_json")
+    key_json = data.pop("key_provenance_json")
+    return Holdout(
+        **data,
+        frozen_input=FrozenHoldoutInput(**frozen),
+        label_provenance=(
+            None if label_json is None else LabelProvenance(**json.loads(label_json))
+        ),
+        key_provenance=(
+            None if key_json is None else KeyProvenance(**json.loads(key_json))
+        ),
+    )
 
 
 class HoldoutStore:
@@ -228,12 +269,15 @@ class HoldoutStore:
             with self._uow.begin_immediate():
                 self._conn.execute(
                     "INSERT INTO relevance_decisions "
-                    "(evaluation_id, phase_run_id, classifier, model, catalogue_id, "
+                    "(decision_uid, evaluation_id, selected_for_holdout, phase_run_id, "
+                    "classifier, model, catalogue_id, "
                     "catalogue_version, router_version, action, reason, answers_json, "
                     "decision_json, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
+                        uuid.uuid4().hex,
                         write.evaluation_id,
+                        int(write.selected_for_holdout),
                         write.phase_run_id,
                         write.classifier,
                         write.model,
@@ -293,6 +337,11 @@ class HoldoutStore:
                             separators=(",", ":"),
                         ),
                     ),
+                )
+                self._conn.execute(
+                    "UPDATE relevance_decisions SET selected_for_holdout = 1 "
+                    "WHERE evaluation_id = ?",
+                    (write.evaluation_id,),
                 )
         except sqlite3.IntegrityError as exc:
             return Err(
@@ -390,6 +439,8 @@ class HoldoutStore:
         release_action: ClassifierAction,
         label: HoldoutLabel | None = None,
         label_source: str | None = None,
+        label_provenance: LabelProvenance | None = None,
+        key_provenance: KeyProvenance | None = None,
         labelled_at: str | None = None,
         target_evaluation_id: int | None = None,
     ) -> Result[Holdout, HoldoutStorageError]:
@@ -428,10 +479,12 @@ class HoldoutStore:
                     "SET status = 'released', released_at = ?, "
                     "    release_authority = ?, release_action = ?, label = ?, "
                     "    label_source = ?, labelled_at = ?, "
+                    "    label_provenance_json = ?, key_provenance_json = ?, "
                     "    target_evaluation_id = ?, last_error = NULL, "
                     "    claim_expires_at = NULL "
                     "WHERE id = ? AND status = 'claimed' "
-                    "  AND claim_token = ? AND claim_fence = ?",
+                    "  AND claim_token = ? AND claim_fence = ? "
+                    "  AND claim_expires_at > ?",
                     (
                         _now(),
                         release_authority,
@@ -439,10 +492,13 @@ class HoldoutStore:
                         label,
                         label_source,
                         labelled_at,
+                        _json(asdict(label_provenance) if label_provenance else None),
+                        _json(asdict(key_provenance) if key_provenance else None),
                         target_evaluation_id,
                         claim.holdout_id,
                         claim.token,
                         claim.fence,
+                        _now(),
                     ),
                 )
                 applied = cursor.rowcount == 1
@@ -470,8 +526,9 @@ class HoldoutStore:
                 "UPDATE relevance_holdouts "
                 "SET status = 'failed', last_error = ?, claim_expires_at = NULL "
                 "WHERE id = ? AND status = 'claimed' "
-                "  AND claim_token = ? AND claim_fence = ?",
-                (detail, claim.holdout_id, claim.token, claim.fence),
+                "  AND claim_token = ? AND claim_fence = ? "
+                "  AND claim_expires_at > ?",
+                (detail, claim.holdout_id, claim.token, claim.fence, _now()),
             )
             applied = cursor.rowcount == 1
         current = self.get(claim.holdout_id)
@@ -508,6 +565,20 @@ class HoldoutStore:
                         f"claim fence {claim.fence} is stale; holdout is at "
                         f"{current.claim_fence}"
                     ),
+                    holdout_id=claim.holdout_id,
+                )
+            )
+        if (
+            current.status == "claimed"
+            and current.claim_token == claim.token
+            and current.claim_fence == claim.fence
+            and current.claim_expires_at is not None
+            and current.claim_expires_at <= _now()
+        ):
+            return Err(
+                HoldoutStorageError(
+                    operation="complete_release",
+                    detail="claim lease expired",
                     holdout_id=claim.holdout_id,
                 )
             )

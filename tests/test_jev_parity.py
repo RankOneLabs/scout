@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 import yaml
+from jsonschema import validate as validate_schema
 
 from scout.result import Err, Ok
 from scout.scanning.jev_catalogue import load_jev_catalogue
@@ -30,6 +31,7 @@ from scout.scanning.jev_router import EXCLUSION_PREFIX, ROUTED, RouteDecision, r
 
 CATALOGUE = Path("tests/fixtures/relevance/routed-features.fixture.yaml")
 ANSWERS = Path("tests/fixtures/relevance/routed-answers.fixture.json")
+INTERCHANGE = Path("tests/fixtures/relevance/interchange.fixture.json")
 
 ACTIONS = frozenset({"respond", "review", "drop"})
 LINES = frozenset({"exclusion", "needs_thread", "respond", "points_somewhere", "otherwise"})
@@ -126,6 +128,22 @@ def _catalogue() -> dict[str, Any]:
 
 def _cases() -> list[dict[str, Any]]:
     return json.loads(ANSWERS.read_text(encoding="utf-8"))["cases"]
+
+
+def test_synthetic_assay_interchange_matches_the_recorded_shapes() -> None:
+    fixture = json.loads(INTERCHANGE.read_text(encoding="utf-8"))
+    for name, schema_name in (
+        ("packet", "assay-packet.v1.schema.json"),
+        ("labels", "assay-labels.v3.schema.json"),
+        ("key", "assay-key.v2.schema.json"),
+    ):
+        schema = json.loads(
+            (Path("contracts/relevance") / schema_name).read_text(encoding="utf-8")
+        )
+        validate_schema(fixture[name], schema)
+    assert fixture["packet"]["digest"] == fixture["labels"]["packet_digest"]
+    assert fixture["packet"]["digest"] == fixture["key"]["digest"]
+    assert fixture["labels"]["cases"][0]["case_id"] == fixture["key"]["cases"][0]["case_id"]
 
 
 def _probabilities(case: dict[str, Any]) -> dict[str, float]:

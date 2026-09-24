@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:scout:assay-label-packet-labels:v3",
+  "title": "Assay relevance packet labels v3",
+  "type": "object",
+  "required": ["format", "packet", "packet_digest", "plan_digest", "reviewer", "saved_at", "cases"],
+  "properties": {
+    "format": {"const": "assay.label-packet-labels/v3"},
+    "packet": {"type": "string"},
+    "packet_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reviewer": {"type": "string"},
+    "saved_at": {"type": "string"},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "exclusion", "needs_thread", "substance", "note"],
+        "properties": {
+          "case_id": {"type": "integer", "minimum": 1},
+          "exclusion": {"type": "string"},
+          "needs_thread": {"type": "boolean"},
+          "substance": {"type": ["string", "null"]},
+          "note": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

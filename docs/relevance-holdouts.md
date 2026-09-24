@@ -4,17 +4,15 @@ Scout gains a second relevance classifier (JEV, answered by Typesafe System One)
 and durable evidence for the decision it produces, so a sampled holdout can be
 exported for blind grading and released later against stored labels.
 
-This document is the contract record for that work. It records the proposed
-semantics, request, storage, and Scout/assay interchange for owner review.
-The four product choices and the exact packet, label, and private answer-key
-contract still need explicit confirmation from the project owner and assay.
-Dependent implementation and merging remain blocked until that confirmation is
-recorded here.
+This document is the contract record for that work. The project owner confirmed
+the four product choices below on 2026-09-24. The packet, labels, and private
+answer key use the existing assay and run-receipts formats described below.
+Release orchestration and merging remain gated on the private catalogue parity
+check; its inputs are not committed here.
 
 ## Confirmation status
 
-**Pending owner and assay confirmation.** The cutover specification proposes
-the following four choices; it is not evidence that the owner accepted them:
+**Confirmed by the project owner on 2026-09-24:**
 
 1. JEV requires keyword prefiltering. An unexpected unrouted post fails
    retryably before the HTTP request, while LLM routing keeps its current behavior.
@@ -24,16 +22,15 @@ the following four choices; it is not evidence that the owner accepted them:
    force at decision time; otherwise it stores `drop`. It never stores `review`.
 4. Holdout export extends the population record with stable holdout,
    evaluation, post, and frozen project identity; a private envelope isolates
-   the production decision. Labels must join on stable identity, not row order
-   or URL. The precise packet, label, and private answer-key fields and label
-   precedence are pending agreement with assay.
+   the production decision. Labels join through the private key's case mapping,
+   never row order or URL alone.
 
-The two schemas under `contracts/relevance/` are **proposals**, not accepted
-interchange contracts. In particular, the current label schema has no frozen
-project identity, and there is no answer-key schema. Both gaps need resolution
-before export or release implementation. The proposed label precedence is last
-by `labelled_at`, rejecting ties; assay has not confirmed it. No private
-catalogue or private packet belongs in this repository.
+The existing assay packet builder and the round 5 artifacts in run-receipts
+define the interchange. Scout's `holdout-export.v1` is the population input to
+that builder. `assay-packet.v1`, `assay-labels.v3`, and `assay-key.v2` schemas
+record the three existing artifact shapes. The prior Scout-only label sketch
+was removed. No private catalogue, packet content, label content, or answer
+key is committed here.
 
 ## Where the decisions come from
 
@@ -278,14 +275,16 @@ Claims are compare-and-swap with a fence. A stale or competing completion is
 rejected; a committed completion is idempotently readable, so a retry after a
 lost response reads the first result rather than producing a second one. One
 source evaluation cannot acquire two holds, and cannot acquire two release
-targets.
+targets. Completion and failure also require an unexpired claim lease, even
+before another holder takes over; token and fence must still match. Takeover
+advances the fence.
 
 ## The interchange
 
-Two versioned contracts under `contracts/relevance/`:
-
-- `holdout-export.v1.schema.json` — what `scout holdout export` writes.
-- `holdout-labels.v1.schema.json` — what `scout holdout release --labels` reads.
+The versioned Scout population export under `contracts/relevance/` is
+`holdout-export.v1.schema.json`. Sampling, export, packet building and release
+orchestration belong to C02. The three assay schemas in the same directory
+describe the packet, labels, and key C02 exchanges with assay.
 
 The export is the population export format assay already reads, extended. Every
 `PopulationExportRecord` field is present and unchanged, so an assay packet
@@ -299,12 +298,24 @@ It is one named key so a blind projection can drop it and be checked, in the way
 assay's packet builder projects a blind case and then asserts nothing on its
 denylist survived.
 
-The proposed join uses `holdout_id` and `evaluation_id` against the frozen
-project, never row order or URL alone. The current label schema lacks a project
-field, so this proposed check cannot yet be implemented. The proposed duplicate
-rule takes the last `labelled_at` and rejects ties. Assay must confirm these
-rules and the packet and answer-key fields before either schema is treated as
-an interchange contract.
+Assay's round 5 artifacts in run-receipts establish the actual three-file
+contract. The blind `packet.json` is `assay.label-packet/v1`, with `name`,
+`sitting`, `digest`, `plan_digest`, `rubric`, and blind `cases` containing only
+`case_id`, `text`, and `parent_text`. The saved `labels.json` is
+`assay.label-packet-labels/v3`, with `packet`, `packet_digest`, `plan_digest`,
+`reviewer`, `saved_at`, and cases with `case_id`, `exclusion`, `needs_thread`,
+`substance`, and `note`. The private `answer-key-private.json` is
+`assay.label-packet-key/v2`; its case mapping contains `case_id`,
+`evaluation_id`, `project_key`, `production_decision`, and `production_score`.
+These names and versions are observable in the existing artifacts, not new
+Scout inventions.
+
+C02 must verify the packet and plan digests across all three files, resolve
+each label's `case_id` through the private key, then verify that the mapped
+`evaluation_id` and `project_key` match the held evaluation and frozen project.
+It must reject unknown or duplicate case IDs. The private key never enters the
+blind packet. C01 stores structured label and key provenance on completion;
+it does not sample, build packets, or orchestrate release.
 
 ## What Scout already had
 
@@ -379,6 +390,12 @@ the action and the reason, with the full validated answers and the complete
 `route()` decision, including the deciding line and the exclusion, stored beside
 it.
 
+Every successful recorded decision gets a generated stable unique
+`decision_uid` and an explicit `selected_for_holdout` flag. C02's sampling
+step supplies the selection; C01 persists it with the evaluation and any hold.
+The decision, evaluation, hold, and phase contributor links share the same
+transaction so a failed write cannot leave a partial outcome.
+
 Historical rows stay null. No stored fact identifies which classifier produced a
 pre-JEV evaluation, so nothing is backfilled and nothing is guessed. A null there
 means unknown, and reads as unknown.
@@ -388,9 +405,10 @@ means unknown, and reads as unknown.
 Neither redistributable catalogue at the pinned assay revision is in the form
 `route()` consumes: `band-form.yaml` is the band-era catalogue feeding
 `mappings.decide_argmax`, and `label-form.yaml` is the human label form. Scout
-currently carries an invented candidate at `tests/fixtures/relevance/`. The
-project owner and assay still need to agree that it is the synthetic fixture
-for response and interchange tests:
+uses an invented response fixture at `tests/fixtures/relevance/`. Assay's
+`tests/test_relevance_packet.py` supplies synthetic packet cases for the
+interchange; private round 5 artifacts are used only to identify the format,
+never copied into Scout:
 
 - `routed-features.fixture.yaml`, an invented catalogue in the authoritative
   routed shape: the four routed `noul` features, three invented exclusions,

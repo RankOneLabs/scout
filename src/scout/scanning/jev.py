@@ -22,6 +22,7 @@ mistyped or malformed answer vector is a failure, never a silent negative.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -132,7 +133,11 @@ def validate_answers(
         )
 
     probabilities: dict[str, float] = {}
-    for name in questions:
+    names = list(questions) + [
+        name for name in payload if isinstance(name, str)
+        and name.startswith("excl_") and name not in questions
+    ]
+    for name in names:
         answer = payload.get(name)
         if not isinstance(answer, Mapping):
             return Err(
@@ -152,11 +157,12 @@ def validate_answers(
                 )
             )
         value = answer.get(ANSWER_TYPE)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
             return Err(
                 JevFailure(
                     operation="validate_answers",
-                    detail=f"answer for {name!r} has a non-numeric {ANSWER_TYPE}",
+                    detail=f"answer for {name!r} has a non-numeric or non-finite {ANSWER_TYPE}",
                 )
             )
         probabilities[name] = float(value)
@@ -164,7 +170,7 @@ def validate_answers(
     return Ok(
         JevAnswers(
             probabilities=probabilities,
-            raw={name: payload[name] for name in questions},
+            raw={name: payload[name] for name in names},
         )
     )
 

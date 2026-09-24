@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Generator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -14,6 +15,8 @@ from scout.storage.holdouts import (
     LABEL_ACTIONS,
     FrozenHoldoutInput,
     HoldoutWrite,
+    KeyProvenance,
+    LabelProvenance,
     RelevanceDecisionWrite,
 )
 from scout.storage.state import StateManager
@@ -180,6 +183,25 @@ def test_one_evaluation_cannot_record_two_decisions(sm: StateManager) -> None:
     assert isinstance(sm.holdouts.record_decision(write), Err)
 
 
+def test_successful_decisions_have_distinct_stable_ids_and_selection(sm: StateManager) -> None:
+    first, _, _ = _evaluation(sm, platform_id="0xuid1")
+    second, _, _ = _evaluation(sm, platform_id="0xuid2")
+    for evaluation_id, selected in ((first, True), (second, False)):
+        result = sm.holdouts.record_decision(
+            RelevanceDecisionWrite(
+                evaluation_id=evaluation_id, classifier="llm", model="m",
+                action="respond", selected_for_holdout=selected,
+            )
+        )
+        assert isinstance(result, Ok)
+    a = sm.holdouts.get_decision(first)
+    b = sm.holdouts.get_decision(second)
+    assert a is not None and b is not None
+    assert a.decision_uid and b.decision_uid and a.decision_uid != b.decision_uid
+    assert (a.selected_for_holdout, b.selected_for_holdout) == (True, False)
+    assert sm.holdouts.get_decision(first).decision_uid == a.decision_uid
+
+
 def test_an_unknown_classifier_is_rejected_by_the_schema(sm: StateManager) -> None:
     evaluation_id, _post_id, _scan_id = _evaluation(sm)
     result = sm.holdouts.record_decision(
@@ -258,6 +280,61 @@ def test_a_hold_and_its_evaluation_roll_back_together(sm: StateManager) -> None:
     assert sm.holdouts.get_by_evaluation(evaluation_id) is None
 
 
+def test_evaluation_hold_decision_and_contributor_link_roll_back_together(
+    sm: StateManager,
+) -> None:
+    scan_id = sm.start_scan(environment="test")
+    message = _message("0xatomic")
+    post_id = sm.save_post(message, scan_id)
+    now = datetime.now(UTC).isoformat()
+    with sm.db.begin_immediate():
+        sm.conn.execute(
+            "INSERT INTO feedback_snapshots (scan_id, policy_version, mode, as_of, "
+            "lookback_days, max_grades, segment_min_grades, note_max_chars, "
+            "relevance_token_budget, reply_draft_token_budget, critic_token_budget, "
+            "population_count, eligible_count, excluded_count, created_at) "
+            "VALUES (?, 'test/v1', 'shadow', ?, 90, 200, 5, 240, 800, 800, 1000, 0, 0, 0, ?)",
+            (scan_id, now, now),
+        )
+        snapshot_id = sm.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        sm.conn.execute(
+            "INSERT INTO feedback_snapshot_phases "
+            "(snapshot_id, phase, token_budget, token_estimate, truncated, "
+            "structured_summary, rendered_text, rendered_sha256, created_at) "
+            "VALUES (?, 'relevance', 800, 0, 0, '{}', '', 'x', ?)",
+            (snapshot_id, now),
+        )
+        phase_id = sm.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        sm.conn.execute(
+            "INSERT INTO evaluation_phase_runs "
+            "(scan_id, post_id, snapshot_phase_id, phase, trace_id, model, status, created_at) "
+            "VALUES (?, ?, ?, 'relevance', 'trace-atomic', 'm', 'complete', ?)",
+            (scan_id, post_id, phase_id, now),
+        )
+        run_id = sm.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    before = sm.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0]
+    with pytest.raises(RuntimeError, match="injected"), sm.db.begin_immediate():
+        evaluation_id = sm.evaluations.persist_terminal_outcome(
+            RelevanceResult(message=message, relevant=False, score=0.0, reason="drop"),
+            post_id, scan_id, surface_status="held", contributor_phase_run_ids=[run_id],
+            project_key="agent-ops",
+        )
+        assert isinstance(sm.holdouts.record_decision(RelevanceDecisionWrite(
+            evaluation_id=evaluation_id, classifier="llm", model="m", action="drop",
+            selected_for_holdout=True,
+        )), Ok)
+        assert isinstance(sm.holdouts.hold(HoldoutWrite(
+            evaluation_id=evaluation_id, post_id=post_id, scan_id=scan_id,
+            frozen_input=_frozen("0xatomic"), project_key="agent-ops",
+        )), Ok)
+        raise RuntimeError("injected")
+    assert sm.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == before
+    assert sm.conn.execute("SELECT COUNT(*) FROM relevance_holdouts").fetchone()[0] == 0
+    assert sm.conn.execute(
+        "SELECT evaluation_id FROM evaluation_phase_runs WHERE id = ?", (run_id,)
+    ).fetchone()[0] is None
+
+
 def test_two_holds_cannot_share_one_release_target(sm: StateManager) -> None:
     first = _hold(sm, "0xone")
     second = _hold(sm, "0xtwo")
@@ -327,6 +404,51 @@ def test_an_expired_claim_can_be_taken_over(sm: StateManager) -> None:
     taken = sm.holdouts.claim(held.id, owner="recovered")
     assert isinstance(taken, Ok)
     assert taken.value.fence > abandoned.value.fence
+
+
+def test_expired_holder_cannot_complete_before_takeover(sm: StateManager) -> None:
+    held = _hold(sm)
+    claim = sm.holdouts.claim(held.id, owner="first")
+    assert isinstance(claim, Ok)
+    stale = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    with sm.db.begin_immediate():
+        sm.conn.execute(
+            "UPDATE relevance_holdouts SET claim_expires_at = ? WHERE id = ?",
+            (stale, held.id),
+        )
+    result = sm.holdouts.complete_release(
+        claim.value, release_authority="recorded_action", release_action="drop"
+    )
+    assert isinstance(result, Err)
+    assert "expired" in result.error.detail
+    current = sm.holdouts.get(held.id)
+    assert current is not None and current.status == "claimed"
+
+
+def test_expired_holder_cannot_fail_attempt_before_takeover(sm: StateManager) -> None:
+    held = _hold(sm)
+    claim = sm.holdouts.claim(held.id, owner="first")
+    assert isinstance(claim, Ok)
+    stale = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    with sm.db.begin_immediate():
+        sm.conn.execute(
+            "UPDATE relevance_holdouts SET claim_expires_at = ? WHERE id = ?",
+            (stale, held.id),
+        )
+    assert isinstance(sm.holdouts.fail_attempt(claim.value, detail="late"), Err)
+
+
+def test_completion_rejects_wrong_token_at_current_fence(sm: StateManager) -> None:
+    held = _hold(sm)
+    claim = sm.holdouts.claim(held.id, owner="first")
+    assert isinstance(claim, Ok)
+    wrong = replace(claim.value, token="wrong-token")
+    result = sm.holdouts.complete_release(
+        wrong, release_authority="recorded_action", release_action="drop"
+    )
+    assert isinstance(result, Err)
+    current = sm.holdouts.get(held.id)
+    assert current is not None and current.status == "claimed"
 
 
 def test_a_superseded_claim_cannot_complete(sm: StateManager) -> None:
@@ -403,6 +525,30 @@ def test_each_label_releases_to_its_confirmed_action(
     )
     assert isinstance(released, Ok)
     assert released.value.release_action == action
+
+
+def test_release_retains_structured_label_and_key_provenance(sm: StateManager) -> None:
+    held = _hold(sm)
+    claim = sm.holdouts.claim(held.id, owner="releaser")
+    assert isinstance(claim, Ok)
+    label_provenance = LabelProvenance(
+        format="assay.label-packet-labels/v3", packet="fixture", packet_digest="a" * 64,
+        plan_digest="b" * 64, case_id=7, reviewer="reviewer",
+        saved_at="2026-09-24T00:00:00Z",
+    )
+    key_provenance = KeyProvenance(
+        format="assay.label-packet-key/v2", name="fixture", digest="a" * 64,
+        plan_digest="b" * 64, sitting="first", case_id=7,
+        evaluation_id=held.evaluation_id, project_key="agent-ops",
+    )
+    result = sm.holdouts.complete_release(
+        claim.value, release_authority="label", release_action="respond",
+        label="in_post", label_provenance=label_provenance,
+        key_provenance=key_provenance,
+    )
+    assert isinstance(result, Ok)
+    assert result.value.label_provenance == label_provenance
+    assert result.value.key_provenance == key_provenance
 
 
 def test_a_label_release_without_a_label_is_refused(sm: StateManager) -> None:

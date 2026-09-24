@@ -1,0 +1,30 @@
+{
+  "packet": {
+    "format": "assay.label-packet/v1",
+    "name": "synthetic-sitting",
+    "sitting": "first",
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "plan_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "rubric": [],
+    "cases": [{"case_id": 1, "text": "A synthetic agent workflow post.", "parent_text": null}]
+  },
+  "labels": {
+    "format": "assay.label-packet-labels/v3",
+    "packet": "synthetic-sitting",
+    "packet_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "plan_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "reviewer": "synthetic-reviewer",
+    "saved_at": "2026-09-24T00:00:00Z",
+    "cases": [{"case_id": 1, "exclusion": "none", "needs_thread": false, "substance": "in_post", "note": null}]
+  },
+  "key": {
+    "format": "assay.label-packet-key/v2",
+    "name": "synthetic-sitting",
+    "sitting": "first",
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "plan_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "seed": "synthetic/v1",
+    "strata": {},
+    "cases": [{"case_id": 1, "evaluation_id": 101, "project_key": "agent-ops", "production_decision": true, "production_score": 1.0}]
+  }
+}
