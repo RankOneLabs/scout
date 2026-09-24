@@ -374,7 +374,7 @@ class TestRelevanceClassifierConfig:
 
         Rolling the classifier back to `llm` does not silently reset or
         disable sampling, and a non-default rate does not require any JEV
-        setting. See docs/runbooks/relevance-classifier-rollout.md.
+        setting. See docs/relevance-holdouts.md.
         """
         rolled_back = self._reload(
             monkeypatch, RELEVANCE_CLASSIFIER="llm", RELEVANCE_HOLDOUT_RATE="0.25"

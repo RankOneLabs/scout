@@ -17,6 +17,29 @@ Copy `.env.example` for a complete template.
 | `TRACE_DB_PATH` | `scout_traces.db` | Jig trace database |
 | `FEEDBACK_DB_PATH` | `scout_feedback.db` | Jig feedback database |
 
+## Relevance classifier and holdouts
+
+| Variable | Default | Description |
+|---|---:|---|
+| `RELEVANCE_CLASSIFIER` | `llm` | Which classifier decides relevance: `llm` or `jev`. Exactly one runs |
+| `TYPESAFE_API_KEY` | unset | Bearer credential; required under `jev`, never stored or logged |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | JEV endpoint; must be `http` or `https` |
+| `TYPESAFE_CATALOGUE_PATH` | shadow fixture | The feature catalogue. Must be set explicitly under `jev` — the shadow default is a different document shape and the JEV loader rejects it |
+| `KEYWORD_PREFILTER` | `true` | Must be `true` under `jev`; startup validation fails otherwise |
+| `RELEVANCE_HOLDOUT_RATE` | `0.1` | Probability a decided post is held back from surfacing for blind grading, drops included. `0` holds nothing, `1` holds everything, and a value outside `[0, 1]` fails startup |
+
+Catalogue, credential, endpoint and routed-input requirements are validated
+only when the classifier is `jev`, so an `llm` deployment needs none of them.
+
+**Rollback is `RELEVANCE_CLASSIFIER=llm`, and nothing else.** The holdout rate
+is an independent control read whatever the classifier is: rolling back
+neither resets it nor stops sampling. Pending holds survive a rollback and
+still release on the action recorded at decision time, because release acts on
+the stored action rather than re-classifying. See
+[Relevance holdouts and the JEV handoff](relevance-holdouts.md) for the
+lifecycle, the status vocabulary, and the external gates production enablement
+depends on.
+
 ## Typesafe shadow relevance
 
 | Variable | Default | Description |
