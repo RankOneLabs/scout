@@ -415,6 +415,8 @@ class ScoutPipelineAdapter(LLMClient):  # type: ignore[misc]
         structured_draft = (
             decision.structured_draft.model_dump() if decision.structured_draft else None
         )
+        # This harness does not sample holdouts; classify_outcome cannot yield held.
+        assert decision.status != "held"
         return Phase1RunOutput(
             case_id=case.id,
             case_kind="scout_response",
