@@ -43,8 +43,8 @@
     },
     "post_id": { "type": "integer", "minimum": 1 },
     "project": {
-      "description": "The routed project frozen as it stood at decision time. A label joins against this, never against the project's current registry row.",
-      "type": "object",
+      "description": "The routed project frozen as it stood at decision time. A label joins against this, never against the project's current registry row. Null on a hold that froze no project: a post the classifier reached without a keyword route has none, and such a hold can only ever be released as a drop.",
+      "type": ["object", "null"],
       "required": ["key", "name", "description"],
       "additionalProperties": false,
       "properties": {

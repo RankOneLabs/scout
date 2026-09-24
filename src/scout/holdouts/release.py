@@ -509,9 +509,15 @@ def load_release_labels(
     inputs: ReleaseInputs,
 ) -> Result[ReleaseLabels, HoldoutReleaseError]:
     """Read and resolve the supplied interchange files, if any."""
-    if inputs.labels_path is None and inputs.key_path is None:
+    supplied = (inputs.labels_path, inputs.key_path, inputs.packet_path)
+    if all(path is None for path in supplied):
         return Ok(ReleaseLabels(by_evaluation={}))
     if inputs.labels_path is None or inputs.key_path is None:
+        # A packet alone resolves nothing: it carries the blind cases, and
+        # the labels answering them and the key naming their evaluations
+        # both live elsewhere. Releasing ungraded while holding a supplied
+        # interchange file would act on the recorded action and never say
+        # the file was ignored.
         return Err(
             HoldoutReleaseError(
                 operation="load_release_labels",

@@ -69,7 +69,7 @@ def _message(platform_id: str) -> Message:
     )
 
 
-def _frozen(platform_id: str, *, project_key: str = "agent-ops") -> FrozenHoldoutInput:
+def _frozen(platform_id: str, *, project_key: str | None = "agent-ops") -> FrozenHoldoutInput:
     return FrozenHoldoutInput(
         platform="farcaster",
         platform_id=platform_id,
@@ -82,8 +82,8 @@ def _frozen(platform_id: str, *, project_key: str = "agent-ops") -> FrozenHoldou
         author_name="Ada",
         author_handle="ada",
         project_key=project_key,
-        project_name="Agent Ops",
-        project_description="A description.",
+        project_name="Agent Ops" if project_key else None,
+        project_description="A description." if project_key else None,
         keyword_route_id=None,
         dossier_summary_id="d1",
         dossier_revision="r1",
@@ -98,7 +98,7 @@ def _hold(
     score: float = 1.0,
     action: str = "respond",
     classifier: str = "jev",
-    project_key: str = "agent-ops",
+    project_key: str | None = "agent-ops",
     record_decision: bool = True,
 ) -> tuple[int, int]:
     """Persist a held evaluation and its hold. Returns (holdout_id, evaluation_id)."""
@@ -111,7 +111,7 @@ def _hold(
             relevant=relevant,
             score=score,
             reason="the private reason",
-            relevant_to=(project_key,),
+            relevant_to=() if project_key is None else (project_key,),
         ),
         post_id,
         scan_id,
@@ -255,9 +255,45 @@ def test_the_export_uses_the_frozen_project_not_the_live_one(sm: StateManager) -
     _hold(sm, "0x1")
 
     record = _records(sm)[0]
+    assert record.project is not None
     assert record.project.key == "agent-ops"
     assert record.project.name == "Agent Ops"
     assert record.project.description == "A description."
+
+
+# --- a hold that froze no project -------------------------------------------
+
+
+def test_a_hold_that_froze_no_project_is_exported_with_a_null_project(
+    sm: StateManager,
+) -> None:
+    """A post reached without a keyword route carries no project.
+
+    Holding it is a legitimate sampled decision — release lands it as a
+    drop — so the export represents it rather than refusing it.
+    """
+    _hold(sm, "0x1", project_key=None, relevant=False, score=0.0, action="drop")
+
+    assert _records(sm)[0].project is None
+
+
+def test_a_projectless_record_still_validates_against_the_v1_schema(
+    sm: StateManager,
+) -> None:
+    _hold(sm, "0x1", project_key=None, relevant=False, score=0.0, action="drop")
+    validator = Draft7Validator(json.loads(_SCHEMA_PATH.read_text()))
+
+    validator.validate(json.loads(_records(sm)[0].model_dump_json()))
+
+
+def test_a_projectless_hold_does_not_strand_the_rest_of_the_population(
+    sm: StateManager,
+) -> None:
+    """The export is all-or-nothing, so one refused hold refuses every hold."""
+    _hold(sm, "0x1", project_key=None, relevant=False, score=0.0, action="drop")
+    _hold(sm, "0x2")
+
+    assert len(_records(sm)) == 2
 
 
 def test_the_export_carries_unambiguous_identity(sm: StateManager) -> None:
@@ -584,4 +620,26 @@ def test_the_export_command_fails_rather_than_writing_a_partial_file(
     with pytest.raises(SystemExit):
         export_holdout_population(Namespace(db=db_path, output=str(output), blind=False))
 
+    assert not output.exists()
+
+
+def test_the_export_command_refuses_a_database_that_does_not_exist(
+    tmp_path: Path,
+) -> None:
+    """A mistyped `--db` is a mistake, not a first run.
+
+    Creating one here would migrate an empty database and write a
+    zero-record export that reads exactly like a fully released population.
+    """
+    from argparse import Namespace
+
+    from scout.cli.holdout import export_holdout_population
+
+    missing = tmp_path / "typo.db"
+    output = tmp_path / "holdouts.jsonl"
+
+    with pytest.raises(Exception, match="(?i)does not exist|unable to open"):
+        export_holdout_population(Namespace(db=str(missing), output=str(output), blind=False))
+
+    assert not missing.exists()
     assert not output.exists()

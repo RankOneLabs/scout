@@ -333,6 +333,20 @@ def test_labels_without_a_key_are_refused(tmp_path: Path) -> None:
     assert "together" in loaded.error.detail
 
 
+def test_a_packet_alone_is_refused_rather_than_released_ungraded(tmp_path: Path) -> None:
+    """A supplied interchange file is never silently ignored.
+
+    A packet carries the blind cases; the labels answering them and the key
+    naming their evaluations live elsewhere. Reading it as "no labels
+    supplied" would release every hold on its recorded action while an
+    operator believed they had handed over a graded population.
+    """
+    loaded = load_release_labels(ReleaseInputs(packet_path=tmp_path / "packet.json"))
+
+    assert isinstance(loaded, Err)
+    assert "together" in loaded.error.detail
+
+
 def test_a_malformed_labels_file_is_refused(tmp_path: Path) -> None:
     labels_path = tmp_path / "labels.json"
     labels_path.write_text('{"format": "wrong"}')

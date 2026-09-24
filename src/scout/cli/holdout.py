@@ -84,7 +84,10 @@ def add_holdout_parser(
 
 def export_holdout_population(args: argparse.Namespace) -> None:
     """Write the pending holdout population, or fail loudly without a file."""
-    with StateManager(db_path=args.db) as state:
+    # Read-only, so a missing path is a mistyped `--db` rather than a first
+    # run. Creating one here would migrate an empty database and print a
+    # zero-record export that reads exactly like a released population.
+    with StateManager(db_path=args.db, allow_create=False) as state:
         exported = export_holdouts(state.conn)
     if isinstance(exported, Err):
         print(

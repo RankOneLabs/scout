@@ -78,7 +78,14 @@ class HoldoutExportPrivate(BaseModel):
 
 
 class HoldoutExportProject(BaseModel):
-    """The routed project frozen as it stood at decision time."""
+    """The routed project frozen as it stood at decision time.
+
+    Absent entirely on a hold that froze no project. A post the classifier
+    reached without a keyword route carries no project, and holding it is a
+    legitimate sampled decision — it can only ever be released as a drop.
+    Refusing to export it would strand that hold, and because the export is
+    all-or-nothing it would strand every other hold with it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -101,7 +108,7 @@ class HoldoutExportRecord(BaseModel):
     holdout_id: int
     evaluation_id: int
     post_id: int
-    project: HoldoutExportProject
+    project: HoldoutExportProject | None
     platform: str
     channel: str | None
     url: str | None
@@ -173,24 +180,20 @@ def _export_record(row: sqlite3.Row) -> Result[HoldoutExportRecord, HoldoutExpor
             )
         )
     frozen = FrozenHoldoutInput(**json.loads(row["frozen_input_json"]))
-    if frozen.project_key is None:
-        return Err(
-            HoldoutExportError(
-                operation="export",
-                detail="hold has no frozen project to join a label against",
-                holdout_id=holdout_id,
-            )
-        )
     human_label = row["human_label"]
     return Ok(
         HoldoutExportRecord(
             holdout_id=holdout_id,
             evaluation_id=int(row["evaluation_id"]),
             post_id=int(row["post_id"]),
-            project=HoldoutExportProject(
-                key=frozen.project_key,
-                name=frozen.project_name,
-                description=frozen.project_description,
+            project=(
+                None
+                if frozen.project_key is None
+                else HoldoutExportProject(
+                    key=frozen.project_key,
+                    name=frozen.project_name,
+                    description=frozen.project_description,
+                )
             ),
             platform=frozen.platform,
             channel=frozen.channel,
