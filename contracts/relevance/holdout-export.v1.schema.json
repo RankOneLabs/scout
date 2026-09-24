@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:scout:relevance-holdout-export:1",
+  "title": "Scout relevance holdout export record",
+  "description": "One JSON-lines record per pending held post, written by `scout holdout export`. Extends the population export format assay already reads: every PopulationExportRecord field is present and unchanged. The `private` envelope carries the production decision a blind reviewer must not see, as one named key so a blind projection can drop it and be checked.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "holdout_id",
+    "evaluation_id",
+    "post_id",
+    "project",
+    "platform",
+    "channel",
+    "url",
+    "text",
+    "parent_author_name",
+    "parent_text",
+    "author_name",
+    "author_handle",
+    "snapshot_id",
+    "human_label",
+    "production_score",
+    "production_decision",
+    "held_at",
+    "private"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Contract version. Bumped whenever a consumer must change to keep reading this.",
+      "const": 1
+    },
+    "holdout_id": {
+      "description": "Identity a label joins back on. Unique per hold.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "evaluation_id": {
+      "description": "The immutable source evaluation this hold references.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "post_id": { "type": "integer", "minimum": 1 },
+    "project": {
+      "description": "The routed project frozen as it stood at decision time. A label joins against this, never against the project's current registry row.",
+      "type": "object",
+      "required": ["key", "name", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "name": { "type": ["string", "null"] },
+        "description": { "type": ["string", "null"] }
+      }
+    },
+    "platform": { "type": "string", "minLength": 1 },
+    "channel": { "type": ["string", "null"] },
+    "url": { "type": ["string", "null"] },
+    "text": { "type": ["string", "null"] },
+    "parent_author_name": { "type": ["string", "null"] },
+    "parent_text": { "type": ["string", "null"] },
+    "author_name": { "type": ["string", "null"] },
+    "author_handle": { "type": ["string", "null"] },
+    "snapshot_id": { "type": ["integer", "null"] },
+    "human_label": {
+      "description": "Any pre-existing human relevance label on the source evaluation. Null for a post held at decision time, which is the ordinary case.",
+      "type": ["boolean", "null"]
+    },
+    "production_score": { "type": "number" },
+    "production_decision": { "type": "boolean" },
+    "held_at": {
+      "description": "RFC 3339 UTC instant the hold was taken.",
+      "type": "string",
+      "minLength": 1
+    },
+    "private": {
+      "description": "Never shown to a blind reviewer. A blind projection drops this key whole; assay's packet builder asserts nothing on its denylist survived.",
+      "type": "object",
+      "required": ["action", "score", "reason", "classifier"],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "The recorded classifier action. Release falls back to this when a case is ungraded.",
+          "enum": ["respond", "review", "drop"]
+        },
+        "score": { "type": "number" },
+        "reason": { "type": ["string", "null"] },
+        "classifier": {
+          "description": "What produced the decision. Null members mean unknown and are never guessed at; a pre-JEV evaluation carries nulls throughout.",
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "enum": ["llm", "jev", null] },
+            "model": { "type": ["string", "null"] },
+            "catalogue_id": { "type": ["string", "null"] },
+            "catalogue_version": { "type": ["string", "null"] },
+            "router_version": { "type": ["string", "null"] }
+          }
+        }
+      }
+    }
+  }
+}

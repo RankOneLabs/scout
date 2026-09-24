@@ -104,9 +104,19 @@ from scout.scanning.digest import (
     format_result_block,
     write_digest_header,
 )
+from scout.scanning.jev import JevEndpoint
+from scout.scanning.jev_catalogue import load_jev_catalogue
+from scout.scanning.jev_router import ROUTER_VERSION
 from scout.scanning.pipeline import build_scout_pipeline
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
-from scout.scanning.schemas import ReplyCandidate, StructuredDraftOutput, unpack_candidate
+from scout.scanning.relevance import JevRuntime
+from scout.scanning.schemas import (
+    RecordedRelevanceDecision,
+    ReplyCandidate,
+    StructuredDraftOutput,
+    unpack_candidate,
+)
+from scout.storage.holdouts import RelevanceDecisionWrite
 from scout.storage.state import (
     AUTHOR_RATE_EVALUATOR_VERSION,
     ScanStatus,
@@ -298,7 +308,81 @@ def validate_config() -> list[str]:
             "or BLUESKY_API_URL + BLUESKY_IDENTIFIER + BLUESKY_APP_PASSWORD."
             " For Bluesky use https://bsky.social/xrpc as the API URL."
         )
+    errors.extend(validate_jev_config())
     return errors
+
+
+def validate_jev_config() -> list[str]:
+    """Check the JEV-only configuration, and only when JEV is selected.
+
+    Nothing here runs under `RELEVANCE_CLASSIFIER=llm`, so the default
+    deployment needs no credential, no catalogue and no endpoint, and rollback
+    stays one variable. See docs/relevance-holdouts.md.
+    """
+    if _config.RELEVANCE_CLASSIFIER != "jev":
+        return []
+
+    errors: list[str] = []
+    if not _config.TYPESAFE_API_KEY:
+        errors.append(
+            "TYPESAFE_API_KEY not set (required when RELEVANCE_CLASSIFIER=jev)"
+        )
+    if not _config.TYPESAFE_BASE_URL.startswith(("http://", "https://")):
+        errors.append(
+            f"TYPESAFE_BASE_URL={_config.TYPESAFE_BASE_URL!r} must be an http(s) URL"
+        )
+    # JEV's state carries a project, and the project comes from the keyword
+    # route. With the prefilter off a post can reach relevance unrouted, and
+    # there is no defined input for it.
+    if not _config.KEYWORD_PREFILTER:
+        errors.append(
+            "KEYWORD_PREFILTER must be true when RELEVANCE_CLASSIFIER=jev: "
+            "JEV requires a routed project"
+        )
+    # The variable is shared with the disabled shadow node, whose default
+    # points at a shadow-form fixture this loader rejects. Require it
+    # explicitly rather than falling back to that default.
+    if not os.getenv("TYPESAFE_CATALOGUE_PATH", "").strip():
+        errors.append(
+            "TYPESAFE_CATALOGUE_PATH must be set explicitly when "
+            "RELEVANCE_CLASSIFIER=jev"
+        )
+    else:
+        loaded = load_jev_catalogue(_config.TYPESAFE_CATALOGUE_PATH)
+        if isinstance(loaded, Err):
+            errors.append(
+                f"TYPESAFE_CATALOGUE_PATH is not a usable JEV catalogue: "
+                f"{loaded.error.detail}"
+            )
+    return errors
+
+
+def build_jev_runtime() -> JevRuntime | None:
+    """Resolve JEV's catalogue and endpoint once, or None under `llm`.
+
+    Returning None is the classifier selection the pipeline step reads, so
+    the step never consults configuration and never runs both classifiers.
+    Raises rather than silently falling back to the LLM: `validate_config`
+    has already refused an unusable JEV configuration at startup, so a
+    failure here is a real fault, not a rollback path.
+    """
+    if _config.RELEVANCE_CLASSIFIER != "jev":
+        return None
+    loaded = load_jev_catalogue(_config.TYPESAFE_CATALOGUE_PATH)
+    if isinstance(loaded, Err):
+        raise RuntimeError(f"JEV catalogue unusable: {loaded.error.detail}")
+    logger.info(
+        "Relevance classifier: jev (catalogue %s, version %s, router %s)",
+        loaded.value.id,
+        loaded.value.version,
+        ROUTER_VERSION,
+    )
+    return JevRuntime(
+        catalogue=loaded.value,
+        endpoint=JevEndpoint(
+            api_key=_config.TYPESAFE_API_KEY, base_url=_config.TYPESAFE_BASE_URL
+        ),
+    )
 
 
 def _log_route_bundle(
@@ -551,6 +635,10 @@ SurfaceStatus = Literal[
     "gate_blocked",
     "not_relevant",
     "drafting_failed",
+    # Decided and recorded, then held back from surfacing for blind grading.
+    # Not surfaced, and not ready for drafting. classify_outcome never
+    # produces it; sampling into it belongs to the holdout work.
+    "held",
 ]
 
 
@@ -574,6 +662,7 @@ class OutcomeDecision:
     structured_draft: StructuredDraftOutput | None
     critique: CritiqueResult | None
     contributor_phase_run_ids: tuple[int, ...]
+    relevance_decision: RecordedRelevanceDecision | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,6 +695,16 @@ def _resolve_project_key(candidate: ReplyCandidate) -> str | None:
         if candidate_key and candidate_key.strip():
             return candidate_key
     return None
+
+
+def _ignores_relevance_threshold(candidate: ReplyCandidate) -> bool:
+    """True only for a JEV decision, whose action is the decision.
+
+    Deliberately narrow: an absent or llm decision keeps ordinary threshold
+    behaviour, so this can never widen into a general bypass.
+    """
+    decision = candidate.relevance_decision
+    return decision is not None and decision.classifier == "jev"
 
 
 def classify_outcome(
@@ -645,6 +744,7 @@ def classify_outcome(
             structured_draft=structured,
             critique=critique,
             contributor_phase_run_ids=candidate.contributor_phase_run_ids,
+            relevance_decision=candidate.relevance_decision,
         )
 
     # 1. Critic reject is an intentional terminal decision — it must not be
@@ -672,8 +772,10 @@ def classify_outcome(
         # its identity so persistence can pin the matching dossier summary.
         return _decision("not_relevant", project_key=_resolve_project_key(candidate))
 
-    # 4. Relevant but below the surfacing threshold.
-    if evaluation.score < RELEVANCE_THRESHOLD:
+    # 4. Relevant but below the surfacing threshold. A JEV decision carries
+    # an action, not a calibrated score, so the threshold does not apply to
+    # it — its 1.0/0.0 are compatibility values. Every gate below still runs.
+    if not _ignores_relevance_threshold(candidate) and evaluation.score < RELEVANCE_THRESHOLD:
         return _decision("low_relevance", project_key=_resolve_project_key(candidate))
 
     project_key = _resolve_project_key(candidate)
@@ -755,7 +857,71 @@ def persist_outcome(
     (only for critic_rejected), and gate violations (only for gate_blocked).
     Invariant violations on a surfaced decision raise as programming errors
     — they are not converted to a retryable scoring failure.
+
+    The whole write is one transaction so the evaluation, its contributor
+    phase-run links and its classifier provenance become durable together or
+    not at all: an evaluation nothing can explain is worse than no row.
+
+    A rate-limited surface is the one outcome that persists rows and then
+    reports a failure. persist_surfaced_outcome already raises it only after
+    its own block exits cleanly, precisely so those rows commit; this mirrors
+    that — the gate-blocked evaluation is a real evaluation, so it gets its
+    provenance recorded, the transaction commits, and the error is re-raised
+    outside it rather than rolling the durable gate block back.
     """
+    rate_limited: SurfaceRateLimitedError | None = None
+    with state.db.begin_immediate():
+        try:
+            evaluation_id = _persist_outcome_rows(state, decision, context)
+        except SurfaceRateLimitedError as error:
+            rate_limited = error
+            evaluation_id = error.persisted_evaluation_id
+        _record_relevance_decision(state, decision, evaluation_id)
+    if rate_limited is not None:
+        raise rate_limited
+    return evaluation_id
+
+
+def _record_relevance_decision(
+    state: StateManager, decision: OutcomeDecision, evaluation_id: int
+) -> None:
+    """Record what produced this evaluation's relevance verdict.
+
+    Absent on the human-override path, which makes no classifier call. A
+    refusal here fails the enclosing transaction rather than leaving an
+    evaluation whose provenance was silently dropped.
+    """
+    recorded = decision.relevance_decision
+    if recorded is None:
+        return
+    written = state.holdouts.record_decision(
+        RelevanceDecisionWrite(
+            evaluation_id=evaluation_id,
+            classifier=recorded.classifier,
+            model=recorded.model,
+            action=recorded.action,
+            reason=recorded.reason,
+            phase_run_id=recorded.phase_run_id,
+            catalogue_id=recorded.catalogue_id,
+            catalogue_version=recorded.catalogue_version,
+            router_version=recorded.router_version,
+            answers=dict(recorded.answers) if recorded.answers is not None else None,
+            decision=dict(recorded.decision) if recorded.decision is not None else None,
+        )
+    )
+    if isinstance(written, Err):
+        raise RuntimeError(
+            f"relevance decision provenance refused for evaluation "
+            f"{evaluation_id}: {written.error.detail}"
+        )
+
+
+def _persist_outcome_rows(
+    state: StateManager,
+    decision: OutcomeDecision,
+    context: PersistenceContext,
+) -> int:
+    """Write the evaluation rows themselves, inside the caller's transaction."""
     critique_pair = (
         (decision.critique.verdict, decision.critique.feedback)
         if decision.critique is not None
@@ -890,6 +1056,7 @@ async def score_messages(
                 exc_info=True,
             )
     shadow_tasks: set[asyncio.Task[int | None]] = set()
+    jev_runtime = build_jev_runtime()
 
     async def _settle_shadow_task(
         task: asyncio.Task[int | None], *, cancel: bool = False
@@ -1111,6 +1278,8 @@ async def score_messages(
                     "phase_configs": phase_configs,
                     "dossier_summaries": _dossiers,
                     "execution_context": execution_context,
+                    "projects": projects,
+                    "jev_runtime": jev_runtime,
                 },
             )
         except asyncio.CancelledError:

@@ -1,0 +1,109 @@
+# A made-up catalogue in the shape of the routed feature catalogue the JEV
+# router answers: the four routed noul features plus the exclusions, every
+# criteria mapping keyed by the literal strings true and false.
+#
+# Every word of the content here is invented, including the exclusion names.
+# The real catalogue is private and is not in this repository. This fixture
+# exists so the port has a redistributable input of the right shape; it is not
+# the real catalogue and it produces no real decision.
+#
+# Loading note: `true` and `false` are criteria keys, not booleans. A plain
+# yaml.safe_load turns them into Python True/False and the questions mapping
+# stops matching what the authoritative runs sent. The loader has to drop the
+# bool resolver. See docs/relevance-holdouts.md.
+id: routed-features-fixture
+decide: agent_ops_route/v1
+description: >-
+  A made-up catalogue in the shape of the routed feature catalogue: invented
+  exclusions and the four features the router reads. The wording is
+  placeholder; the real catalogue is private.
+state:
+  post: [platform, channel, url, text]
+  parent_context_only: [author_name, text]
+  author: [name, handle]
+  project: [key, name, description]
+questions:
+  excl_recipe:
+    type: noul
+    instructions: Is the post a cooking recipe?
+    criteria:
+      true:
+        what: It is a recipe.
+        examples:
+          - fold the butter in cold
+      false:
+        what: It is not a recipe.
+        examples:
+          - a note about retry budgets
+  excl_weather:
+    type: noul
+    instructions: Is the post about the weather?
+    criteria:
+      true:
+        what: It is about the weather.
+        examples:
+          - rain all week again
+      false:
+        what: It is not about the weather.
+        examples:
+          - a question about tool timeouts
+  excl_sports_score:
+    type: noul
+    instructions: Is the post a sports result?
+    criteria:
+      true:
+        what: It reports a sports result.
+        examples:
+          - three one at the whistle
+      false:
+        what: It does not report a sports result.
+        examples:
+          - a postmortem of a failed run
+  answerable_from_post:
+    type: noul
+    instructions: Can the post be answered from its own words?
+    criteria:
+      true:
+        what: The post carries what a reply would need.
+        examples:
+          - we cap tool calls at twelve and still see loops
+      false:
+        what: The post does not carry it.
+        examples:
+          - read this
+  about_agent_work:
+    type: noul
+    instructions: Is the post about running agents?
+    criteria:
+      true:
+        what: It is about agent work.
+        examples:
+          - our planner retries every failed step twice
+      false:
+        what: It is about something else.
+        examples:
+          - a note on css grid
+  points_somewhere:
+    type: noul
+    instructions: Does the post point at something on topic?
+    criteria:
+      true:
+        what: It points somewhere worth opening.
+        examples:
+          - a bare link to an incident writeup
+      false:
+        what: It points nowhere.
+        examples:
+          - a meme with no caption
+  needs_thread:
+    type: noul
+    instructions: Is the conversation above needed to judge the post?
+    criteria:
+      true:
+        what: The post depends on its parent.
+        examples:
+          - same here, ours does that too
+      false:
+        what: The post stands alone.
+        examples:
+          - a claim stated in full

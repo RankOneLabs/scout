@@ -271,3 +271,162 @@ class TestLeaseAndRecoveryConfig:
             SCOUT_LEASE_HEARTBEAT_SECONDS="30",
         )
         assert get_env_errors() == []
+
+
+class TestRelevanceClassifierConfig:
+    """RELEVANCE_CLASSIFIER and the JEV-only settings beside it.
+
+    These are module-level constants computed at import time, so each test
+    reloads scout.config under a patched environment.
+    """
+
+    _KEYS = (
+        "RELEVANCE_CLASSIFIER",
+        "TYPESAFE_API_KEY",
+        "TYPESAFE_BASE_URL",
+        "TYPESAFE_CATALOGUE_PATH",
+        "RELEVANCE_HOLDOUT_RATE",
+        "KEYWORD_PREFILTER",
+    )
+
+    @pytest.fixture(autouse=True)
+    def _reload_clean_afterward(self) -> None:
+        yield
+        import importlib
+
+        import scout.config as config_module
+
+        importlib.reload(config_module)
+        get_env_errors()
+
+    def _reload(self, monkeypatch: pytest.MonkeyPatch, **env: str) -> object:
+        import importlib
+
+        import scout.config as config_module
+
+        for key in self._KEYS:
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        get_env_errors()
+        return importlib.reload(config_module)
+
+    def test_classifier_defaults_to_llm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reloaded = self._reload(monkeypatch)
+        assert reloaded.RELEVANCE_CLASSIFIER == "llm"
+        assert get_env_errors() == []
+
+    def test_classifier_accepts_jev(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reloaded = self._reload(monkeypatch, RELEVANCE_CLASSIFIER="jev")
+        assert reloaded.RELEVANCE_CLASSIFIER == "jev"
+        assert get_env_errors() == []
+
+    def test_an_unknown_classifier_records_an_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch, RELEVANCE_CLASSIFIER="gemini")
+        assert reloaded.RELEVANCE_CLASSIFIER == "llm"
+        assert any("RELEVANCE_CLASSIFIER" in error for error in get_env_errors())
+
+    def test_base_url_defaults_to_the_public_endpoint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch)
+        assert reloaded.TYPESAFE_BASE_URL == "https://api.typesafe.ai"
+
+    def test_base_url_trailing_slash_is_trimmed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch, TYPESAFE_BASE_URL="https://ts.internal/")
+        assert reloaded.TYPESAFE_BASE_URL == "https://ts.internal"
+
+    def test_holdout_rate_defaults_to_one_tenth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch)
+        assert reloaded.RELEVANCE_HOLDOUT_RATE == 0.1
+
+    def test_an_out_of_range_holdout_rate_records_an_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch, RELEVANCE_HOLDOUT_RATE="1.5")
+        assert reloaded.RELEVANCE_HOLDOUT_RATE == 0.1
+        assert any("RELEVANCE_HOLDOUT_RATE" in error for error in get_env_errors())
+
+    def _jev_errors(self, monkeypatch: pytest.MonkeyPatch, **env: str) -> list[str]:
+        """Patch the already-imported config module rather than reloading
+        scout.scanning.runner: validate_jev_config reads `_config.X` at call
+        time, and reloading the runner rebinds objects other modules hold."""
+        import scout.config as config_module
+        from scout.scanning.runner import validate_jev_config
+
+        settings: dict[str, object] = {
+            "RELEVANCE_CLASSIFIER": "jev",
+            "TYPESAFE_API_KEY": env.get("TYPESAFE_API_KEY", ""),
+            "TYPESAFE_BASE_URL": env.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai"),
+            "KEYWORD_PREFILTER": env.get("KEYWORD_PREFILTER", "true") == "true",
+        }
+        for name, value in settings.items():
+            monkeypatch.setattr(config_module, name, value)
+        catalogue_path = env.get("TYPESAFE_CATALOGUE_PATH", "")
+        if catalogue_path:
+            monkeypatch.setenv("TYPESAFE_CATALOGUE_PATH", catalogue_path)
+            monkeypatch.setattr(config_module, "TYPESAFE_CATALOGUE_PATH", catalogue_path)
+        else:
+            monkeypatch.delenv("TYPESAFE_CATALOGUE_PATH", raising=False)
+        return validate_jev_config()
+
+    def test_llm_needs_no_jev_configuration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import scout.config as config_module
+        from scout.scanning.runner import validate_jev_config
+
+        monkeypatch.setattr(config_module, "RELEVANCE_CLASSIFIER", "llm")
+        assert validate_jev_config() == []
+
+    def test_jev_requires_an_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        errors = self._jev_errors(monkeypatch)
+        assert any("TYPESAFE_API_KEY" in error for error in errors)
+
+    def test_jev_requires_an_explicit_catalogue_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        errors = self._jev_errors(monkeypatch, TYPESAFE_API_KEY="k")
+        assert any("TYPESAFE_CATALOGUE_PATH" in error for error in errors)
+
+    def test_jev_requires_the_keyword_prefilter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        errors = self._jev_errors(
+            monkeypatch, TYPESAFE_API_KEY="k", KEYWORD_PREFILTER="false"
+        )
+        assert any("KEYWORD_PREFILTER" in error for error in errors)
+
+    def test_jev_rejects_a_non_http_base_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        errors = self._jev_errors(
+            monkeypatch, TYPESAFE_API_KEY="k", TYPESAFE_BASE_URL="ftp://ts.internal"
+        )
+        assert any("TYPESAFE_BASE_URL" in error for error in errors)
+
+    def test_jev_rejects_an_unloadable_catalogue(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        errors = self._jev_errors(
+            monkeypatch,
+            TYPESAFE_API_KEY="k",
+            TYPESAFE_CATALOGUE_PATH="tests/fixtures/relevance/missing.yaml",
+        )
+        assert any("not a usable JEV catalogue" in error for error in errors)
+
+    def test_a_fully_configured_jev_deployment_is_clean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        errors = self._jev_errors(
+            monkeypatch,
+            TYPESAFE_API_KEY="k",
+            TYPESAFE_CATALOGUE_PATH="tests/fixtures/relevance/routed-features.fixture.yaml",
+        )
+        assert errors == []

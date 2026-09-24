@@ -419,6 +419,14 @@ def build_fixture_source_database(db_path: Path) -> None:
             feedback = SQLiteFeedbackLoop(db_path=str(Path(jig_tmp) / "feedback.db"))
             asyncio.run(_seed_and_run_experiment_batch(state, tracer, feedback))
 
+    # This immutable PAA source fixture predates the relevance retry tables.
+    # They contain no fixture data and must not change its pinned logical hash.
+    with sqlite3.connect(db_path) as conn:
+        for table in ("relevance_holdouts", "relevance_decisions"):
+            if conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]:  # noqa: S608
+                raise ReferenceGenerationError(f"unexpected fixture rows in {table}")
+            conn.execute(f"DROP TABLE {table}")  # noqa: S608
+
 
 # build_fixture_source_database's own qualified name — recorded as the
 # fixture database's manifest "source path" in place of a real filesystem
