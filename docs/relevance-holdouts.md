@@ -4,17 +4,41 @@ Scout gains a second relevance classifier (JEV, answered by Typesafe System One)
 and durable evidence for the decision it produces, so a sampled holdout can be
 exported for blind grading and released later against stored labels.
 
-This document is the contract record for that work. It states the confirmed
-semantics, the exact request and state the classifier is given, the storage that
-keeps a decision explainable, and the interchange Scout and assay share. The
-product choices it once listed as open were settled in the cutover specification
-and are recorded here as settled.
+This document is the contract record for that work. It records the proposed
+semantics, request, storage, and Scout/assay interchange for owner review.
+The four product choices and the exact packet, label, and private answer-key
+contract still need explicit confirmation from the project owner and assay.
+Dependent implementation and merging remain blocked until that confirmation is
+recorded here.
+
+## Confirmation status
+
+**Pending owner and assay confirmation.** The cutover specification proposes
+the following four choices; it is not evidence that the owner accepted them:
+
+1. JEV requires keyword prefiltering. An unexpected unrouted post fails
+   retryably before the HTTP request, while LLM routing keeps its current behavior.
+2. JEV stores compatibility scores of 1.0 for `respond` and `review`, and 0.0
+   for `drop`. These values are not calibrated confidence.
+3. LLM stores `respond` only when relevant and at or above the threshold in
+   force at decision time; otherwise it stores `drop`. It never stores `review`.
+4. Holdout export extends the population record with stable holdout,
+   evaluation, post, and frozen project identity; a private envelope isolates
+   the production decision. Labels must join on stable identity, not row order
+   or URL. The precise packet, label, and private answer-key fields and label
+   precedence are pending agreement with assay.
+
+The two schemas under `contracts/relevance/` are **proposals**, not accepted
+interchange contracts. In particular, the current label schema has no frozen
+project identity, and there is no answer-key schema. Both gaps need resolution
+before export or release implementation. The proposed label precedence is last
+by `labelled_at`, rejecting ties; assay has not confirmed it. No private
+catalogue or private packet belongs in this repository.
 
 ## Where the decisions come from
 
-`comms/jev-cutover-spec.md` (2026-09-23) is the specification of record for
-everything in this document. It is gitignored in Scout, so it is not readable
-from a checkout; this document is the committed statement of what it decided.
+`comms/jev-cutover-spec.md` (2026-09-23) is a local proposal for this work.
+It is gitignored in Scout and cannot serve as a reviewable owner approval.
 
 `route()`, `build_state()` and the catalogue loader are ported from
 `RankOneLabs/assay`, `experiments/typesafe_relevance/`, at commit
@@ -243,11 +267,12 @@ A hold references an immutable source evaluation. A released outcome that drafts
 gets a distinct target evaluation, uniquely linked back to the hold, so the
 original decision survives release rather than being overwritten.
 
-The row carries `held_at`, `released_at`, the claim token and lease, the release
-authority and value, label and key provenance, target identity, attempt and error
-state, and the frozen post, parent, author, project, route and dossier identity
-the decision was made against. Freezing the input identity is what lets a label
-join to the case it was written for.
+The current row carries `held_at`, `released_at`, the claim token and lease, the
+release authority and value, a label source string, target identity, attempt
+and error state, and the frozen post, parent, author, project, route and dossier
+identity. Structured packet, label, and key provenance is still required before
+release can use this storage. Freezing the input identity lets a label join to
+the case it was written for once the interchange is agreed.
 
 Claims are compare-and-swap with a fence. A stale or competing completion is
 rejected; a committed completion is idempotently readable, so a retry after a
@@ -274,11 +299,12 @@ It is one named key so a blind projection can drop it and be checked, in the way
 assay's packet builder projects a blind case and then asserts nothing on its
 denylist survived.
 
-Labels join on `holdout_id` and `evaluation_id` against the frozen project, never
-on row order and never on URL alone. A label whose identity does not match a
-pending hold is rejected rather than guessed at. When the same case carries more
-than one label, the last by `labelled_at` wins, and ties are rejected rather than
-broken arbitrarily.
+The proposed join uses `holdout_id` and `evaluation_id` against the frozen
+project, never row order or URL alone. The current label schema lacks a project
+field, so this proposed check cannot yet be implemented. The proposed duplicate
+rule takes the last `labelled_at` and rejects ties. Assay must confirm these
+rules and the packet and answer-key fields before either schema is treated as
+an interchange contract.
 
 ## What Scout already had
 
@@ -340,9 +366,10 @@ run, without evaluating the post.
 `snapshot_phase_id` is `NOT NULL` and references `feedback_snapshot_phases`,
 whose payload is rendered feedback text injected into a phase prompt. A JEV call
 injects no feedback text. The row exists for every scan and the JEV run cites the
-scan's relevance snapshot phase, which records which snapshot was in force at
-decision time without implying the text was used. This is the one place where a
-JEV run's evidence means something narrower than an LLM run's.
+scan's relevance snapshot phase. For JEV this reference records only the scan's
+snapshot identity at decision time; it does not show that JEV received, read, or
+used the snapshot payload. Consumers must not interpret it as prompt feedback
+provenance for JEV.
 
 ### Classifier provenance
 
@@ -360,8 +387,10 @@ means unknown, and reads as unknown.
 
 Neither redistributable catalogue at the pinned assay revision is in the form
 `route()` consumes: `band-form.yaml` is the band-era catalogue feeding
-`mappings.decide_argmax`, and `label-form.yaml` is the human label form. So Scout
-carries an invented one, at `tests/fixtures/relevance/`:
+`mappings.decide_argmax`, and `label-form.yaml` is the human label form. Scout
+currently carries an invented candidate at `tests/fixtures/relevance/`. The
+project owner and assay still need to agree that it is the synthetic fixture
+for response and interchange tests:
 
 - `routed-features.fixture.yaml`, an invented catalogue in the authoritative
   routed shape: the four routed `noul` features, three invented exclusions,
