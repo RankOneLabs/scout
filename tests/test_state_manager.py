@@ -1449,3 +1449,112 @@ class TestOperatorFactReadModel:
         assert row["outcome"] == "accepted"
         assert row["policy"] is None
         assert row["created_at"] is not None
+
+
+class TestHeldStatusMigration:
+    """v48 rebuilds `evaluations` to admit 'held'. A populated database must
+    cross that rebuild with every row, id and contributor link intact."""
+
+    def _build_v47_populated_db(self, db_path: str) -> dict[str, int]:
+        conn = _build_legacy_conn_at_version(db_path, 47)
+        now = "2026-09-20T00:00:00+00:00"
+        conn.execute(
+            "INSERT INTO scans (id, started_at, status) VALUES (1, ?, 'complete')",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO posts (id, platform, platform_msg_id, channel_name, author_name, "
+            "content, created_at, scan_id) "
+            "VALUES (1, 'farcaster', '0xabc', 'agents', 'Ada', 'a post', ?, 1)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO evaluations (id, post_id, relevant, score, reason, scan_id, "
+            "created_at, surface_status) "
+            "VALUES (7, 1, 1, 0.9, 'because', 1, ?, 'surfaced')",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO feedback_snapshots (id, scan_id, policy_version, mode, as_of, "
+            "lookback_days, max_grades, segment_min_grades, note_max_chars, "
+            "relevance_token_budget, reply_draft_token_budget, critic_token_budget, "
+            "population_count, eligible_count, excluded_count, created_at) "
+            "VALUES (1, 1, 'evaluation-feedback/v1', 'shadow', ?, 90, 200, 5, 240, "
+            "800, 800, 1000, 0, 0, 0, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO feedback_snapshot_phases (id, snapshot_id, phase, token_budget, "
+            "token_estimate, truncated, structured_summary, rendered_text, "
+            "rendered_sha256, created_at) "
+            "VALUES (1, 1, 'relevance', 800, 0, 0, '{}', '', 'x', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO evaluation_phase_runs (id, scan_id, post_id, evaluation_id, "
+            "snapshot_phase_id, phase, trace_id, model, status, created_at) "
+            "VALUES (3, 1, 1, 7, 1, 'relevance', 'trace-1', 'claude-sonnet-4-6', "
+            "'complete', ?)",
+            (now,),
+        )
+        conn.execute("PRAGMA user_version = 47")
+        conn.commit()
+        conn.close()
+        return {"evaluation_id": 7, "phase_run_id": 3}
+
+    def test_populated_upgrade_preserves_evaluations_and_links(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        db_path = str(tmp_path / "v47.db")
+        seeded = self._build_v47_populated_db(db_path)
+        with StateManager(db_path=db_path) as state:
+            row = state.conn.execute(
+                "SELECT id, score, surface_status FROM evaluations"
+            ).fetchone()
+            assert (row["id"], row["score"], row["surface_status"]) == (
+                seeded["evaluation_id"],
+                0.9,
+                "surfaced",
+            )
+            link = state.conn.execute(
+                "SELECT evaluation_id FROM evaluation_phase_runs WHERE id = ?",
+                (seeded["phase_run_id"],),
+            ).fetchone()
+            assert link["evaluation_id"] == seeded["evaluation_id"]
+
+    def test_populated_upgrade_accepts_held(self, tmp_path: pathlib.Path) -> None:
+        db_path = str(tmp_path / "v47-held.db")
+        self._build_v47_populated_db(db_path)
+        with StateManager(db_path=db_path) as state:
+            with state.db.begin_immediate():
+                state.conn.execute(
+                    "INSERT INTO evaluations (post_id, relevant, score, scan_id, "
+                    "surface_status) VALUES (1, 1, 1.0, 1, 'held')"
+                )
+            statuses = {
+                row["surface_status"]
+                for row in state.conn.execute("SELECT surface_status FROM evaluations")
+            }
+            assert statuses == {"surfaced", "held"}
+
+    def test_historical_classifier_provenance_stays_unknown(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Nothing identifies which classifier produced a pre-JEV evaluation,
+        so the migration invents no provenance for one."""
+        db_path = str(tmp_path / "v47-provenance.db")
+        seeded = self._build_v47_populated_db(db_path)
+        with StateManager(db_path=db_path) as state:
+            assert state.holdouts.get_decision(seeded["evaluation_id"]) is None
+            count = state.conn.execute(
+                "SELECT COUNT(*) AS n FROM relevance_decisions"
+            ).fetchone()["n"]
+            assert count == 0
+
+    def test_populated_upgrade_leaves_foreign_keys_clean(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        db_path = str(tmp_path / "v47-fk.db")
+        self._build_v47_populated_db(db_path)
+        with StateManager(db_path=db_path) as state:
+            assert state.conn.execute("PRAGMA foreign_key_check").fetchall() == []

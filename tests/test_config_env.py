@@ -354,25 +354,36 @@ class TestRelevanceClassifierConfig:
         assert any("RELEVANCE_HOLDOUT_RATE" in error for error in get_env_errors())
 
     def _jev_errors(self, monkeypatch: pytest.MonkeyPatch, **env: str) -> list[str]:
-        import importlib
+        """Patch the already-imported config module rather than reloading
+        scout.scanning.runner: validate_jev_config reads `_config.X` at call
+        time, and reloading the runner rebinds objects other modules hold."""
+        import scout.config as config_module
+        from scout.scanning.runner import validate_jev_config
 
-        import scout.scanning.runner as runner_module
-
-        self._reload(monkeypatch, RELEVANCE_CLASSIFIER="jev", **env)
-        importlib.reload(runner_module)
-        errors: list[str] = runner_module.validate_jev_config()
-        return errors
+        settings: dict[str, object] = {
+            "RELEVANCE_CLASSIFIER": "jev",
+            "TYPESAFE_API_KEY": env.get("TYPESAFE_API_KEY", ""),
+            "TYPESAFE_BASE_URL": env.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai"),
+            "KEYWORD_PREFILTER": env.get("KEYWORD_PREFILTER", "true") == "true",
+        }
+        for name, value in settings.items():
+            monkeypatch.setattr(config_module, name, value)
+        catalogue_path = env.get("TYPESAFE_CATALOGUE_PATH", "")
+        if catalogue_path:
+            monkeypatch.setenv("TYPESAFE_CATALOGUE_PATH", catalogue_path)
+            monkeypatch.setattr(config_module, "TYPESAFE_CATALOGUE_PATH", catalogue_path)
+        else:
+            monkeypatch.delenv("TYPESAFE_CATALOGUE_PATH", raising=False)
+        return validate_jev_config()
 
     def test_llm_needs_no_jev_configuration(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import importlib
+        import scout.config as config_module
+        from scout.scanning.runner import validate_jev_config
 
-        import scout.scanning.runner as runner_module
-
-        self._reload(monkeypatch)
-        importlib.reload(runner_module)
-        assert runner_module.validate_jev_config() == []
+        monkeypatch.setattr(config_module, "RELEVANCE_CLASSIFIER", "llm")
+        assert validate_jev_config() == []
 
     def test_jev_requires_an_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         errors = self._jev_errors(monkeypatch)

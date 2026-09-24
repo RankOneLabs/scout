@@ -415,10 +415,16 @@ class ScoutPipelineAdapter(LLMClient):  # type: ignore[misc]
         structured_draft = (
             decision.structured_draft.model_dump() if decision.structured_draft else None
         )
+        # 'held' is in the persisted surface-status vocabulary but is never a
+        # classification: a post is sampled into a holdout after it is
+        # classified, and this harness does not sample. Narrowed here so the
+        # eval's observed vocabulary stays what it can actually observe.
+        terminal_status = decision.status
+        assert terminal_status != "held", "classify_outcome must not produce 'held'"
         return Phase1RunOutput(
             case_id=case.id,
             case_kind="scout_response",
-            terminal_status=decision.status,
+            terminal_status=terminal_status,
             source_relevant=decision.evaluation.relevant,
             project_key=decision.project_key,
             posture=decision.posture,

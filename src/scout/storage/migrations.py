@@ -3196,6 +3196,71 @@ def _migrate_to_47(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_48(conn: sqlite3.Connection) -> None:
+    """Relevance holdouts, decision provenance, and the `held` status (v48).
+
+    `surface_status` is a CHECK constraint, so admitting 'held' means
+    rebuilding `evaluations`. Every column and every row is carried across
+    verbatim, ids included, so `draft_comments`, `critiques`,
+    `surfaced_events`, `grades` and `evaluation_phase_runs` keep pointing at
+    the same evaluations they did before. Nothing is reclassified: this
+    migration adds a status no existing row can be in.
+
+    Classifier provenance lands in its own table rather than as columns here.
+    No stored fact identifies which classifier produced a pre-JEV evaluation,
+    so there is nothing to backfill; an absent `relevance_decisions` row is
+    the honest representation of that, and reads as unknown.
+    """
+    from scout.storage.schema import (
+        RELEVANCE_DECISION_SCHEMA_STATEMENTS,
+        RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS,
+    )
+
+    columns = [row["name"] for row in conn.execute("PRAGMA table_info(evaluations)")]
+    names = ", ".join(columns)
+
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("ALTER TABLE evaluations RENAME TO evaluations_v47")
+    conn.execute("""
+        CREATE TABLE evaluations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            relevant INTEGER NOT NULL,
+            score REAL NOT NULL,
+            reason TEXT,
+            relevant_to TEXT,
+            keyword_route_id INTEGER,
+            scan_id INTEGER,
+            created_at TEXT,
+            project_key TEXT,
+            posture TEXT,
+            abstain_reason TEXT,
+            surface_status TEXT NOT NULL CHECK(surface_status IN (
+              'surfaced', 'low_relevance', 'abstained', 'critic_rejected',
+              'gate_blocked', 'not_relevant', 'drafting_failed', 'held'
+            )),
+            failure_reason TEXT,
+            dossier_summary_id TEXT,
+            dossier_revision TEXT,
+            FOREIGN KEY (post_id) REFERENCES posts(id),
+            FOREIGN KEY (keyword_route_id) REFERENCES project_keywords(id)
+        )
+    """)
+    conn.execute(
+        f"INSERT INTO evaluations ({names}) SELECT {names} FROM evaluations_v47"  # noqa: S608
+    )
+    conn.execute("DROP TABLE evaluations_v47")
+    conn.execute("CREATE INDEX IF NOT EXISTS evaluations_scan_id_idx ON evaluations(scan_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS evaluations_post_id_idx ON evaluations(post_id)")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+
+    for statement in (
+        *RELEVANCE_DECISION_SCHEMA_STATEMENTS,
+        *RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS,
+    ):
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3243,4 +3308,5 @@ MIGRATIONS: dict[int, Migration] = {
     45: _migrate_to_45,
     46: _migrate_to_46,
     47: _migrate_to_47,
+    48: _migrate_to_48,
 }

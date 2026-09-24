@@ -598,6 +598,10 @@ SurfaceStatus = Literal[
     "gate_blocked",
     "not_relevant",
     "drafting_failed",
+    # Decided and recorded, then held back from surfacing for blind grading.
+    # Not surfaced, and not ready for drafting. classify_outcome never
+    # produces it; sampling into it belongs to the holdout work.
+    "held",
 ]
 
 

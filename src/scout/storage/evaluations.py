@@ -41,9 +41,13 @@ from scout.storage.experiment_plan import expected_experiment_pairs
 from scout.storage.unit_of_work import UnitOfWork
 from scout.verifier import GateViolation
 
+# 'held' is a lifecycle state of its own: decided, recorded, and held back
+# from surfacing for blind grading. It is neither surfaced nor ready for
+# drafting. Sampling into it belongs to the holdout work; this vocabulary
+# only makes the state persistable. See docs/relevance-holdouts.md.
 SURFACE_STATUSES: frozenset[str] = frozenset({
     "surfaced", "low_relevance", "abstained", "critic_rejected",
-    "gate_blocked", "not_relevant", "drafting_failed",
+    "gate_blocked", "not_relevant", "drafting_failed", "held",
 })
 
 # Canonical phase execution order. Ordinary model-scored evaluations use a
