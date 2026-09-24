@@ -238,9 +238,7 @@ def _holdout_row(row: sqlite3.Row) -> Holdout:
         label_provenance=(
             None if label_json is None else LabelProvenance(**json.loads(label_json))
         ),
-        key_provenance=(
-            None if key_json is None else KeyProvenance(**json.loads(key_json))
-        ),
+        key_provenance=(None if key_json is None else KeyProvenance(**json.loads(key_json))),
     )
 
 
@@ -321,6 +319,58 @@ class HoldoutStore:
         """
         try:
             with self._uow.begin_immediate():
+                source = self._conn.execute(
+                    "SELECT e.post_id, e.scan_id, e.project_key, e.surface_status, "
+                    "e.keyword_route_id, e.dossier_summary_id, e.dossier_revision, "
+                    "p.platform, p.platform_msg_id, p.url, p.channel_name, "
+                    "p.content, p.parent_author_name, p.parent_text, "
+                    "p.author_id, p.author_name "
+                    "FROM evaluations e JOIN posts p ON p.id = e.post_id "
+                    "WHERE e.id = ?",
+                    (write.evaluation_id,),
+                ).fetchone()
+                expected = {
+                    "post_id": write.post_id,
+                    "scan_id": write.scan_id,
+                    "project_key": write.project_key,
+                    "platform": write.frozen_input.platform,
+                    "platform_msg_id": write.frozen_input.platform_id,
+                    "url": write.frozen_input.url,
+                    "channel_name": write.frozen_input.channel,
+                    "content": write.frozen_input.text,
+                    "parent_author_name": write.frozen_input.parent_author_name,
+                    "parent_text": write.frozen_input.parent_text,
+                    "author_id": write.frozen_input.author_id,
+                    "author_name": write.frozen_input.author_name,
+                    "keyword_route_id": write.frozen_input.keyword_route_id,
+                    "dossier_summary_id": write.frozen_input.dossier_summary_id,
+                    "dossier_revision": write.frozen_input.dossier_revision,
+                }
+                if source is None or source["surface_status"] != "held":
+                    return Err(
+                        HoldoutStorageError(
+                            operation="hold",
+                            detail="source evaluation must be held",
+                            evaluation_id=write.evaluation_id,
+                        )
+                    )
+                if write.frozen_input.project_key != write.project_key:
+                    return Err(
+                        HoldoutStorageError(
+                            operation="hold",
+                            detail="frozen project_key does not match hold",
+                            evaluation_id=write.evaluation_id,
+                        )
+                    )
+                for field, value in expected.items():
+                    if source[field] != value:
+                        return Err(
+                            HoldoutStorageError(
+                                operation="hold",
+                                detail=f"source {field} does not match hold",
+                                evaluation_id=write.evaluation_id,
+                            )
+                        )
                 self._conn.execute(
                     "INSERT INTO relevance_holdouts "
                     "(evaluation_id, post_id, scan_id, project_key, status, held_at, "
@@ -415,9 +465,7 @@ class HoldoutStore:
                     else f"holdout is {existing.status} and not claimable"
                 )
                 return Err(
-                    HoldoutStorageError(
-                        operation="claim", detail=detail, holdout_id=holdout_id
-                    )
+                    HoldoutStorageError(operation="claim", detail=detail, holdout_id=holdout_id)
                 )
             claimed = self.get(holdout_id)
         assert claimed is not None and claimed.claim_expires_at is not None
@@ -471,9 +519,36 @@ class HoldoutStore:
                     holdout_id=claim.holdout_id,
                 )
             )
+        if release_authority == "label" and (label_provenance is None or key_provenance is None):
+            return Err(
+                HoldoutStorageError(
+                    operation="complete_release",
+                    detail="release_authority='label' requires label and key provenance",
+                    holdout_id=claim.holdout_id,
+                )
+            )
 
         try:
             with self._uow.begin_immediate():
+                if target_evaluation_id is not None:
+                    held = self.get(claim.holdout_id)
+                    target = self._conn.execute(
+                        "SELECT post_id FROM evaluations WHERE id = ?",
+                        (target_evaluation_id,),
+                    ).fetchone()
+                    if (
+                        held is not None
+                        and target is not None
+                        and (target["post_id"] != held.post_id)
+                    ):
+                        return Err(
+                            HoldoutStorageError(
+                                operation="complete_release",
+                                detail="target evaluation belongs to another post",
+                                holdout_id=claim.holdout_id,
+                                evaluation_id=target_evaluation_id,
+                            )
+                        )
                 cursor = self._conn.execute(
                     "UPDATE relevance_holdouts "
                     "SET status = 'released', released_at = ?, "
@@ -562,8 +637,7 @@ class HoldoutStore:
                 HoldoutStorageError(
                     operation="complete_release",
                     detail=(
-                        f"claim fence {claim.fence} is stale; holdout is at "
-                        f"{current.claim_fence}"
+                        f"claim fence {claim.fence} is stale; holdout is at {current.claim_fence}"
                     ),
                     holdout_id=claim.holdout_id,
                 )
@@ -600,6 +674,5 @@ class HoldoutStore:
         an absent hold.
         """
         return [
-            (holdout, self.get_decision(holdout.evaluation_id))
-            for holdout in self.list_pending()
+            (holdout, self.get_decision(holdout.evaluation_id)) for holdout in self.list_pending()
         ]

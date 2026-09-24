@@ -79,6 +79,8 @@ def _evaluation(
         scan_id,
         surface_status=surface_status,
         project_key="agent-ops",
+        dossier_summary_id="d1",
+        dossier_revision="r1",
     )
     return evaluation_id, post_id, scan_id
 
@@ -96,6 +98,30 @@ def _hold(state: StateManager, platform_id: str = "0xabc"):
     )
     assert isinstance(held, Ok), held
     return held.value
+
+
+def _provenance(evaluation_id: int) -> tuple[LabelProvenance, KeyProvenance]:
+    return (
+        LabelProvenance(
+            format="assay.label-packet-labels/v3",
+            packet="fixture",
+            packet_digest="a" * 64,
+            plan_digest="b" * 64,
+            case_id=7,
+            reviewer="reviewer",
+            saved_at="2026-09-24T00:00:00Z",
+        ),
+        KeyProvenance(
+            format="assay.label-packet-key/v2",
+            name="fixture",
+            digest="a" * 64,
+            plan_digest="b" * 64,
+            sitting="first",
+            case_id=7,
+            evaluation_id=evaluation_id,
+            project_key="agent-ops",
+        ),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -189,8 +215,11 @@ def test_successful_decisions_have_distinct_stable_ids_and_selection(sm: StateMa
     for evaluation_id, selected in ((first, True), (second, False)):
         result = sm.holdouts.record_decision(
             RelevanceDecisionWrite(
-                evaluation_id=evaluation_id, classifier="llm", model="m",
-                action="respond", selected_for_holdout=selected,
+                evaluation_id=evaluation_id,
+                classifier="llm",
+                model="m",
+                action="respond",
+                selected_for_holdout=selected,
             )
         )
         assert isinstance(result, Ok)
@@ -225,6 +254,55 @@ def test_a_hold_starts_pending_and_freezes_its_input(sm: StateManager) -> None:
     assert held.status == "pending"
     assert held.released_at is None
     assert held.frozen_input == _frozen()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "post_id",
+        "scan_id",
+        "project_key",
+        "platform_id",
+        "text",
+        "dossier_revision",
+    ],
+)
+def test_a_hold_rejects_mismatched_source_identity(sm: StateManager, change: str) -> None:
+    evaluation_id, post_id, scan_id = _evaluation(sm)
+    frozen = _frozen()
+    values = {
+        "evaluation_id": evaluation_id,
+        "post_id": post_id,
+        "scan_id": scan_id,
+        "project_key": "agent-ops",
+        "frozen_input": frozen,
+    }
+    if change == "post_id":
+        _, values["post_id"], _ = _evaluation(sm, platform_id="0xother")
+    elif change == "scan_id":
+        values["scan_id"] = sm.start_scan(environment="test")
+    elif change == "project_key":
+        values["project_key"] = "other"
+    else:
+        values["frozen_input"] = replace(frozen, **{change: "other"})
+    result = sm.holdouts.hold(HoldoutWrite(**values))
+    assert isinstance(result, Err)
+    assert sm.holdouts.get_by_evaluation(evaluation_id) is None
+
+
+def test_a_hold_requires_a_held_source_evaluation(sm: StateManager) -> None:
+    evaluation_id, post_id, scan_id = _evaluation(sm, surface_status="surfaced")
+    result = sm.holdouts.hold(
+        HoldoutWrite(
+            evaluation_id=evaluation_id,
+            post_id=post_id,
+            scan_id=scan_id,
+            project_key="agent-ops",
+            frozen_input=_frozen(),
+        )
+    )
+    assert isinstance(result, Err)
+    assert "must be held" in result.error.detail
 
 
 def test_one_source_evaluation_cannot_acquire_two_holds(sm: StateManager) -> None:
@@ -316,31 +394,53 @@ def test_evaluation_hold_decision_and_contributor_link_roll_back_together(
     with pytest.raises(RuntimeError, match="injected"), sm.db.begin_immediate():
         evaluation_id = sm.evaluations.persist_terminal_outcome(
             RelevanceResult(message=message, relevant=False, score=0.0, reason="drop"),
-            post_id, scan_id, surface_status="held", contributor_phase_run_ids=[run_id],
+            post_id,
+            scan_id,
+            surface_status="held",
+            contributor_phase_run_ids=[run_id],
             project_key="agent-ops",
         )
-        assert isinstance(sm.holdouts.record_decision(RelevanceDecisionWrite(
-            evaluation_id=evaluation_id, classifier="llm", model="m", action="drop",
-            selected_for_holdout=True,
-        )), Ok)
-        assert isinstance(sm.holdouts.hold(HoldoutWrite(
-            evaluation_id=evaluation_id, post_id=post_id, scan_id=scan_id,
-            frozen_input=_frozen("0xatomic"), project_key="agent-ops",
-        )), Ok)
+        assert isinstance(
+            sm.holdouts.record_decision(
+                RelevanceDecisionWrite(
+                    evaluation_id=evaluation_id,
+                    classifier="llm",
+                    model="m",
+                    action="drop",
+                    selected_for_holdout=True,
+                )
+            ),
+            Ok,
+        )
+        assert isinstance(
+            sm.holdouts.hold(
+                HoldoutWrite(
+                    evaluation_id=evaluation_id,
+                    post_id=post_id,
+                    scan_id=scan_id,
+                    frozen_input=replace(
+                        _frozen("0xatomic"), dossier_summary_id=None, dossier_revision=None
+                    ),
+                    project_key="agent-ops",
+                )
+            ),
+            Ok,
+        )
         raise RuntimeError("injected")
     assert sm.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == before
     assert sm.conn.execute("SELECT COUNT(*) FROM relevance_holdouts").fetchone()[0] == 0
-    assert sm.conn.execute(
-        "SELECT evaluation_id FROM evaluation_phase_runs WHERE id = ?", (run_id,)
-    ).fetchone()[0] is None
+    assert (
+        sm.conn.execute(
+            "SELECT evaluation_id FROM evaluation_phase_runs WHERE id = ?", (run_id,)
+        ).fetchone()[0]
+        is None
+    )
 
 
 def test_two_holds_cannot_share_one_release_target(sm: StateManager) -> None:
     first = _hold(sm, "0xone")
-    second = _hold(sm, "0xtwo")
-    target, _post_id, _scan_id = _evaluation(
-        sm, platform_id="0xtarget", surface_status="surfaced"
-    )
+    second = _hold(sm, "0xone")
+    target, _post_id, _scan_id = _evaluation(sm, platform_id="0xone", surface_status="surfaced")
     for held in (first, second):
         claim = sm.holdouts.claim(held.id, owner="releaser")
         assert isinstance(claim, Ok)
@@ -367,6 +467,22 @@ def test_a_hold_cannot_target_its_own_source_evaluation(sm: StateManager) -> Non
         target_evaluation_id=held.evaluation_id,
     )
     assert isinstance(result, Err)
+
+
+def test_release_rejects_target_evaluation_for_another_post(sm: StateManager) -> None:
+    held = _hold(sm)
+    target, _, _ = _evaluation(sm, platform_id="0xother", surface_status="surfaced")
+    claim = sm.holdouts.claim(held.id, owner="releaser")
+    assert isinstance(claim, Ok)
+    result = sm.holdouts.complete_release(
+        claim.value,
+        release_authority="recorded_action",
+        release_action="respond",
+        target_evaluation_id=target,
+    )
+    assert isinstance(result, Err)
+    assert "another post" in result.error.detail
+    assert sm.holdouts.get(held.id).status == "claimed"
 
 
 # --------------------------------------------------------------------------
@@ -515,6 +631,7 @@ def test_each_label_releases_to_its_confirmed_action(
     held = _hold(sm, f"0x{label}")
     claim = sm.holdouts.claim(held.id, owner="releaser")
     assert isinstance(claim, Ok)
+    label_provenance, key_provenance = _provenance(held.evaluation_id)
     released = sm.holdouts.complete_release(
         claim.value,
         release_authority="label",
@@ -522,6 +639,8 @@ def test_each_label_releases_to_its_confirmed_action(
         label=label,  # type: ignore[arg-type]
         label_source="packet-1",
         labelled_at="2026-09-24T00:00:00+00:00",
+        label_provenance=label_provenance,
+        key_provenance=key_provenance,
     )
     assert isinstance(released, Ok)
     assert released.value.release_action == action
@@ -531,24 +650,37 @@ def test_release_retains_structured_label_and_key_provenance(sm: StateManager) -
     held = _hold(sm)
     claim = sm.holdouts.claim(held.id, owner="releaser")
     assert isinstance(claim, Ok)
-    label_provenance = LabelProvenance(
-        format="assay.label-packet-labels/v3", packet="fixture", packet_digest="a" * 64,
-        plan_digest="b" * 64, case_id=7, reviewer="reviewer",
-        saved_at="2026-09-24T00:00:00Z",
-    )
-    key_provenance = KeyProvenance(
-        format="assay.label-packet-key/v2", name="fixture", digest="a" * 64,
-        plan_digest="b" * 64, sitting="first", case_id=7,
-        evaluation_id=held.evaluation_id, project_key="agent-ops",
-    )
+    label_provenance, key_provenance = _provenance(held.evaluation_id)
     result = sm.holdouts.complete_release(
-        claim.value, release_authority="label", release_action="respond",
-        label="in_post", label_provenance=label_provenance,
+        claim.value,
+        release_authority="label",
+        release_action="respond",
+        label="in_post",
+        label_provenance=label_provenance,
         key_provenance=key_provenance,
     )
     assert isinstance(result, Ok)
     assert result.value.label_provenance == label_provenance
     assert result.value.key_provenance == key_provenance
+
+
+@pytest.mark.parametrize("missing", ["label", "key"])
+def test_label_release_requires_both_provenance_records(sm: StateManager, missing: str) -> None:
+    held = _hold(sm)
+    claim = sm.holdouts.claim(held.id, owner="releaser")
+    assert isinstance(claim, Ok)
+    label_provenance, key_provenance = _provenance(held.evaluation_id)
+    result = sm.holdouts.complete_release(
+        claim.value,
+        release_authority="label",
+        release_action="respond",
+        label="in_post",
+        label_provenance=None if missing == "label" else label_provenance,
+        key_provenance=None if missing == "key" else key_provenance,
+    )
+    assert isinstance(result, Err)
+    assert "requires label and key provenance" in result.error.detail
+    assert sm.holdouts.get(held.id).status == "claimed"
 
 
 def test_a_label_release_without_a_label_is_refused(sm: StateManager) -> None:
