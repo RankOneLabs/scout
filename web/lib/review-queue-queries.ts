@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
-import { getGradeByEvaluationId } from "@/lib/queries";
+import { getGradeByEvaluationId, getRelevanceProvenance } from "@/lib/queries";
 import { selectReviewCosts, selectReviewStatus } from "@/lib/review-selectors";
 import {
   ASSISTANCE_PRODUCER_VERSIONS,
@@ -12,7 +12,7 @@ import {
   type QueueDetail, type QueueReviewItem, type QueueSummary, type RejectedInput,
   type ReviewDisposition, type ReviewResult,
 } from "@/types/review-queues";
-import type { Grade } from "@/types/schema";
+import type { Grade, RelevanceProvenance } from "@/types/schema";
 
 interface ArtifactRow { digest: string; content: Buffer; recorded_at: string }
 // Both JSON documents mirror migrations.grade_revision_comparison_shape,
@@ -60,6 +60,14 @@ function queueProducers() {
   });
 }
 
+/** Project the recorded population a queue was built from.
+ *
+ * Every artifact is read through its schema, which strips keys the schema
+ * does not name. That strip is the blind projection: `recordedEvaluationSchema`
+ * names no classifier, no recorded action, no holdout and no catalogue
+ * identity, so classifier metadata cannot reach a queue view even if a
+ * producer later writes it into the artifact. Adding it here would be a
+ * deliberate act, which is the point. */
 function populationInputs(digest: string): RejectedInput[] {
   const value = artifact(digest);
   const legacy = legacyPopulationSchema.safeParse(value);
@@ -188,10 +196,26 @@ export function getReviewQueue(digest: string): ReviewResult<QueueDetail> {
   }
 }
 
-export function listEvaluationReviews(evaluationId: number): ReviewResult<ReviewDisposition[]> {
+/** Everything recorded about how one evaluation was decided and reviewed.
+ *
+ * Two independent provenances, returned side by side rather than merged:
+ * `actions` is the grading-assistance review trail, and `relevance` is the
+ * classifier decision plus whichever side of a hold this evaluation sits on.
+ * `relevance` is null when the database predates the holdout schema. */
+export interface EvaluationReviewProvenance {
+  actions: ReviewDisposition[];
+  relevance: RelevanceProvenance | null;
+}
+
+export function listEvaluationReviews(
+  evaluationId: number
+): ReviewResult<EvaluationReviewProvenance> {
   try {
     const rows = getDb().prepare("SELECT disposition_json FROM review_dispositions WHERE evaluation_id = ? ORDER BY sequence DESC").all(evaluationId) as DispositionRow[];
-    return { ok: true, value: rows.map((row) => JSON.parse(row.disposition_json) as ReviewDisposition) };
+    return { ok: true, value: {
+      actions: rows.map((row) => JSON.parse(row.disposition_json) as ReviewDisposition),
+      relevance: getRelevanceProvenance(evaluationId),
+    } };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Cannot read review provenance" };
   }

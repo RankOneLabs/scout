@@ -5,6 +5,7 @@ import {
   evaluationFiltersSchema,
   negativeGradingFiltersSchema,
   parseSearchParams,
+  SURFACE_STATUSES,
 } from "@/lib/filter-schemas";
 
 describe("postFiltersSchema", () => {
@@ -137,6 +138,37 @@ describe("evaluationFiltersSchema", () => {
   it("rejects scan_id=abc", () => {
     const result = evaluationFiltersSchema.safeParse({ scan_id: "abc" });
     expect(result.success).toBe(false);
+  });
+
+  it("leaves surface_status absent when none is asked for", () => {
+    const result = evaluationFiltersSchema.safeParse({ scan_id: "7" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.surface_status).toBeUndefined();
+  });
+
+  it("accepts held as a status of its own", () => {
+    const result = evaluationFiltersSchema.safeParse({ scan_id: "7", surface_status: "held" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.surface_status).toBe("held");
+  });
+
+  it("offers every persisted status, held included", () => {
+    expect([...SURFACE_STATUSES]).toEqual([
+      "surfaced",
+      "low_relevance",
+      "abstained",
+      "critic_rejected",
+      "gate_blocked",
+      "not_relevant",
+      "drafting_failed",
+      "held",
+    ]);
+  });
+
+  it("rejects a status the database cannot hold", () => {
+    expect(
+      evaluationFiltersSchema.safeParse({ scan_id: "7", surface_status: "released" }).success
+    ).toBe(false);
   });
 });
 

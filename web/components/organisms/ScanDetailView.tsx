@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ShieldAlert,
   ClipboardList,
+  PauseCircle,
 } from "lucide-react";
 import type {
   ScanDetailWithCounts,
@@ -33,6 +34,7 @@ import {
   partitionFailuresByBlocking,
   isWatermarkStale,
   isLeaseHeld,
+  selectSurfaceStatusCounts,
   type CoverageTone,
 } from "@/lib/transforms";
 
@@ -357,7 +359,7 @@ export function ScanDetailView({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-8">
         <StatCard
           label="Posts"
           value={scan.post_count}
@@ -399,6 +401,15 @@ export function ScanDetailView({
           value={scan.gate_blocked_count ?? 0}
           icon={ShieldAlert}
           color="text-orange-400"
+        />
+        {/* Derived from this scan's own evaluations rather than a scan-row
+            count, and shown as its own card: a hold is not a draft, not an
+            approval, and not a gate block. */}
+        <StatCard
+          label="Held"
+          value={selectSurfaceStatusCounts(evaluations).held}
+          icon={PauseCircle}
+          color="text-sky-600 dark:text-sky-400"
         />
       </div>
 

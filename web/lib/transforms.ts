@@ -4,6 +4,7 @@ import type {
   TraceSpan,
   Scan,
   ScanFetchFailure,
+  SurfaceStatus,
 } from "@/types/schema";
 
 // Mirrors scout.config.SCOUT_STALE_WATERMARK_HOURS's default (the env var
@@ -256,6 +257,68 @@ export function isLeaseHeld(
 ): boolean {
   if (!lease.owner_id || !lease.expires_at) return false;
   return parseUtc(lease.expires_at).getTime() > parseUtc(nowIso).getTime();
+}
+
+// Surface-status selectors
+//
+// A hold is a lifecycle state of its own — decided, recorded, held back from
+// surfacing for blind grading. It is neither an approved reply nor a
+// drafting defect, so every count and every "can an operator act on this"
+// question goes through the two predicates below rather than enumerating the
+// negative cases and missing one. Mirrors scout.storage.evaluations.
+
+export const HELD_SURFACE_STATUS = "held";
+
+/** Whether this evaluation was held back from surfacing for blind grading. */
+export function isHeld(surfaceStatus: SurfaceStatus | string | null): boolean {
+  return surfaceStatus === HELD_SURFACE_STATUS;
+}
+
+/** Whether an operator can still post a reply for this evaluation.
+ *
+ * False for 'held'. A hold produced a decision and stopped: it has no draft
+ * to post and no defect to fix, so it belongs in neither the draft queue nor
+ * the review queue. */
+export function isActionableForPosting(
+  surfaceStatus: SurfaceStatus | string | null
+): boolean {
+  return surfaceStatus === "surfaced";
+}
+
+export interface SurfaceStatusCounts {
+  by_status: Record<string, number>;
+  total: number;
+  held: number;
+  surfaced: number;
+  drafting_failed: number;
+  /** How many an operator can act on. Derived from isActionableForPosting so
+   *  it cannot drift from the predicate the queues use. */
+  actionable: number;
+}
+
+/** Count one evaluation population by `surface_status`, folding nothing.
+ *
+ * The status breakdown a scan's evaluation view reads. 'held' is its own
+ * column: it is not added to `surfaced`, and it is not added to
+ * `drafting_failed`. */
+export function selectSurfaceStatusCounts(
+  evaluations: ReadonlyArray<{ surface_status: SurfaceStatus | string | null }>
+): SurfaceStatusCounts {
+  const by_status = evaluations.reduce<Record<string, number>>((counts, evaluation) => {
+    const status = evaluation.surface_status ?? "unrecorded";
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+  return {
+    by_status,
+    total: evaluations.length,
+    held: by_status[HELD_SURFACE_STATUS] ?? 0,
+    surfaced: by_status["surfaced"] ?? 0,
+    drafting_failed: by_status["drafting_failed"] ?? 0,
+    actionable: evaluations.filter((evaluation) =>
+      isActionableForPosting(evaluation.surface_status)
+    ).length,
+  };
 }
 
 /** Whether an environment's watermark is stale against a fixed threshold —

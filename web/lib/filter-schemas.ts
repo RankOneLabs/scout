@@ -25,8 +25,24 @@ export const draftFiltersSchema = z.object({
     .transform((v) => v === "true"),
 });
 
+/** Mirrors `evaluations.surface_status` (scout.storage.evaluations
+ *  SURFACE_STATUSES). 'held' is selectable on its own and is never implied
+ *  by another value: a filter that folded it into 'surfaced' or
+ *  'drafting_failed' would report a hold as an outcome it never reached. */
+export const SURFACE_STATUSES = [
+  "surfaced",
+  "low_relevance",
+  "abstained",
+  "critic_rejected",
+  "gate_blocked",
+  "not_relevant",
+  "drafting_failed",
+  "held",
+] as const;
+
 export const evaluationFiltersSchema = z.object({
   scan_id: z.coerce.number().int().positive(),
+  surface_status: z.enum(SURFACE_STATUSES).optional(),
 });
 
 export const negativeGradingFiltersSchema = z.object({

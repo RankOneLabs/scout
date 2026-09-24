@@ -14,6 +14,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ errors: parsed.errors }, { status: 400 });
   }
 
-  const evaluations = getEvaluationsByScan(parsed.data.scan_id);
+  const evaluations = getEvaluationsByScan(
+    parsed.data.scan_id,
+    parsed.data.surface_status
+  );
   return NextResponse.json(evaluations);
 }

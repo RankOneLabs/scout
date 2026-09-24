@@ -10,6 +10,11 @@ import { ExternalLink } from "@/components/atoms/ExternalLink";
 import { GradeControls } from "@/components/molecules/GradeControls";
 import { MatchedRouteSummary } from "@/components/molecules/MatchedRouteSummary";
 import { BlockAuthorButton } from "@/components/molecules/BlockAuthorButton";
+import { RelevanceActionBadge } from "@/components/molecules/RelevanceActionBadge";
+import {
+  selectRelevanceActionBadge,
+  selectReleaseOrigin,
+} from "@/lib/review-selectors";
 import { truncateContent, formatTimestamp } from "@/lib/transforms";
 import { GRADE_COLORS } from "@/lib/design-tokens";
 
@@ -26,6 +31,11 @@ export function DraftCard({ draft, onGradeUpdate }: DraftCardProps) {
   const borderClass = GRADE_COLORS[gradeJudgment] ?? "";
   const gradeBorder = borderClass ? `border-l-4 ${borderClass}` : "";
   const isGateBlocked = draft.surface_status === "gate_blocked";
+  // What was decided, kept apart from what happened. A draft only exists for
+  // an evaluation that was never held, so the hold shown here is always the
+  // one this draft was *released from* — never a pending one.
+  const actionBadge = selectRelevanceActionBadge(draft.relevance_provenance);
+  const releaseOrigin = selectReleaseOrigin(draft.relevance_provenance);
 
   return (
     <div className={`rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900 ${gradeBorder}`}>
@@ -50,6 +60,16 @@ export function DraftCard({ draft, onGradeUpdate }: DraftCardProps) {
           )}
           {draft.project_key && (
             <Badge label={draft.project_key} variant="project" />
+          )}
+          <RelevanceActionBadge badge={actionBadge} />
+          {releaseOrigin && (
+            <span
+              title={releaseOrigin.title}
+              className="rounded border border-purple-300 bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-purple-800 dark:border-purple-700 dark:bg-purple-950 dark:text-purple-300"
+            >
+              {releaseOrigin.label}
+              <span className="sr-only">. {releaseOrigin.title}</span>
+            </span>
           )}
           <Badge label={draft.platform} variant="platform" />
           <span className="text-sm text-gray-600 dark:text-gray-400">
