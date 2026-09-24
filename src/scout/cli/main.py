@@ -113,10 +113,12 @@ def parse_args() -> argparse.Namespace:
 
     subparsers = parser.add_subparsers(dest="subcommand")
     from scout.cli.analysis import add_analysis_parser
+    from scout.cli.holdout import add_holdout_parser
     from scout.cli.typesafe import add_typesafe_parser
     from scout.cli.watermark import add_watermark_parser
 
     add_analysis_parser(subparsers, DB_PATH)
+    add_holdout_parser(subparsers, DB_PATH)
     add_watermark_parser(subparsers, DB_PATH)
     add_typesafe_parser(subparsers, DB_PATH)
     preflight_p = subparsers.add_parser("preflight", help="Read-only Phase 1 deployment gate")
@@ -1006,6 +1008,14 @@ def main() -> None:
 
         if args.replay_command == "export-population":
             export_population(args)
+        return
+    if args.subcommand == "holdout":
+        from scout.cli.holdout import export_holdout_population, release_holdout_population
+
+        if args.holdout_command == "export":
+            export_holdout_population(args)
+        else:
+            release_holdout_population(args)
         return
     if args.stats:
         show_stats()

@@ -42,18 +42,36 @@ OWNER_MODULES = {
     "src/scout/paa/audit/data.py",
 }
 
+# A savepoint name as it appears in a literal: a plain identifier, or an
+# f-string placeholder standing in for one.
+_SAVEPOINT_NAME = r"(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)"
+
 # Case-insensitive: a literal opening quote (either style), optionally
 # followed by leading whitespace/newline (e.g. execute("\nBEGIN") or a
-# triple-quoted f"""  COMMIT"""), landing on one of these keywords, e.g.
-# execute("BEGIN IMMEDIATE"), execute('begin'), f"SAVEPOINT {name}" —
-# quote-style-agnostic and case-agnostic, unlike a fixed uppercase
-# literal-string pattern list, which a lowercase or single-quoted call
-# would slip past undetected. \b keeps "BEGIN" from matching inside an
-# unrelated word like "beginning", and "COMMIT" from matching inside
-# "committed".
+# triple-quoted f"""  COMMIT"""), holding one complete transaction-control
+# statement and nothing else, e.g. execute("BEGIN IMMEDIATE"),
+# execute('begin'), f"SAVEPOINT {name}" — quote-style-agnostic and
+# case-agnostic, unlike a fixed uppercase literal-string pattern list,
+# which a lowercase or single-quoted call would slip past undetected.
+#
+# "and nothing else" is what keeps English prose out: SAVEPOINT, RELEASE
+# and ROLLBACK TO each require a savepoint name and a closing quote right
+# after it, so a docstring or a CLI help string that happens to open with
+# "Release ..." is not a match, while `f"RELEASE SAVEPOINT {name}"` still
+# is. sqlite3's execute() rejects multiple statements in one string, so a
+# transaction-control statement that actually reaches the driver is always
+# the whole literal.
+_TRANSACTION_STATEMENTS = (
+    r"BEGIN\s+IMMEDIATE",
+    r"BEGIN",
+    r"COMMIT",
+    rf"SAVEPOINT\s+{_SAVEPOINT_NAME}",
+    rf"RELEASE\s+(?:SAVEPOINT\s+)?{_SAVEPOINT_NAME}",
+    rf"ROLLBACK\s+TO\s+(?:SAVEPOINT\s+)?{_SAVEPOINT_NAME}",
+    r"ROLLBACK",
+)
 _SQL_LITERAL_RE = re.compile(
-    r"""['"]\s*(?:BEGIN\s+IMMEDIATE|BEGIN|SAVEPOINT|RELEASE\s+SAVEPOINT|RELEASE|"""
-    r"""ROLLBACK\s+TO\s+SAVEPOINT|ROLLBACK|COMMIT)\b""",
+    r"""['"]\s*(?:""" + "|".join(_TRANSACTION_STATEMENTS) + r""")\s*;?\s*['"]""",
     re.IGNORECASE,
 )
 

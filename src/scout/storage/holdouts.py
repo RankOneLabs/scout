@@ -193,6 +193,23 @@ class Holdout:
 
 
 @dataclass(frozen=True, slots=True)
+class AbandonedPhaseRun:
+    """One complete, still-unlinked phase run from an earlier release attempt.
+
+    Mirrors the columns of `evaluation_phase_runs` that identify the work:
+    which attempt's scan it belongs to, which phase it was, and the trace the
+    model call actually wrote.
+    """
+
+    id: int
+    scan_id: int
+    phase: str
+    model: str
+    trace_id: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class HoldoutClaim:
     """An exclusive, fenced claim on one holdout.
 
@@ -308,6 +325,30 @@ class HoldoutStore:
         ).fetchone()
         return None if row is None else _decision_row(row)
 
+    def sampling_is_settled_for_post(self, post_id: int) -> bool:
+        """Whether this post's holdout selection is already durably recorded.
+
+        `selected_for_holdout` is written in the same transaction as the
+        evaluation it explains, so a recorded decision *is* the sampling
+        record: selected carries a holdout row beside it, unselected carries
+        an explicit 0. Either way the draw for this post happened, was
+        persisted, and was acted on.
+
+        A later pass must read that answer rather than take a second one. The
+        draw is derived from the post's immutable identity and the rate in
+        force, so a rescore under a changed `RELEVANCE_HOLDOUT_RATE` would
+        otherwise re-roll a settled decision — and a post that has already
+        surfaced could come back held, or a held one be drafted. The recorded
+        row is what makes the answer survive a configuration change.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM relevance_decisions d "
+            "JOIN evaluations e ON e.id = d.evaluation_id "
+            "WHERE e.post_id = ? LIMIT 1",
+            (post_id,),
+        ).fetchone()
+        return row is not None
+
     # -- holds --------------------------------------------------------------
 
     def hold(self, write: HoldoutWrite) -> Result[Holdout, HoldoutStorageError]:
@@ -418,6 +459,19 @@ class HoldoutStore:
         ).fetchone()
         return None if row is None else _holdout_row(row)
 
+    def has_hold_for_post(self, post_id: int) -> bool:
+        """Whether this post is already held, in any lifecycle state.
+
+        A scan that reaches an already-held post must leave it alone: the
+        held decision is the graded one, and re-running the classifier over
+        it would either fail on the source UNIQUE or produce a second,
+        competing decision for the same post.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM relevance_holdouts WHERE post_id = ? LIMIT 1", (post_id,)
+        ).fetchone()
+        return row is not None
+
     def list_pending(self) -> list[Holdout]:
         """Every hold awaiting release, oldest first."""
         rows = self._conn.execute(
@@ -425,6 +479,71 @@ class HoldoutStore:
             "ORDER BY held_at, id"
         ).fetchall()
         return [_holdout_row(row) for row in rows]
+
+    def list_releasable(self) -> list[Holdout]:
+        """Every hold a worker may attempt right now, oldest first.
+
+        Pending and previously failed holds, plus one whose claim lease has
+        expired — an attempt abandoned by a crashed worker must not strand
+        the post forever. A claim still inside its lease is left to its
+        holder. No age cutoff: the oldest hold is as releasable as the
+        newest, and is attempted first.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM relevance_holdouts "
+            "WHERE status IN ('pending', 'failed') "
+            "   OR (status = 'claimed' AND claim_expires_at <= ?) "
+            "ORDER BY held_at, id",
+            (_now(),),
+        ).fetchall()
+        return [_holdout_row(row) for row in rows]
+
+    # -- abandoned release evidence -----------------------------------------
+
+    def abandoned_release_evidence(self, post_id: int) -> list[AbandonedPhaseRun]:
+        """Generated evidence an earlier release attempt left behind.
+
+        A release attempt writes each phase run as soon as that phase's trace
+        is verified durable, and links the runs to an evaluation only when the
+        outcome commits. An attempt that died in between leaves complete,
+        unlinked rows: the model calls were made and paid for, and their
+        traces are still readable.
+
+        Returning them keeps that work attributable to the hold rather than
+        stranded — the trace ids are what the replay tooling reads, so an
+        abandoned draft can be inspected or reused rather than only repeated.
+        Restricted to `holdout_release` scans so an ordinary scan's in-flight
+        evidence is never mistaken for a release attempt's.
+        """
+        rows = self._conn.execute(
+            "SELECT pr.id, pr.scan_id, pr.phase, pr.model, pr.trace_id, pr.created_at "
+            "FROM evaluation_phase_runs pr "
+            "JOIN scans s ON s.id = pr.scan_id "
+            "WHERE pr.post_id = ? AND pr.evaluation_id IS NULL "
+            "  AND pr.status = 'complete' AND s.run_kind = 'holdout_release' "
+            "ORDER BY pr.created_at, pr.id",
+            (post_id,),
+        ).fetchall()
+        return [AbandonedPhaseRun(**dict(row)) for row in rows]
+
+    def abandoned_release_scan(self, post_id: int) -> int | None:
+        """The still-open release scan an abandoned attempt left, if any.
+
+        Open means never completed and never failed: a handled failure closes
+        its own scan, so an open one is the signature of a crash rather than
+        of a refusal. The most recent is returned, and only when it actually
+        holds unlinked evidence — an empty scan is not worth rejoining.
+        """
+        row = self._conn.execute(
+            "SELECT s.id FROM scans s "
+            "WHERE s.run_kind = 'holdout_release' AND s.completed_at IS NULL "
+            "  AND EXISTS (SELECT 1 FROM evaluation_phase_runs pr "
+            "              WHERE pr.scan_id = s.id AND pr.post_id = ? "
+            "                AND pr.evaluation_id IS NULL AND pr.status = 'complete') "
+            "ORDER BY s.id DESC LIMIT 1",
+            (post_id,),
+        ).fetchone()
+        return None if row is None else int(row["id"])
 
     # -- claims -------------------------------------------------------------
 

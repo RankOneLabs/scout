@@ -107,16 +107,25 @@ from scout.scanning.digest import (
 from scout.scanning.jev import JevEndpoint
 from scout.scanning.jev_catalogue import load_jev_catalogue
 from scout.scanning.jev_router import ROUTER_VERSION
-from scout.scanning.pipeline import build_scout_pipeline
+from scout.scanning.pipeline import (
+    HoldoutSampler,
+    build_holdout_sampler,
+    build_scout_pipeline,
+)
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
 from scout.scanning.relevance import JevRuntime
 from scout.scanning.schemas import (
+    HoldoutDraw,
     RecordedRelevanceDecision,
     ReplyCandidate,
     StructuredDraftOutput,
     unpack_candidate,
 )
-from scout.storage.holdouts import RelevanceDecisionWrite
+from scout.storage.holdouts import (
+    FrozenHoldoutInput,
+    HoldoutWrite,
+    RelevanceDecisionWrite,
+)
 from scout.storage.state import (
     AUTHOR_RATE_EVALUATOR_VERSION,
     ScanStatus,
@@ -636,8 +645,9 @@ SurfaceStatus = Literal[
     "not_relevant",
     "drafting_failed",
     # Decided and recorded, then held back from surfacing for blind grading.
-    # Not surfaced, and not ready for drafting. classify_outcome never
-    # produces it; sampling into it belongs to the holdout work.
+    # Not surfaced, and not ready for drafting. classify_outcome produces it
+    # only from a selected holdout draw taken at the relevance boundary, and
+    # persist_outcome commits the hold beside the evaluation.
     "held",
 ]
 
@@ -663,6 +673,21 @@ class OutcomeDecision:
     critique: CritiqueResult | None
     contributor_phase_run_ids: tuple[int, ...]
     relevance_decision: RecordedRelevanceDecision | None = None
+    holdout: HoldoutDraw | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenProjectIdentity:
+    """The routed project as it stood when the decision was made.
+
+    Frozen onto a hold so a label written weeks later joins against the
+    project the decision was made for, not against whatever the registry row
+    has since become.
+    """
+
+    key: str
+    name: str | None
+    description: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -680,6 +705,9 @@ class PersistenceContext:
     dossier_summary_id: str | None
     surfaced_at: str | None
     allow_response_only_phase_runs: bool = False
+    # Only a held decision freezes a project. Absent elsewhere, and absent
+    # for a hold whose decision resolved no project at all.
+    project: FrozenProjectIdentity | None = None
 
 
 def _resolve_project_key(candidate: ReplyCandidate) -> str | None:
@@ -745,7 +773,16 @@ def classify_outcome(
             critique=critique,
             contributor_phase_run_ids=candidate.contributor_phase_run_ids,
             relevance_decision=candidate.relevance_decision,
+            holdout=candidate.holdout,
         )
+
+    # 0. Held. Checked before everything else because a held candidate never
+    # reached drafting: it has no draft, no critique and no verifier result
+    # to classify. Folding it into drafting_failed would report a defect
+    # where a deliberate hold happened, and every gate below reads inputs a
+    # hold deliberately does not have.
+    if candidate.holdout is not None and candidate.holdout.selected:
+        return _decision("held", project_key=_resolve_project_key(candidate))
 
     # 1. Critic reject is an intentional terminal decision — it must not be
     # hidden behind relevance or an empty draft's segment count.
@@ -859,8 +896,10 @@ def persist_outcome(
     — they are not converted to a retryable scoring failure.
 
     The whole write is one transaction so the evaluation, its contributor
-    phase-run links and its classifier provenance become durable together or
-    not at all: an evaluation nothing can explain is worse than no row.
+    phase-run links, its classifier provenance and — for a held decision —
+    its holdout row become durable together or not at all: an evaluation
+    nothing can explain is worse than no row, and an evaluation recorded as
+    held with nothing pending release is worse still.
 
     A rate-limited surface is the one outcome that persists rows and then
     reports a failure. persist_surfaced_outcome already raises it only after
@@ -877,6 +916,8 @@ def persist_outcome(
             rate_limited = error
             evaluation_id = error.persisted_evaluation_id
         _record_relevance_decision(state, decision, evaluation_id)
+        if decision.status == "held":
+            _record_hold(state, decision, context, evaluation_id)
     if rate_limited is not None:
         raise rate_limited
     return evaluation_id
@@ -900,6 +941,9 @@ def _record_relevance_decision(
             classifier=recorded.classifier,
             model=recorded.model,
             action=recorded.action,
+            selected_for_holdout=(
+                decision.holdout is not None and decision.holdout.selected
+            ),
             reason=recorded.reason,
             phase_run_id=recorded.phase_run_id,
             catalogue_id=recorded.catalogue_id,
@@ -913,6 +957,61 @@ def _record_relevance_decision(
         raise RuntimeError(
             f"relevance decision provenance refused for evaluation "
             f"{evaluation_id}: {written.error.detail}"
+        )
+
+
+def _record_hold(
+    state: StateManager,
+    decision: OutcomeDecision,
+    context: PersistenceContext,
+    evaluation_id: int,
+) -> None:
+    """Hold this evaluation back from surfacing, in the caller's transaction.
+
+    The frozen input is built from the decision's own message and context —
+    the identity the classifier actually saw — not from a read-back of the
+    posts row, so the store's equality check against the persisted source
+    stays a real guard rather than a tautology.
+
+    A refusal fails the enclosing transaction. An evaluation stamped `held`
+    with no holdout row would be a post stopped before drafting that nothing
+    will ever release.
+    """
+    message = decision.evaluation.message
+    parent = message.parent
+    project = context.project
+    frozen = FrozenHoldoutInput(
+        platform=message.platform,
+        platform_id=message.platform_id,
+        # posts.url stores msg.url verbatim, empty string included; the hold
+        # must freeze the same value or its source check fails.
+        url=message.url,
+        channel=message.channel_name,
+        text=message.content,
+        parent_author_name=parent.author.name if parent is not None else None,
+        parent_text=parent.text if parent is not None else None,
+        author_id=message.author_id,
+        author_name=message.author_name,
+        author_handle=message.author.handle,
+        project_key=decision.project_key,
+        project_name=project.name if project is not None else None,
+        project_description=project.description if project is not None else None,
+        keyword_route_id=context.keyword_route_id,
+        dossier_summary_id=context.dossier_summary_id,
+        dossier_revision=context.dossier_revision,
+    )
+    held = state.holdouts.hold(
+        HoldoutWrite(
+            evaluation_id=evaluation_id,
+            post_id=context.post_id,
+            scan_id=context.scan_id,
+            project_key=decision.project_key,
+            frozen_input=frozen,
+        )
+    )
+    if isinstance(held, Err):
+        raise RuntimeError(
+            f"holdout refused for evaluation {evaluation_id}: {held.error.detail}"
         )
 
 
@@ -1020,6 +1119,7 @@ async def score_messages(
     dossier_summaries: dict[str, DossierSummary] | None = None,
     dossier_revision: str | None = None,
     lease_check: Callable[[], None] | None = None,
+    holdout_sampler: HoldoutSampler | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
     """Score messages via Scout's phase pipeline, write digest incrementally.
 
@@ -1033,11 +1133,17 @@ async def score_messages(
     evaluation_phase_runs row cites the exact feedback_snapshot_phases row
     that governed its prompt.
 
+    `holdout_sampler` decides which decided posts are held back before
+    drafting. It defaults to the stable draw at RELEVANCE_HOLDOUT_RATE, read
+    here rather than at import so a deployment's rate takes effect without a
+    restart of the module. Tests inject their own.
+
     Returns (digest_text, relevant_count, digest_ok, processing_failures).
     digest_ok is False when any digest write/finalize step failed.
     """
     if feedback_snapshot is None:
         raise ValueError("score_messages requires this scan's feedback_snapshot")
+    sampler = holdout_sampler or build_holdout_sampler(_config.RELEVANCE_HOLDOUT_RATE)
     shadow_runner: ShadowRelevanceRunner | None = None
     if _config.TYPESAFE_SHADOW_MODE:
         try:
@@ -1197,6 +1303,19 @@ async def score_messages(
             logger.error("save_post failed for %s", msg.platform_id, exc_info=True)
             continue
 
+        # An already-held post is finished with scanning. Its decision is
+        # the one that was graded, and it is waiting on `scout holdout
+        # release`, not on another classification. A rescore that reached it
+        # would either collide with the hold's source UNIQUE or write a
+        # second, competing decision for the same post.
+        if state.holdouts.has_hold_for_post(post_id) is True:
+            logger.info(
+                "Skipping held post %s:%s; awaiting holdout release",
+                msg.platform,
+                msg.platform_id,
+            )
+            continue
+
         _annotate_author(state, msg)
         if msg.author_id.strip():
             try:
@@ -1280,6 +1399,16 @@ async def score_messages(
                     "execution_context": execution_context,
                     "projects": projects,
                     "jev_runtime": jev_runtime,
+                    # Sampling is drawn once per post and then read, never
+                    # re-drawn. A post whose decision is already recorded
+                    # carries its own answer in `selected_for_holdout`; a
+                    # rescore that drew again would let a changed
+                    # RELEVANCE_HOLDOUT_RATE re-roll a settled decision.
+                    "holdout_sampler": (
+                        None
+                        if state.holdouts.sampling_is_settled_for_post(post_id) is True
+                        else sampler
+                    ),
                 },
             )
         except asyncio.CancelledError:
@@ -1366,10 +1495,11 @@ async def score_messages(
             raise
 
         route_id = routed.keyword_route.id if routed.keyword_route else None
+        resolved_project = (
+            projects.get(decision.project_key) if decision.project_key else None
+        )
         dossier_summary_id = (
-            projects[decision.project_key].dossier_summary_id
-            if decision.project_key and decision.project_key in projects
-            else None
+            resolved_project.dossier_summary_id if resolved_project is not None else None
         )
         context = PersistenceContext(
             post_id=post_id,
@@ -1378,6 +1508,15 @@ async def score_messages(
             dossier_revision=dossier_revision,
             dossier_summary_id=dossier_summary_id,
             surfaced_at=msg.created_at.isoformat(),
+            project=(
+                FrozenProjectIdentity(
+                    key=resolved_project.key,
+                    name=resolved_project.name,
+                    description=resolved_project.description,
+                )
+                if resolved_project is not None
+                else None
+            ),
         )
 
         logger.info(

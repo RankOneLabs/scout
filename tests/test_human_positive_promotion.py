@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import scout.grading.promotion as promotion
 from scout.config import Account, GradeRecord, Message, RelevanceResult
 from scout.storage.state import HumanPositivePromotionInProgressError, StateManager
 
@@ -146,3 +147,40 @@ def test_response_only_phase_sequence_can_own_promoted_draft(tmp_path) -> None:
         assert state.conn.execute(
             "SELECT comment_text FROM draft_comments WHERE id = ?", (draft_id,)
         ).fetchone()["comment_text"] == "Generated response"
+
+
+def test_promotion_may_reroute_and_holdout_release_may_not() -> None:
+    """The two response-phase workflows differ on exactly one thing.
+
+    Promotion re-routes when a case's original route is gone: a human said
+    the post is relevant, and which project answers it is a live registry
+    question. Holdout release must not — its label was written against a
+    frozen project, and landing it elsewhere would apply the grade to a
+    decision nobody made.
+    """
+    import inspect
+
+    from scout.holdouts import release as release_module
+
+    promotion_source = inspect.getsource(promotion.promote_negative_case)
+    release_source = inspect.getsource(release_module.prepare_release_runtime) + inspect.getsource(
+        release_module._resolve_route
+    )
+
+    assert "keyword_prefilter" in promotion_source
+    assert "keyword_prefilter" not in release_source
+
+
+def test_both_workflows_share_one_response_phase_runtime() -> None:
+    """One definition of "record the snapshot, build the phase configs".
+
+    Both names resolve to the same function object, so neither workflow can
+    drift into its own copy of the setup the other depends on.
+    """
+    import inspect
+
+    from scout.holdouts import release as release_module
+
+    assert release_module.build_response_phase_runtime is promotion.build_response_phase_runtime
+    assert "build_response_phase_runtime" in inspect.getsource(promotion.promote_negative_case)
+    assert "build_response_phase_runtime" in inspect.getsource(release_module)

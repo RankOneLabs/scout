@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from jig import AgentConfig, PipelineConfig, Step, TracingLogger, run_agent
 
@@ -36,6 +37,7 @@ from scout.scanning.relevance import (
 )
 from scout.scanning.schemas import (
     CritiquePhaseOutput,
+    HoldoutDraw,
     RecordedRelevanceDecision,
     RelevancePhaseOutput,
     ReplyCandidate,
@@ -44,6 +46,63 @@ from scout.scanning.schemas import (
 from scout.storage.state import StateManager
 
 logger = logging.getLogger("scout.scanning.pipeline")
+
+#: blake2b personalization for the holdout draw. Domain-separates this hash
+#: from every other digest in the codebase, so a key that happens to collide
+#: elsewhere cannot steer the sample.
+HOLDOUT_DRAW_PERSON = b"scout-holdout-1"
+
+
+def holdout_decision_key(*, platform: str, platform_id: str) -> str:
+    """The immutable post identity one holdout draw is derived from.
+
+    Platform identity only. Nothing that can change between two passes over
+    the same post — no scan id, no timestamp, no score — may enter here, or
+    a retry would roll a second time.
+    """
+    return f"{platform}:{platform_id}"
+
+
+def stable_holdout_draw(*, decision_key: str, rate: float) -> HoldoutDraw:
+    """Draw once for one post, from its identity alone.
+
+    Deliberately not random. A crash retry, a rescore, and a second worker
+    reaching the same post all re-derive the same draw, so a decision that
+    was not selected can never become selected on a later pass and one that
+    was cannot be lost. The rate is recorded beside the draw rather than
+    folded into it, so a stored hold says which rate produced it.
+    """
+    digest = hashlib.blake2b(
+        decision_key.encode("utf-8"), digest_size=8, person=HOLDOUT_DRAW_PERSON
+    ).digest()
+    value = int.from_bytes(digest, "big") / float(1 << 64)
+    return HoldoutDraw(
+        decision_key=decision_key, rate=rate, value=value, selected=value < rate
+    )
+
+
+class HoldoutSampler(Protocol):
+    """Decides whether one decided post is held back before drafting."""
+
+    def __call__(self, *, platform: str, platform_id: str) -> HoldoutDraw: ...
+
+
+def build_holdout_sampler(rate: float) -> HoldoutSampler:
+    """A sampler at `rate` over the stable draw.
+
+    Rejects a rate outside [0, 1] rather than clamping: a misconfigured rate
+    that silently became 1.0 would hold every post in production.
+    """
+    if not 0.0 <= rate <= 1.0:
+        raise ValueError(f"holdout rate must be between 0.0 and 1.0, got {rate!r}")
+
+    def sample(*, platform: str, platform_id: str) -> HoldoutDraw:
+        return stable_holdout_draw(
+            decision_key=holdout_decision_key(platform=platform, platform_id=platform_id),
+            rate=rate,
+        )
+
+    return sample
 
 
 async def score_and_draft_step(
@@ -108,6 +167,35 @@ async def score_and_draft_step(
             phase_run_id=relevance.value.phase_run_id,
         )
 
+    # The relevance boundary. Sampling happens here — on a decision that
+    # succeeded, and before any drafting — so a held post costs exactly one
+    # relevance call. A failed relevance call returned above and is never
+    # sampled: there is no decision to hold. The draw covers every action,
+    # drops included, because the holdout population is the decision
+    # population and not just the positives.
+    sampler: HoldoutSampler | None = ctx.get("holdout_sampler")
+    holdout = (
+        sampler(platform=msg.platform, platform_id=msg.platform_id)
+        if sampler is not None
+        else None
+    )
+    if holdout is not None and holdout.selected:
+        # Terminal here. `relevant` is carried through unchanged so the
+        # recorded evaluation still says what the classifier decided; the
+        # hold is what stops it, not an invented irrelevance.
+        return Ok(
+            ReplyCandidate(
+                relevant=relevance_output.relevant,
+                score=relevance_output.score,
+                reason=relevance_output.reason,
+                relevant_to=relevance_output.relevant_to,
+                project_key=project_key,
+                contributor_phase_run_ids=tuple(contributor_ids),
+                relevance_decision=recorded,
+                holdout=holdout,
+            )
+        )
+
     if not relevance_output.relevant:
         return Ok(
             ReplyCandidate(
@@ -118,6 +206,7 @@ async def score_and_draft_step(
                 project_key=project_key,
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=recorded,
+                holdout=holdout,
             )
         )
 
@@ -131,6 +220,7 @@ async def score_and_draft_step(
         relevance_output=relevance_output,
         contributor_ids=contributor_ids,
         relevance_decision=recorded,
+        holdout=holdout,
     )
 
 
@@ -248,8 +338,15 @@ async def _draft_and_critic(
     relevance_output: RelevancePhaseOutput,
     contributor_ids: list[int],
     relevance_decision: RecordedRelevanceDecision | None = None,
+    holdout: HoldoutDraw | None = None,
 ) -> Result[ReplyCandidate, LLMError | ParseError]:
-    """Shared reply-draft and critic implementation for model and human relevance."""
+    """Shared reply-draft and critic implementation for model and human relevance.
+
+    `holdout` is only ever an unselected draw here — a selected one is
+    terminal at the relevance boundary and never reaches drafting. It is
+    carried so the persisted decision records that this post was drawn and
+    passed over.
+    """
     dossier = dossier_summaries.get(project_key) if project_key is not None else None
 
     draft_input = format_reply_draft_input(
@@ -290,6 +387,7 @@ async def _draft_and_critic(
                 structured_draft=draft_output,
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=relevance_decision,
+                holdout=holdout,
             )
         )
 
@@ -333,6 +431,7 @@ async def _draft_and_critic(
                 structured_draft=draft_output,
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=relevance_decision,
+                holdout=holdout,
             )
         )
 
@@ -365,6 +464,7 @@ async def _draft_and_critic(
             structured_draft=final_draft,
             contributor_phase_run_ids=tuple(contributor_ids),
             relevance_decision=relevance_decision,
+            holdout=holdout,
         )
     )
 

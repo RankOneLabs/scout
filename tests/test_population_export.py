@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -14,6 +15,7 @@ from scout.grading.snapshots import (
     RecordedPost,
 )
 from scout.replay.population_export import (
+    PopulationExportRecord,
     load_live_population,
     record_from_frozen_input,
     render_population_jsonl,
@@ -246,3 +248,53 @@ def test_live_population_rejects_invalid_production_decision() -> None:
 
         with pytest.raises(ValueError, match="evaluation 10 decision must be boolean"):
             load_live_population(state.conn, "agent-ops")
+
+
+def test_the_holdout_export_does_not_change_the_population_contract() -> None:
+    """The holdout export extends this format; it never renames or drops a field.
+
+    Assay's packet builder reads the population record. A field the holdout
+    export quietly renamed would read as missing there, silently.
+    """
+    from scout.holdouts.export import HoldoutExportRecord
+
+    population = PopulationExportRecord.model_fields
+    holdout = HoldoutExportRecord.model_fields
+
+    for name, field in population.items():
+        assert name in holdout, f"{name} is missing from the holdout export"
+        assert holdout[name].annotation == field.annotation, name
+
+
+def test_live_population_export_is_unaffected_by_pending_holds(
+    in_memory_state: StateManager,
+) -> None:
+    """A held evaluation is an ordinary evaluation to the population export."""
+    from scout.config import Account, Message, RelevanceResult
+
+    msg = Message(
+        platform="farcaster",
+        platform_id="0xheld",
+        channel_name="agents",
+        channel_id="agents",
+        author=Account(platform="farcaster", id="42", name="Ada", handle="ada"),
+        content="held post",
+        created_at=datetime(2026, 9, 1, tzinfo=UTC),
+        url="https://warpcast.com/ada/0xheld",
+    )
+    scan_id = in_memory_state.start_scan(environment="test")
+    post_id = in_memory_state.save_post(msg, scan_id)
+    in_memory_state.evaluations.save_evaluation(
+        RelevanceResult(
+            message=msg, relevant=True, score=1.0, reason="r", relevant_to=("agent-ops",)
+        ),
+        post_id,
+        scan_id,
+        surface_status="held",
+        project_key="agent-ops",
+    )
+
+    records = load_live_population(in_memory_state.conn, "agent-ops")
+
+    assert [record.evaluation_id for record in records] == [1]
+    assert records[0].text == "held post"

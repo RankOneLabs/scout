@@ -1,4 +1,9 @@
-"""Promote a human-confirmed model-negative case into Scout's response flow."""
+"""Promote a human-confirmed model-negative case into Scout's response flow.
+
+Also hosts `build_response_phase_runtime`, the feedback-snapshot and
+phase-config sequence shared with holdout release — the other workflow that
+runs the response phases for a post whose relevance was decided elsewhere.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +13,15 @@ from pathlib import Path
 from typing import Literal
 
 import scout.config as _config
-from scout.config import GradeRecord
+from scout.config import GradeRecord, ModeConfig
 from scout.dossiers.resolver import get_pinned_dossier_revision
 from scout.grading.feedback import FeedbackMode, legacy_feedback_bundle
+from scout.registry import KeywordRoute, RuntimeRegistry
 from scout.result import Err
 from scout.scanning.agent import (
     PhaseRunIdentity,
     ScoutExecutionContext,
+    ScoutPhaseConfigs,
     build_scout_phase_configs,
     resolve_mode_for_message,
 )
@@ -30,6 +37,86 @@ from scout.scanning.schemas import RelevancePhaseOutput
 from scout.storage.state import StateManager
 
 PromotionErrorCategory = Literal["validation", "config", "generation", "persistence"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResponsePhaseRuntime:
+    """What the reply-draft and critic phases need for one post."""
+
+    phase_configs: ScoutPhaseConfigs
+    execution: ScoutExecutionContext
+
+
+def build_response_phase_runtime(
+    *,
+    state: StateManager,
+    tracer: object,
+    feedback: object,
+    scan_id: int,
+    post_id: int,
+    registry: RuntimeRegistry,
+    route: KeywordRoute,
+    mode_cfg: ModeConfig | None = None,
+) -> ResponsePhaseRuntime:
+    """Record this scan's feedback snapshot and build its phase configs.
+
+    Every phase run this scan produces cites the snapshot phase row recorded
+    here, so the prompt that governed it stays reconstructible. The relevance
+    identity is built alongside the other two even though neither caller runs
+    a relevance phase: the snapshot carries all three, and omitting one would
+    make the scan's snapshot look partial.
+    """
+    feedback_mode: FeedbackMode = "active" if _config.FEEDBACK_PROMPT_ENABLED else "shadow"
+    snapshot = state.record_feedback_snapshot(scan_id, mode=feedback_mode)
+    if feedback_mode == "active":
+        feedback_bundle = state.load_committed_feedback_bundle(
+            snapshot.snapshot_id, expected_mode="active"
+        )
+    else:
+        from scout.grading.service import format_grading_signals
+
+        feedback_bundle = legacy_feedback_bundle(
+            format_grading_signals(state.get_recent_grading_signals(limit_scans=3))
+        )
+
+    phase_by_name = {phase.phase: phase for phase in snapshot.phases}
+    identities = {
+        "relevance": PhaseRunIdentity(
+            snapshot_phase_id=phase_by_name["relevance"].snapshot_phase_id,
+            model=_config.RELEVANCE_MODEL,
+        ),
+        "reply_draft": PhaseRunIdentity(
+            snapshot_phase_id=phase_by_name["reply_draft"].snapshot_phase_id,
+            model=_config.REPLY_DRAFT_MODEL,
+        ),
+        "critic": PhaseRunIdentity(
+            snapshot_phase_id=phase_by_name["critic"].snapshot_phase_id,
+            model=_config.CRITIC_MODEL,
+        ),
+    }
+    mode = resolve_mode_for_message(mode_cfg or _config.MODES["lead_gen"], route)
+    return ResponsePhaseRuntime(
+        phase_configs=build_scout_phase_configs(
+            relevance_model=_config.RELEVANCE_MODEL,
+            reply_draft_model=_config.REPLY_DRAFT_MODEL,
+            critic_model=_config.CRITIC_MODEL,
+            mode_cfg=mode,
+            projects=registry.projects,
+            templates=registry.prompt_templates,
+            tracer=tracer,
+            feedback=feedback,
+            lessons=state.get_recent_critique_feedback(limit=10) or None,
+            feedback_bundle=feedback_bundle,
+        ),
+        execution=ScoutExecutionContext(
+            state=state,
+            scan_id=scan_id,
+            post_id=post_id,
+            relevance=identities["relevance"],
+            reply_draft=identities["reply_draft"],
+            critic=identities["critic"],
+        ),
+    )
 
 
 class NegativeCasePromotionError(RuntimeError):
@@ -129,6 +216,11 @@ async def promote_negative_case(
             None,
         )
         if route is None:
+            # Promotion may re-route: a human said this post is relevant, and
+            # which project answers it is a live registry question. Holdout
+            # release deliberately does not — its label was written against a
+            # frozen project, so landing it on another one would apply the
+            # grade to a decision nobody made.
             rerouted = keyword_prefilter([message], registry.keywords)
             route = rerouted[0].keyword_route if rerouted else None
         if route is None or route.project_key not in registry.projects:
@@ -156,57 +248,17 @@ async def promote_negative_case(
             except RuntimeError as exc:
                 raise NegativeCasePromotionError("config", str(exc)) from exc
 
-        feedback_mode: FeedbackMode = (
-            "active" if _config.FEEDBACK_PROMPT_ENABLED else "shadow"
-        )
-        snapshot = state.record_feedback_snapshot(scan_id, mode=feedback_mode)
-        if feedback_mode == "active":
-            feedback_bundle = state.load_committed_feedback_bundle(
-                snapshot.snapshot_id, expected_mode="active"
-            )
-        else:
-            from scout.grading.service import format_grading_signals
-
-            feedback_bundle = legacy_feedback_bundle(
-                format_grading_signals(state.get_recent_grading_signals(limit_scans=3))
-            )
-
-        phase_by_name = {phase.phase: phase for phase in snapshot.phases}
-        identities = {
-            "relevance": PhaseRunIdentity(
-                snapshot_phase_id=phase_by_name["relevance"].snapshot_phase_id,
-                model=_config.RELEVANCE_MODEL,
-            ),
-            "reply_draft": PhaseRunIdentity(
-                snapshot_phase_id=phase_by_name["reply_draft"].snapshot_phase_id,
-                model=_config.REPLY_DRAFT_MODEL,
-            ),
-            "critic": PhaseRunIdentity(
-                snapshot_phase_id=phase_by_name["critic"].snapshot_phase_id,
-                model=_config.CRITIC_MODEL,
-            ),
-        }
-        mode = resolve_mode_for_message(_config.MODES["lead_gen"], route)
-        phase_configs = build_scout_phase_configs(
-            relevance_model=_config.RELEVANCE_MODEL,
-            reply_draft_model=_config.REPLY_DRAFT_MODEL,
-            critic_model=_config.CRITIC_MODEL,
-            mode_cfg=mode,
-            projects=registry.projects,
-            templates=registry.prompt_templates,
+        runtime = build_response_phase_runtime(
+            state=state,
             tracer=tracer,
             feedback=feedback,
-            lessons=state.get_recent_critique_feedback(limit=10) or None,
-            feedback_bundle=feedback_bundle,
-        )
-        execution = ScoutExecutionContext(
-            state=state,
             scan_id=scan_id,
             post_id=int(source["post_id"]),
-            relevance=identities["relevance"],
-            reply_draft=identities["reply_draft"],
-            critic=identities["critic"],
+            registry=registry,
+            route=route,
         )
+        phase_configs = runtime.phase_configs
+        execution = runtime.execution
         relevance = RelevancePhaseOutput(
             relevant=True,
             score=1.0,
