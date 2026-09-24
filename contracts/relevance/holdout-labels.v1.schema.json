@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:scout:relevance-holdout-labels:1",
+  "title": "Scout holdout label resolution",
+  "description": "One resolved label, as `scout holdout release` acts on it. Scout does not define a label file format of its own: it reads assay's saved `assay.label-packet-labels/v3`, joins each case through the private `assay.label-packet-key/v2` to a held evaluation and its frozen project, and resolves the pair to one of four labels and the action that label releases as. This schema records that resolution — what a reviewer's answer became, and on whose authority — so the mapping is reviewable without reading the implementation. It is the release-side companion to holdout-export.v1, which is what the reviewer was shown.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "holdout_id",
+    "evaluation_id",
+    "project_key",
+    "case_id",
+    "label",
+    "needs_thread",
+    "released_action",
+    "authority",
+    "packet",
+    "packet_digest",
+    "plan_digest",
+    "reviewer",
+    "saved_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Contract version. Bumped whenever a consumer must change to keep reading this.",
+      "const": 1
+    },
+    "holdout_id": {
+      "description": "The hold this label was applied to, as holdout-export.v1 reported it.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "evaluation_id": {
+      "description": "The immutable source evaluation the key mapped this case to. It must match the hold's own source evaluation, and must belong to `project_key` as frozen on the hold; a mismatch is refused, never released on the recorded action instead.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "project_key": {
+      "description": "The frozen project the decision was made against. Release never re-routes to another project — a label written for one project cannot grade a decision made for another.",
+      "type": "string",
+      "minLength": 1
+    },
+    "case_id": {
+      "description": "The packet case id the label and the key both carry. Duplicated case ids, in either file, are refused.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "label": {
+      "description": "The resolved label. See $defs.resolution for how a v3 case becomes one of these.",
+      "enum": ["exclusion", "in_post", "pointer", "none"]
+    },
+    "needs_thread": {
+      "description": "The reviewer's needs_thread answer, recorded as given. It does not enter the action mapping: the four labels above are the whole action vocabulary.",
+      "type": "boolean"
+    },
+    "released_action": {
+      "description": "What the label releases as. exclusion→drop, in_post→respond, pointer→review, none→drop. A drop stops before generation; respond and review go through the ordinary reply-draft and critic path with every downstream gate intact.",
+      "enum": ["respond", "review", "drop"]
+    },
+    "authority": {
+      "description": "Who decided. `label` for a graded case; an ungraded hold releases under `recorded_action` instead and produces no record of this shape.",
+      "const": "label"
+    },
+    "packet": {
+      "description": "The packet name the labels were saved against, which must equal the key's `name`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "packet_digest": {
+      "description": "The packet digest, which must be identical across the labels, the key, and the blind packet when it is supplied.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "plan_digest": {
+      "description": "The plan digest, verified across the same files.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "reviewer": { "type": "string" },
+    "saved_at": {
+      "description": "When the reviewer saved the labels. Recorded on the hold as its labelled_at.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "resolution": {
+      "title": "How one assay.label-packet-labels/v3 case resolves",
+      "description": "Precedence, first match wins. 1. `exclusion` is anything other than the empty string or the literal \"none\", compared stripped and case-folded: an exclusion fired, and the label is `exclusion`. 2. `substance` is \"in_post\": the label is `in_post`. 3. `substance` is \"pointer\": the label is `pointer`. 4. `substance` is \"none\": the label is `none`. Anything else is refused. In particular a null `substance` with no exclusion is an incomplete answer, not a `none` — the reviewer was asked what the post carries and did not say — and an unrecognised `substance` value never falls back to a label that happens to be safe."
+    }
+  }
+}

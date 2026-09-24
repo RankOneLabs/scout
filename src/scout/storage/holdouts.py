@@ -439,6 +439,24 @@ class HoldoutStore:
         ).fetchall()
         return [_holdout_row(row) for row in rows]
 
+    def list_releasable(self) -> list[Holdout]:
+        """Every hold a worker may attempt right now, oldest first.
+
+        Pending and previously failed holds, plus one whose claim lease has
+        expired — an attempt abandoned by a crashed worker must not strand
+        the post forever. A claim still inside its lease is left to its
+        holder. No age cutoff: the oldest hold is as releasable as the
+        newest, and is attempted first.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM relevance_holdouts "
+            "WHERE status IN ('pending', 'failed') "
+            "   OR (status = 'claimed' AND claim_expires_at <= ?) "
+            "ORDER BY held_at, id",
+            (_now(),),
+        ).fetchall()
+        return [_holdout_row(row) for row in rows]
+
     # -- claims -------------------------------------------------------------
 
     def claim(

@@ -1010,10 +1010,12 @@ def main() -> None:
             export_population(args)
         return
     if args.subcommand == "holdout":
-        from scout.cli.holdout import export_holdout_population
+        from scout.cli.holdout import export_holdout_population, release_holdout_population
 
         if args.holdout_command == "export":
             export_holdout_population(args)
+        else:
+            release_holdout_population(args)
         return
     if args.stats:
         show_stats()
