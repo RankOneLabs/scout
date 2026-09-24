@@ -418,6 +418,19 @@ class HoldoutStore:
         ).fetchone()
         return None if row is None else _holdout_row(row)
 
+    def has_hold_for_post(self, post_id: int) -> bool:
+        """Whether this post is already held, in any lifecycle state.
+
+        A scan that reaches an already-held post must leave it alone: the
+        held decision is the graded one, and re-running the classifier over
+        it would either fail on the source UNIQUE or produce a second,
+        competing decision for the same post.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM relevance_holdouts WHERE post_id = ? LIMIT 1", (post_id,)
+        ).fetchone()
+        return row is not None
+
     def list_pending(self) -> list[Holdout]:
         """Every hold awaiting release, oldest first."""
         rows = self._conn.execute(

@@ -200,8 +200,10 @@ TYPESAFE_BASE_URL: str = (
     os.getenv("TYPESAFE_BASE_URL", "").strip().rstrip("/") or "https://api.typesafe.ai"
 )
 # Probability a decided post is held back from surfacing for blind grading.
-# Sampling itself is not implemented here; this is the configured rate the
-# holdout work reads.
+# Read by score_messages at call time and turned into the stable draw every
+# decided post is sampled against. 0 holds nothing and 1 holds everything;
+# anything outside [0, 1] is a startup error rather than a clamp, because a
+# rate that silently became 1.0 would hold an entire scan.
 RELEVANCE_HOLDOUT_RATE: float = _env_float("RELEVANCE_HOLDOUT_RATE", 0.1)
 if not 0.0 <= RELEVANCE_HOLDOUT_RATE <= 1.0:
     _env_errors.append("RELEVANCE_HOLDOUT_RATE must be between 0.0 and 1.0")

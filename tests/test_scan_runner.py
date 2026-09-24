@@ -72,6 +72,8 @@ from scout.scanning.prefilter import RoutedMessage
 from scout.scanning.runner import PlatformsFetch
 from scout.scanning.schemas import (
     DeclarativeSegment,
+    HoldoutDraw,
+    RecordedRelevanceDecision,
     ReplyCandidate,
     ResourceSegment,
     StructuredDraftOutput,
@@ -3641,3 +3643,148 @@ async def test_active_mode_committed_phase_integrity_failure_fails_scan_before_m
     assert scan_row["status"] == "failed"
 
     real_state.close()
+
+
+@pytest.mark.asyncio
+async def test_a_held_post_is_persisted_without_draft_or_surface(
+    monkeypatch: pytest.MonkeyPatch,
+    in_memory_state: StateManager,
+    tmp_path: Path,
+) -> None:
+    """A whole scan over one selected post: evaluation and hold, nothing else.
+
+    Exercises score_messages end to end with a sampler that always selects,
+    so the assertion covers the real classify_outcome/persist_outcome path
+    rather than a hand-built OutcomeDecision.
+    """
+    now = datetime.now(UTC)
+    msg = _message("held-post", now)
+    scan_id = in_memory_state.start_scan()
+    in_memory_state.commit()
+
+    async def fake_run_pipeline(pipeline, *, input, context):
+        assert context["holdout_sampler"] is not None
+        post_id = context["execution_context"].post_id
+        contributors = seed_phase_run_contributors(
+            in_memory_state, scan_id, post_id, count=1
+        )
+        result = Mock()
+        result.step_outputs = {
+            "score_and_draft": Ok(
+                ReplyCandidate(
+                    relevant=True,
+                    score=0.95,
+                    reason="direct fit",
+                    relevant_to=["gw"],
+                    project_key="gw",
+                    contributor_phase_run_ids=contributors,
+                    relevance_decision=RecordedRelevanceDecision(
+                        classifier="jev", model="jev-latest", action="respond", reason="fit"
+                    ),
+                    holdout=HoldoutDraw(
+                        decision_key="bluesky:held-post", rate=1.0, value=0.0, selected=True
+                    ),
+                )
+            )
+        }
+        return result
+
+    monkeypatch.setattr(scan_runner, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
+    monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
+
+    _digest, relevant_count, _ok, processing_failures = await scan_runner.score_messages(
+        [RoutedMessage(message=msg, keyword_route=None)],
+        [msg],
+        {"evaluate": "e", "respond": "r", "critique": "c"},
+        {}, {},
+        "model", "model", "model",
+        Mock(), Mock(),
+        in_memory_state,
+        scan_id,
+        str(tmp_path / "digest.md"),
+        feedback_snapshot=in_memory_state.record_feedback_snapshot(scan_id, mode="shadow"),
+    )
+
+    assert relevant_count == 0
+    assert processing_failures == []
+    evaluation = in_memory_state.conn.execute(
+        "SELECT id, surface_status FROM evaluations"
+    ).fetchone()
+    assert evaluation["surface_status"] == "held"
+    assert in_memory_state.conn.execute("SELECT COUNT(*) FROM draft_comments").fetchone()[0] == 0
+    assert in_memory_state.conn.execute("SELECT COUNT(*) FROM surfaced_events").fetchone()[0] == 0
+    held = in_memory_state.holdouts.get_by_evaluation(evaluation["id"])
+    assert held is not None and held.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_second_scan_leaves_an_already_held_post_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    in_memory_state: StateManager,
+    tmp_path: Path,
+) -> None:
+    """A rescore reaching a held post must not classify or draft it again."""
+    now = datetime.now(UTC)
+    msg = _message("held-post", now)
+    scan_id = in_memory_state.start_scan()
+    post_id = in_memory_state.save_post(msg, scan_id)
+    contributors = seed_phase_run_contributors(in_memory_state, scan_id, post_id, count=1)
+    candidate = ReplyCandidate(
+        relevant=False,
+        score=0.0,
+        reason="dropped",
+        relevant_to=[],
+        project_key=None,
+        contributor_phase_run_ids=contributors,
+        relevance_decision=RecordedRelevanceDecision(
+            classifier="jev", model="jev-latest", action="drop", reason="dropped"
+        ),
+        holdout=HoldoutDraw(
+            decision_key="bluesky:held-post", rate=1.0, value=0.0, selected=True
+        ),
+    )
+    scan_runner.persist_outcome(
+        in_memory_state,
+        scan_runner.classify_outcome(candidate, msg, {}),
+        scan_runner.PersistenceContext(
+            post_id=post_id,
+            scan_id=scan_id,
+            keyword_route_id=None,
+            dossier_revision=None,
+            dossier_summary_id=None,
+            surfaced_at=msg.created_at.isoformat(),
+        ),
+    )
+    in_memory_state.commit()
+
+    run_mock = AsyncMock()
+    monkeypatch.setattr(scan_runner, "run_pipeline", run_mock)
+    monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
+    monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
+
+    rescore_scan_id = in_memory_state.start_scan()
+    await scan_runner.score_messages(
+        [RoutedMessage(message=msg, keyword_route=None)],
+        [msg],
+        {"evaluate": "e", "respond": "r", "critique": "c"},
+        {}, {},
+        "model", "model", "model",
+        Mock(), Mock(),
+        in_memory_state,
+        rescore_scan_id,
+        str(tmp_path / "digest.md"),
+        feedback_snapshot=in_memory_state.record_feedback_snapshot(
+            rescore_scan_id, mode="shadow"
+        ),
+    )
+
+    assert run_mock.await_count == 0
+    assert in_memory_state.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 1
+    assert (
+        in_memory_state.conn.execute("SELECT COUNT(*) FROM relevance_holdouts").fetchone()[0] == 1
+    )

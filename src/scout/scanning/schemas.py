@@ -158,6 +158,28 @@ class RecordedRelevanceDecision(BaseModel):
     decision: dict[str, JsonValue] | None = None
 
 
+class HoldoutDraw(BaseModel):
+    """One post's holdout sampling draw, taken at the relevance boundary.
+
+    `value` is the drawn position in [0, 1) and `selected` is `value < rate`,
+    so a rate of 0 selects nothing and a rate of 1 selects everything without
+    either end being a special case. `decision_key` is the immutable post
+    identity the draw was derived from: a retry after a crash, a rescore, and
+    a concurrent scan over the same post all re-derive the same draw rather
+    than rolling again, which is what stops an unselected decision from
+    becoming selected on a later pass.
+
+    Carried on the candidate even when it was not selected, so the stored
+    decision records that this post was drawn and passed over, and at which
+    rate.
+    """
+
+    decision_key: str
+    rate: float = Field(ge=0.0, le=1.0)
+    value: float = Field(ge=0.0, lt=1.0)
+    selected: bool
+
+
 class ReplyCandidate(BaseModel):
     """Agent output: relevance verdict + optional draft + optional self-critique."""
 
@@ -184,6 +206,12 @@ class ReplyCandidate(BaseModel):
     # path (draft_and_critic_step), which makes no relevance model call and
     # so has no classifier decision to record.
     relevance_decision: RecordedRelevanceDecision | None = None
+
+    # The holdout draw taken once the relevance verdict was in, before any
+    # drafting. None when no sampler ran — the human-override path, and any
+    # caller that supplies none. A draw with selected=True is what makes this
+    # candidate terminal at `held`: no reply draft, no critic, no surface.
+    holdout: HoldoutDraw | None = None
 
 
 class RelevancePhaseOutput(BaseModel):
