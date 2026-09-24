@@ -104,6 +104,7 @@ from scout.scanning.digest import (
     format_result_block,
     write_digest_header,
 )
+from scout.scanning.jev_catalogue import load_jev_catalogue
 from scout.scanning.pipeline import build_scout_pipeline
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
 from scout.scanning.schemas import ReplyCandidate, StructuredDraftOutput, unpack_candidate
@@ -298,6 +299,52 @@ def validate_config() -> list[str]:
             "or BLUESKY_API_URL + BLUESKY_IDENTIFIER + BLUESKY_APP_PASSWORD."
             " For Bluesky use https://bsky.social/xrpc as the API URL."
         )
+    errors.extend(validate_jev_config())
+    return errors
+
+
+def validate_jev_config() -> list[str]:
+    """Check the JEV-only configuration, and only when JEV is selected.
+
+    Nothing here runs under `RELEVANCE_CLASSIFIER=llm`, so the default
+    deployment needs no credential, no catalogue and no endpoint, and rollback
+    stays one variable. See docs/relevance-holdouts.md.
+    """
+    if _config.RELEVANCE_CLASSIFIER != "jev":
+        return []
+
+    errors: list[str] = []
+    if not _config.TYPESAFE_API_KEY:
+        errors.append(
+            "TYPESAFE_API_KEY not set (required when RELEVANCE_CLASSIFIER=jev)"
+        )
+    if not _config.TYPESAFE_BASE_URL.startswith(("http://", "https://")):
+        errors.append(
+            f"TYPESAFE_BASE_URL={_config.TYPESAFE_BASE_URL!r} must be an http(s) URL"
+        )
+    # JEV's state carries a project, and the project comes from the keyword
+    # route. With the prefilter off a post can reach relevance unrouted, and
+    # there is no defined input for it.
+    if not _config.KEYWORD_PREFILTER:
+        errors.append(
+            "KEYWORD_PREFILTER must be true when RELEVANCE_CLASSIFIER=jev: "
+            "JEV requires a routed project"
+        )
+    # The variable is shared with the disabled shadow node, whose default
+    # points at a shadow-form fixture this loader rejects. Require it
+    # explicitly rather than falling back to that default.
+    if not os.getenv("TYPESAFE_CATALOGUE_PATH", "").strip():
+        errors.append(
+            "TYPESAFE_CATALOGUE_PATH must be set explicitly when "
+            "RELEVANCE_CLASSIFIER=jev"
+        )
+    else:
+        loaded = load_jev_catalogue(_config.TYPESAFE_CATALOGUE_PATH)
+        if isinstance(loaded, Err):
+            errors.append(
+                f"TYPESAFE_CATALOGUE_PATH is not a usable JEV catalogue: "
+                f"{loaded.error.detail}"
+            )
     return errors
 
 
