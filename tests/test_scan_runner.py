@@ -9,7 +9,7 @@ import platform
 import sqlite3
 from argparse import Namespace
 from collections.abc import AsyncIterator
-from contextlib import AbstractContextManager, asynccontextmanager
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -127,6 +127,10 @@ def _fake_feedback_snapshot(mode: str = "shadow") -> PersistedFeedbackSnapshot:
 class _FakeState(AbstractContextManager["_FakeState"]):
     def __init__(self, registry: RuntimeRegistry | None = None) -> None:
         self.load_runtime_registry = Mock(return_value=registry or _empty_registry())
+        # persist_outcome writes the evaluation and its classifier provenance
+        # in one transaction; the fake needs only a reentrant no-op boundary.
+        self.db = Mock()
+        self.db.begin_immediate = Mock(side_effect=lambda: nullcontext())
         # The canonical live owner is now committed before any platform I/O
         # on every live (non-rescore) invocation, including a fetch that
         # turns out to have zero new messages — see coverage.py's
@@ -1485,6 +1489,7 @@ async def test_surfaced_draft_persists_and_digests_exact_verifier_bytes(
     )
 
     fake_state = Mock()
+    fake_state.db.begin_immediate = Mock(side_effect=lambda: nullcontext())
     fake_state.save_post = Mock(return_value=1)
     fake_state.persist_surfaced_outcome = Mock(return_value=(1, 1, 1))
     fake_state.persist_terminal_outcome = Mock()
