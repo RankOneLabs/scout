@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:scout:relevance-holdout-labels:1",
+  "title": "Scout relevance holdout label set",
+  "description": "Blind labels produced by assay and read by `scout holdout release --labels`. A label joins to a pending hold on holdout_id and evaluation_id against the frozen project; an identity that does not match a pending hold is rejected rather than guessed at.",
+  "type": "object",
+  "required": ["schema_version", "packet", "labels"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "packet": {
+      "description": "Which blind packet these labels came from. Provenance for the release, not a join key.",
+      "type": "object",
+      "required": ["id", "built_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "built_at": { "type": "string", "minLength": 1 },
+        "revision": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"] }
+      }
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["holdout_id", "evaluation_id", "label", "labeller", "labelled_at"],
+        "additionalProperties": false,
+        "properties": {
+          "holdout_id": { "type": "integer", "minimum": 1 },
+          "evaluation_id": { "type": "integer", "minimum": 1 },
+          "label": {
+            "description": "The resolved human label. `exclusion` means a hard exclusion applied; the other three are where the substance sits when nothing was excluded. Release maps exclusion and none to drop, in_post to respond, and pointer to review.",
+            "enum": ["exclusion", "in_post", "pointer", "none"]
+          },
+          "exclusion_name": {
+            "description": "Which exclusion fired, when label is `exclusion`. Provenance only; release reads `label`.",
+            "type": ["string", "null"]
+          },
+          "labeller": { "type": "string", "minLength": 1 },
+          "labelled_at": {
+            "description": "RFC 3339 UTC instant. When a case carries more than one label the last by this instant wins; an exact tie is rejected rather than broken arbitrarily.",
+            "type": "string",
+            "minLength": 1
+          },
+          "note": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

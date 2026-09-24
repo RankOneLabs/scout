@@ -23,8 +23,8 @@ The documents here cover design, configuration, and operator procedures.
 
 - [Architecture](architecture.md)
 - [Dossier contract](dossier-contract.md)
-- [Relevance holdouts and the JEV handoff](relevance-holdouts.md) — the gate
-  record for a second relevance classifier and durable holdout evidence
+- [Relevance holdouts and the JEV handoff](relevance-holdouts.md) — the contract
+  record for the JEV relevance classifier and durable holdout evidence
 - [Transactions and scan durability](transactions-and-scan-durability.md)
 - [Finalized-grade Jig rebuild](finalized-grade-jig-rebuild.md)
 
