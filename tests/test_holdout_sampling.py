@@ -519,3 +519,129 @@ def test_held_relevance_evidence_stays_queryable(sm: StateManager) -> None:
     assert row is not None
     assert (row["classifier"], row["action"]) == ("jev", "respond")
     assert sm.load_post(post_id) is not None
+
+
+# ---------------------------------------------------------------------------
+# The recorded decision is the sampling record, and it wins over a redraw
+# ---------------------------------------------------------------------------
+
+
+def test_sampling_is_unsettled_until_a_decision_is_recorded(sm: StateManager) -> None:
+    scan_id = sm.start_scan(environment="test")
+    post_id = sm.save_post(_message(), scan_id)
+
+    assert sm.holdouts.sampling_is_settled_for_post(post_id) is False
+
+
+def test_a_held_decision_settles_this_post_s_sampling(sm: StateManager) -> None:
+    msg = _message()
+    _evaluation_id, post_id, _scan_id = _persist_held(sm, _candidate(), msg)
+
+    assert sm.holdouts.sampling_is_settled_for_post(post_id) is True
+
+
+def _persist_unselected(
+    state: StateManager, msg: Message, *, scan_id: int | None = None
+) -> tuple[int, int, int]:
+    """Persist one decided-but-unselected post. Returns (evaluation, post, scan).
+
+    A non-relevant decision is the shortest path to the unselected record:
+    terminal at relevance, one contributor, no draft to build.
+    """
+    scan_id = state.start_scan(environment="test") if scan_id is None else scan_id
+    post_id = state.save_post(msg, scan_id)
+    contributors = seed_phase_run_contributors(state, scan_id, post_id, count=1)
+    candidate = _candidate(
+        relevant=False, score=0.0, action="drop", selected=False
+    ).model_copy(update={"contributor_phase_run_ids": contributors})
+    decision = scan_runner.classify_outcome(candidate, msg, {})
+    evaluation_id = scan_runner.persist_outcome(
+        state,
+        decision,
+        scan_runner.PersistenceContext(
+            post_id=post_id,
+            scan_id=scan_id,
+            keyword_route_id=None,
+            dossier_revision="r1",
+            dossier_summary_id="d1",
+            surfaced_at=msg.created_at.isoformat(),
+        ),
+    )
+    return evaluation_id, post_id, scan_id
+
+
+def test_an_unselected_decision_settles_it_too(sm: StateManager) -> None:
+    """The unselected side is a recorded answer, not an absence of one.
+
+    `selected_for_holdout = 0` beside the evaluation is what stops a later
+    pass from drawing again for a post that was already decided against.
+    """
+    evaluation_id, post_id, _scan_id = _persist_unselected(sm, _message())
+
+    recorded = sm.holdouts.get_decision(evaluation_id)
+    assert recorded is not None and recorded.selected_for_holdout is False
+    assert sm.holdouts.get_by_evaluation(evaluation_id) is None
+    assert sm.holdouts.sampling_is_settled_for_post(post_id) is True
+
+
+def test_a_settled_post_is_not_redrawn_when_the_rate_changes(sm: StateManager) -> None:
+    """The configuration-change case, which a redraw would get wrong.
+
+    Sampling is a function of the post's identity and the rate in force. A
+    rescore that drew again under a lowered rate could un-select a post whose
+    hold is already recorded, and under a raised rate could hold one that has
+    already surfaced. Reading the recorded answer is what makes the decision
+    survive the rate moving underneath it.
+    """
+    msg = _message()
+    _evaluation_id, post_id, _scan_id = _persist_held(sm, _candidate(), msg)
+
+    # The draw itself would flip: this post was selected at rate 1.0 and no
+    # key is selected at rate 0.0.
+    redrawn = build_holdout_sampler(0.0)(platform=msg.platform, platform_id=msg.platform_id)
+    assert redrawn.selected is False
+
+    # The recorded answer does not.
+    assert sm.holdouts.sampling_is_settled_for_post(post_id) is True
+    held = sm.holdouts.get_by_evaluation(_evaluation_id)
+    assert held is not None and held.status == "pending"
+
+
+def test_a_settled_post_stays_settled_for_a_raised_rate(sm: StateManager) -> None:
+    """The other direction: an already-decided post is not newly held."""
+    msg = _message()
+    _evaluation_id, post_id, _scan_id = _persist_unselected(sm, msg)
+
+    # Every key is selected at rate 1.0, so a redraw would hold this post.
+    redrawn = build_holdout_sampler(1.0)(platform=msg.platform, platform_id=msg.platform_id)
+    assert redrawn.selected is True
+
+    assert sm.holdouts.sampling_is_settled_for_post(post_id) is True
+
+
+def test_the_settled_check_is_per_post(sm: StateManager) -> None:
+    msg = _message()
+    _evaluation_id, post_id, scan_id = _persist_held(sm, _candidate(), msg)
+    other_post_id = sm.save_post(_message("0xdef"), scan_id)
+
+    assert sm.holdouts.sampling_is_settled_for_post(post_id) is True
+    assert sm.holdouts.sampling_is_settled_for_post(other_post_id) is False
+
+
+def test_the_scan_loop_withholds_the_sampler_from_a_settled_post(sm: StateManager) -> None:
+    """The guard as the runner applies it, over a real settled post.
+
+    Asserted against the same expression the loop evaluates, so a change to
+    the storage read that broke the guard's polarity would fail here rather
+    than silently re-enable the redraw.
+    """
+    msg = _message()
+    _evaluation_id, post_id, scan_id = _persist_held(sm, _candidate(), msg)
+    fresh_post_id = sm.save_post(_message("0xfeed"), scan_id)
+    sampler = build_holdout_sampler(1.0)
+
+    settled = None if sm.holdouts.sampling_is_settled_for_post(post_id) is True else sampler
+    fresh = None if sm.holdouts.sampling_is_settled_for_post(fresh_post_id) is True else sampler
+
+    assert settled is None
+    assert fresh is sampler

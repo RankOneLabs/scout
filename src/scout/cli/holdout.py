@@ -133,13 +133,21 @@ def release_holdout_population(args: argparse.Namespace) -> None:
         # The resource bundle replay already uses: one owner, cleanup in
         # reverse acquisition order, no try/finally pyramid here.
         async with replay_runtime(db_path=args.db) as runtime:
-            report = await release_pending_holdouts(
+            released = await release_pending_holdouts(
                 state=runtime.state,
                 tracer=runtime.tracer,
                 feedback=runtime.feedback,
                 labels=resolved.value,
                 owner=args.owner,
             )
+        if isinstance(released, Err):
+            # A whole-run refusal: nothing was claimed and nothing changed.
+            print(
+                f"error: {released.error.operation}: {released.error.detail}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        report = released.value
         print(json.dumps(report.to_json(), indent=2, sort_keys=True))
         if report.failed:
             raise SystemExit(1)

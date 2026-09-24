@@ -27,14 +27,17 @@ docs/relevance-holdouts.md.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal
 
+from jsonschema import Draft7Validator
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 import scout.config as _config
@@ -42,6 +45,7 @@ from scout.config import Message
 from scout.dossiers.resolver import DossierSummary, get_pinned_dossier_revision
 from scout.grading.promotion import build_response_phase_runtime
 from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
+from scout.resources import runtime_resource
 from scout.result import Err, Ok, Result
 from scout.scanning.pipeline import draft_and_critic_step
 from scout.scanning.prefilter import RoutedMessage
@@ -72,12 +76,31 @@ LABELS_FORMAT = "assay.label-packet-labels/v3"
 KEY_FORMAT = "assay.label-packet-key/v2"
 PACKET_FORMAT = "assay.label-packet/v1"
 
-#: `exclusion` values that mean no exclusion fired. Compared case-folded and
-#: stripped. Anything else is the name of the exclusion that fired, whatever
-#: it is called — the catalogue, not this module, decides which exist.
-NO_EXCLUSION_VALUES: frozenset[str] = frozenset({"", "none"})
+#: The committed schema each interchange file is checked against before it is
+#: parsed. Reading these files through the contract Scout publishes — rather
+#: than through the models below alone — is what makes the committed schema the
+#: thing actually enforced: a model that drifts from it starts failing here
+#: instead of quietly accepting a file the contract forbids.
+ASSAY_SCHEMA_FILES: Mapping[str, str] = {
+    LABELS_FORMAT: "assay-labels.v3.schema.json",
+    KEY_FORMAT: "assay-key.v2.schema.json",
+    PACKET_FORMAT: "assay-packet.v1.schema.json",
+}
 
-#: `substance` values that resolve to a label once no exclusion fired.
+#: The one `exclusion` answer that means no exclusion fired.
+#:
+#: Confirmed against assay's own router rather than inferred: `route()` in
+#: assay's `experiments/typesafe_relevance/packet.py` takes `exclusion` from a
+#: closed set of catalogue names whose not-fired member is the literal
+#: `"none"`, and raises on any value outside that set. Scout deliberately does
+#: not restate the rest of that set — the exclusion names belong to the
+#: catalogue and version with it — so any other non-blank value is read as the
+#: name of the exclusion that fired. A blank is not a member of the set either,
+#: and is refused rather than read as not-fired.
+NO_EXCLUSION = "none"
+
+#: `substance` values that resolve to a label once no exclusion fired. Mirrors
+#: assay's SUBSTANCE_ROUTES, which routes the same three answers.
 SUBSTANCE_LABELS: dict[str, HoldoutLabel] = {
     "in_post": "in_post",
     "pointer": "pointer",
@@ -88,7 +111,7 @@ SUBSTANCE_LABELS: dict[str, HoldoutLabel] = {
 RELEASE_CLAIM_TTL_SECONDS = 900
 
 ReleaseErrorCategory = Literal[
-    "validation", "config", "generation", "persistence", "claim"
+    "validation", "config", "generation", "persistence", "claim", "unexpected"
 ]
 ReleaseStatus = Literal["released", "failed", "skipped"]
 
@@ -149,7 +172,13 @@ class AssayKeyCase(BaseModel):
 
 
 class AssayKeyFile(BaseModel):
-    """The private answer key, which is what a label actually joins through."""
+    """The private answer key, which is what a label actually joins through.
+
+    `seed` and `strata` are read but unused here: they are required by the
+    committed v2 schema, so a file missing them is a truncated or hand-made
+    key rather than one assay produced, and naming them keeps that a parse
+    failure instead of a silent acceptance.
+    """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -158,6 +187,8 @@ class AssayKeyFile(BaseModel):
     sitting: str
     digest: str
     plan_digest: str
+    seed: str
+    strata: dict[str, JsonValue]
     cases: list[AssayKeyCase]
 
 
@@ -214,16 +245,48 @@ class ReleaseLabels:
 def label_from_case(case: AssayLabelCase) -> Result[HoldoutLabel, HoldoutReleaseError]:
     """Resolve one reviewer answer to one of the four labels.
 
-    Precedence, first match wins: an exclusion that fired, then `in_post`,
+    Mirrors assay's own `route()` rather than reimplementing a rule beside
+    it. Precedence, first match wins: an exclusion that fired, then `in_post`,
     then `pointer`, then `none`. `needs_thread` is recorded but does not enter
     the mapping — the four labels are the whole action vocabulary.
 
-    A missing substance with no exclusion is an incomplete answer, not a
-    `none`: the reviewer was asked what the post carries and did not say.
+    Three answers are refused rather than resolved, each because assay cannot
+    have produced them:
+
+    - A blank exclusion. The question is always asked and always answered from
+      the catalogue's closed set; a blank is not in it, so the file is not one
+      assay saved.
+    - An exclusion beside a substance. The exclusion question ends the case, so
+      the substance question is never reached and its answer is absent, not a
+      value. Assay refuses the pair outright; reading past it here would grade
+      a post on an answer the reviewer was never shown.
+    - A missing substance with no exclusion. That is an incomplete answer, not
+      a `none`: the reviewer was asked what the post carries and did not say.
     """
-    if case.exclusion.strip().casefold() not in NO_EXCLUSION_VALUES:
-        return Ok("exclusion")
+    exclusion = case.exclusion.strip().casefold()
     substance = None if case.substance is None else case.substance.strip().casefold()
+    if not exclusion:
+        return Err(
+            HoldoutReleaseError(
+                operation="label_from_case",
+                detail="exclusion is blank; no exclusion answer was recorded",
+                case_id=case.case_id,
+            )
+        )
+    if exclusion != NO_EXCLUSION:
+        if substance is not None:
+            return Err(
+                HoldoutReleaseError(
+                    operation="label_from_case",
+                    detail=(
+                        f"exclusion {case.exclusion!r} fired but substance "
+                        f"{case.substance!r} was answered too; the substance "
+                        "question is not asked on an excluded post"
+                    ),
+                    case_id=case.case_id,
+                )
+            )
+        return Ok("exclusion")
     if substance is None:
         return Err(
             HoldoutReleaseError(
@@ -284,16 +347,59 @@ def _verify_digests(
     return Ok(None)
 
 
-def _read_model[T: BaseModel](
-    path: Path, model: type[T], *, operation: str
+@cache
+def interchange_validator(interchange_format: str) -> Draft7Validator:
+    """The committed validator for one assay interchange format."""
+    schema_path = runtime_resource(
+        "contracts", "relevance", ASSAY_SCHEMA_FILES[interchange_format]
+    )
+    return Draft7Validator(json.loads(schema_path.read_text()))
+
+
+def _schema_violations(interchange_format: str, document: object) -> list[str]:
+    """Every way `document` departs from its committed schema, in file order."""
+    validator = interchange_validator(interchange_format)
+    return [
+        f"{'/'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
+        for error in sorted(validator.iter_errors(document), key=lambda e: list(e.absolute_path))
+    ]
+
+
+def _read_interchange[T: BaseModel](
+    path: Path, model: type[T], interchange_format: str, *, operation: str
 ) -> Result[T, HoldoutReleaseError]:
-    """Parse one interchange file at the IO boundary."""
+    """Read one interchange file at the IO boundary, contract first.
+
+    The committed schema is checked before the model parses, so a file that
+    violates the published contract is reported as a contract violation with
+    every offending path named, rather than as whichever field the model
+    happened to reach first.
+    """
     try:
-        return Ok(model.model_validate_json(path.read_bytes()))
+        document = json.loads(path.read_bytes())
     except OSError as exc:
         return Err(
             HoldoutReleaseError(operation=operation, detail=f"cannot read {path}: {exc}")
         )
+    except ValueError as exc:
+        return Err(
+            HoldoutReleaseError(operation=operation, detail=f"{path} is not valid JSON: {exc}")
+        )
+
+    violations = _schema_violations(interchange_format, document)
+    if violations:
+        return Err(
+            HoldoutReleaseError(
+                operation=operation,
+                detail=(
+                    f"{path} does not conform to {interchange_format}: "
+                    + "; ".join(violations)
+                ),
+            )
+        )
+
+    try:
+        return Ok(model.model_validate(document))
     except ValidationError as exc:
         return Err(
             HoldoutReleaseError(
@@ -412,15 +518,19 @@ def load_release_labels(
                 detail="labels and key must be supplied together",
             )
         )
-    labels = _read_model(inputs.labels_path, AssayLabelsFile, operation="load_labels")
+    labels = _read_interchange(
+        inputs.labels_path, AssayLabelsFile, LABELS_FORMAT, operation="load_labels"
+    )
     if isinstance(labels, Err):
         return labels
-    key = _read_model(inputs.key_path, AssayKeyFile, operation="load_key")
+    key = _read_interchange(inputs.key_path, AssayKeyFile, KEY_FORMAT, operation="load_key")
     if isinstance(key, Err):
         return key
     packet: AssayPacketFile | None = None
     if inputs.packet_path is not None:
-        read = _read_model(inputs.packet_path, AssayPacketFile, operation="load_packet")
+        read = _read_interchange(
+            inputs.packet_path, AssayPacketFile, PACKET_FORMAT, operation="load_packet"
+        )
         if isinstance(read, Err):
             return read
         packet = read.value
@@ -490,6 +600,11 @@ class HoldoutReleaseOutcome:
     dossier_summary_id: str | None = None
     dossier_revision: str | None = None
     already_completed: bool = False
+    #: Trace ids of complete phase runs an earlier attempt on this hold left
+    #: unlinked. Reported whether or not this attempt succeeded, so the work a
+    #: crash abandoned stays visible rather than being silently repeated.
+    abandoned_traces: tuple[str, ...] = ()
+    resumed_scan: bool = False
     error: str | None = None
     error_category: ReleaseErrorCategory | None = None
 
@@ -510,6 +625,8 @@ class HoldoutReleaseOutcome:
             "dossier_summary_id": self.dossier_summary_id,
             "dossier_revision": self.dossier_revision,
             "already_completed": self.already_completed,
+            "abandoned_traces": list(self.abandoned_traces),
+            "resumed_scan": self.resumed_scan,
             "error": self.error,
             "error_category": self.error_category,
         }
@@ -538,6 +655,18 @@ class HoldoutReleaseReport:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseProject:
+    """The hold's own project and route, as configured today.
+
+    Resolved from the identity frozen on the hold, never from a fresh routing
+    pass over the post: the route may have changed, the project may not.
+    """
+
+    route: KeywordRoute
+    project: ProjectTarget
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseRuntime:
     """The current configuration one hold's generation runs against.
 
@@ -552,6 +681,7 @@ class ReleaseRuntime:
     project: ProjectTarget
     dossiers: Mapping[str, DossierSummary]
     dossier_revision: str | None
+    resumed_scan: bool = False
 
 
 def _age_seconds(held_at: str) -> float:
@@ -612,6 +742,55 @@ def resolve_release(
     return Ok(ReleaseResolution(authority="recorded_action", action=recorded.action))
 
 
+def validate_label_targets(
+    state: StateManager, labels: ReleaseLabels
+) -> Result[None, HoldoutReleaseError]:
+    """Check every label points at a real hold on its own project.
+
+    Runs once, before the first hold is claimed. `resolve_release` makes the
+    same check per record, but only when that record's turn comes — which
+    would release the first forty holds and then discover on the forty-first
+    that the key belongs to a different corpus. A wrong pair of files is an
+    operator mistake about the whole run, so it is caught while the run has
+    changed nothing.
+
+    A label whose evaluation is held but already released is not an error: it
+    is reported as an unmatched case at the end. Only a label pointing at an
+    evaluation that was never held, or at a hold made for another project,
+    refuses the run.
+    """
+    for evaluation_id, resolved in sorted(labels.by_evaluation.items()):
+        held = state.holdouts.get_by_evaluation(evaluation_id)
+        if held is None:
+            return Err(
+                HoldoutReleaseError(
+                    operation="validate_label_targets",
+                    detail=(
+                        f"the key maps case {resolved.case_id} to evaluation "
+                        f"{evaluation_id}, which was never held; these labels were "
+                        "written for a different population"
+                    ),
+                    evaluation_id=evaluation_id,
+                    case_id=resolved.case_id,
+                )
+            )
+        if resolved.project_key != held.frozen_input.project_key:
+            return Err(
+                HoldoutReleaseError(
+                    operation="validate_label_targets",
+                    detail=(
+                        f"case {resolved.case_id} is labelled for project "
+                        f"{resolved.project_key!r} but hold {held.id} froze project "
+                        f"{held.frozen_input.project_key!r}"
+                    ),
+                    holdout_id=held.id,
+                    evaluation_id=evaluation_id,
+                    case_id=resolved.case_id,
+                )
+            )
+    return Ok(None)
+
+
 def _resolve_route(
     registry: RuntimeRegistry, holdout: Holdout
 ) -> Result[KeywordRoute, HoldoutReleaseError]:
@@ -662,14 +841,55 @@ def _resolve_route(
     return Ok(same_project[0])
 
 
+def validate_frozen_project(
+    state: StateManager, holdout: Holdout
+) -> Result[ReleaseProject | None, HoldoutReleaseError]:
+    """Check the hold's own frozen project is still configured.
+
+    Runs before *every* completion, a drop included. A drop writes no
+    evaluation, but it still spends the hold: completing one against a project
+    that has since been deleted records a graded outcome for a project nobody
+    can account for, and the hold cannot be re-run afterwards to fix it. A
+    configuration refusal leaves it pending, which is recoverable.
+
+    `None` is the answer for a hold that froze no project at all — a decision
+    made with `KEYWORD_PREFILTER=false` that resolved none. There is nothing
+    to validate there, and nothing to validate it against; a *graded* release
+    of such a hold is already refused upstream, because a label always names a
+    project and no project can match an absent one.
+    """
+    if holdout.frozen_input.project_key is None:
+        return Ok(None)
+    registry = state.load_runtime_registry()
+    route = _resolve_route(registry, holdout)
+    if isinstance(route, Err):
+        return route
+    project = registry.projects.get(route.value.project_key)
+    if project is None:
+        return Err(
+            HoldoutReleaseError(
+                operation="validate_frozen_project",
+                detail=(
+                    f"project {route.value.project_key!r} is no longer active; "
+                    "restore it and retry"
+                ),
+                category="config",
+                holdout_id=holdout.id,
+            )
+        )
+    return Ok(ReleaseProject(route=route.value, project=project))
+
+
 def prepare_release_runtime(
     state: StateManager, holdout: Holdout
 ) -> Result[ReleaseRuntime, HoldoutReleaseError]:
-    """Validate today's gates for one hold and open its release scan.
+    """Validate today's generation gates for one hold and open its release scan.
 
-    Every refusal below leaves the hold retryable: the configuration is what
-    is wrong, not the hold, and repairing it must let the same hold through
-    however old it is.
+    Builds on the frozen-project check every path shares, and adds the gates
+    only a post that will actually be drafted has to clear. Every refusal
+    below leaves the hold retryable: the configuration is what is wrong, not
+    the hold, and repairing it must let the same hold through however old it
+    is.
     """
     message = state.load_post(holdout.post_id)
     if message is None:
@@ -682,23 +902,22 @@ def prepare_release_runtime(
             )
         )
 
-    registry = state.load_runtime_registry()
-    route = _resolve_route(registry, holdout)
-    if isinstance(route, Err):
-        return route
-    project = registry.projects.get(route.value.project_key)
-    if project is None:
+    validated = validate_frozen_project(state, holdout)
+    if isinstance(validated, Err):
+        return validated
+    if validated.value is None:
         return Err(
             HoldoutReleaseError(
                 operation="prepare_release",
                 detail=(
-                    f"project {route.value.project_key!r} is no longer active; "
-                    "restore it and retry"
+                    "hold froze no project, so there is no project to draft a reply "
+                    "for; it can only be released as a drop"
                 ),
                 category="config",
                 holdout_id=holdout.id,
             )
         )
+    route, project = validated.value.route, validated.value.project
 
     if message.author_id.strip() and state.is_author_blocked(
         platform=message.platform, author_id=message.author_id
@@ -715,7 +934,7 @@ def prepare_release_runtime(
             )
         )
 
-    dossiers, dossier_errors = load_project_dossiers(registry.projects)
+    dossiers, dossier_errors = load_project_dossiers(state.load_runtime_registry().projects)
     if dossier_errors:
         return Err(
             HoldoutReleaseError(
@@ -749,17 +968,30 @@ def prepare_release_runtime(
                 )
             )
 
-    scan_id = state.start_scan(
+    # An attempt that crashed between generating and persisting left its phase
+    # runs complete, durable and unlinked under a release scan that was never
+    # closed. Rejoining that scan keeps one hold's whole release history in one
+    # place, so the abandoned traces stay attributable to the hold that paid
+    # for them instead of accumulating as orphan scans nothing points at.
+    # Linking only ever names this attempt's own contributor ids, so the older
+    # rows stay unlinked and are not mistaken for evidence of this outcome.
+    resumed_scan_id = state.holdouts.abandoned_release_scan(holdout.post_id)
+    scan_id = resumed_scan_id or state.start_scan(
         environment=_config.SCOUT_ENVIRONMENT, run_kind="holdout_release"
     )
+    if resumed_scan_id is not None:
+        logger.info(
+            "holdout %s resuming abandoned release scan %s", holdout.id, resumed_scan_id
+        )
     return Ok(
         ReleaseRuntime(
             scan_id=scan_id,
             message=message,
-            route=route.value,
+            route=route,
             project=project,
             dossiers=dossiers,
             dossier_revision=dossier_revision,
+            resumed_scan=resumed_scan_id is not None,
         )
     )
 
@@ -867,7 +1099,36 @@ async def release_one_holdout(
     one transaction, so a crash either leaves the hold claimed and retryable
     with nothing else written, or leaves it released with its target in place.
     A claim superseded while it was away cannot complete at all.
+
+    Evidence an earlier attempt abandoned is read before this attempt starts
+    and reported on whatever outcome it reaches, so a crash that cost real
+    model calls is visible in the run that follows it instead of being
+    silently written off.
     """
+    abandoned = tuple(
+        run.trace_id for run in state.holdouts.abandoned_release_evidence(holdout.post_id)
+    )
+    outcome = await _attempt_release(
+        state=state,
+        tracer=tracer,
+        feedback=feedback,
+        holdout=holdout,
+        labels=labels,
+        owner=owner,
+    )
+    return outcome if not abandoned else replace(outcome, abandoned_traces=abandoned)
+
+
+async def _attempt_release(
+    *,
+    state: StateManager,
+    tracer: object,
+    feedback: object,
+    holdout: Holdout,
+    labels: ReleaseLabels,
+    owner: str,
+) -> HoldoutReleaseOutcome:
+    """One release attempt, from claim to terminal outcome."""
     claimed = state.holdouts.claim(
         holdout.id, owner=owner, ttl_seconds=RELEASE_CLAIM_TTL_SECONDS
     )
@@ -897,6 +1158,14 @@ async def release_one_holdout(
     if isinstance(resolution, Err):
         return _fail(state, holdout, claim, resolution.error)
     release = resolution.value
+
+    # The frozen project is validated on every path, a drop included. A drop
+    # generates nothing, but it still spends the hold: completing one against
+    # a project that has since been deleted would record a graded outcome
+    # nobody can account for, and the hold cannot be re-run to correct it.
+    validated_project = validate_frozen_project(state, holdout)
+    if isinstance(validated_project, Err):
+        return _fail(state, holdout, claim, validated_project.error, resolution=release)
 
     if release.action == "drop":
         # Stops before generation. No draft, no target evaluation, no event.
@@ -1061,6 +1330,7 @@ async def release_one_holdout(
         surface_status=surface_status,
         dossier_summary_id=runtime.project.dossier_summary_id,
         dossier_revision=runtime.dossier_revision,
+        resumed_scan=runtime.resumed_scan,
     )
 
 
@@ -1071,21 +1341,28 @@ async def release_pending_holdouts(
     feedback: object,
     labels: ReleaseLabels,
     owner: str | None = None,
-) -> HoldoutReleaseReport:
+) -> Result[HoldoutReleaseReport, HoldoutReleaseError]:
     """Attempt every eligible hold, oldest first, and report each outcome.
 
-    No age cutoff and no early exit: one hold whose project was deleted must
-    not strand the twenty behind it. Every failure is recorded on its own
-    hold, which stays pending for a later run.
+    Refuses the whole run only before it starts, and only for a mistake about
+    the whole run: labels that were written for a different population. Once
+    the first hold is claimed there is no early exit and no age cutoff — one
+    hold whose project was deleted must not strand the twenty behind it, and
+    neither must one that fails in a way nothing here anticipated. Every
+    failure is recorded on its own hold, which stays pending for a later run.
     """
+    targets = validate_label_targets(state, labels)
+    if isinstance(targets, Err):
+        return targets
+
     worker = owner or f"holdout-release-{uuid.uuid4().hex[:12]}"
     eligible = state.holdouts.list_releasable()
     eligible_evaluations = {holdout.evaluation_id for holdout in eligible}
 
     outcomes: list[HoldoutReleaseOutcome] = []
     for holdout in eligible:
-        outcomes.append(
-            await release_one_holdout(
+        try:
+            outcome = await release_one_holdout(
                 state=state,
                 tracer=tracer,
                 feedback=feedback,
@@ -1093,7 +1370,20 @@ async def release_pending_holdouts(
                 labels=labels,
                 owner=worker,
             )
-        )
+        except Exception as exc:
+            # Deliberately broad, and deliberately not a re-raise. Whatever
+            # went wrong on this hold, the ones behind it are unaffected and
+            # are still owed an attempt. The hold keeps whatever claim it
+            # took; its lease expiring is what returns it to the queue, so a
+            # failure that escaped every handler above cannot lose it either.
+            logger.exception("holdout %s release raised", holdout.id)
+            outcome = _outcome(
+                holdout,
+                "failed",
+                error=f"{type(exc).__name__}: {exc}",
+                error_category="unexpected",
+            )
+        outcomes.append(outcome)
 
     unmatched = tuple(
         sorted(
@@ -1102,13 +1392,15 @@ async def release_pending_holdouts(
             if evaluation_id not in eligible_evaluations
         )
     )
-    return HoldoutReleaseReport(
-        attempted=len(outcomes),
-        released=sum(1 for outcome in outcomes if outcome.status == "released"),
-        failed=sum(1 for outcome in outcomes if outcome.status == "failed"),
-        skipped=sum(1 for outcome in outcomes if outcome.status == "skipped"),
-        outcomes=tuple(outcomes),
-        unmatched_label_cases=unmatched,
+    return Ok(
+        HoldoutReleaseReport(
+            attempted=len(outcomes),
+            released=sum(1 for outcome in outcomes if outcome.status == "released"),
+            failed=sum(1 for outcome in outcomes if outcome.status == "failed"),
+            skipped=sum(1 for outcome in outcomes if outcome.status == "skipped"),
+            outcomes=tuple(outcomes),
+            unmatched_label_cases=unmatched,
+        )
     )
 
 
@@ -1118,14 +1410,17 @@ __all__: Sequence[str] = (
     "AssayLabelCase",
     "AssayLabelsFile",
     "AssayPacketFile",
+    "ASSAY_SCHEMA_FILES",
     "HoldoutReleaseError",
     "HoldoutReleaseOutcome",
     "HoldoutReleaseReport",
-    "NO_EXCLUSION_VALUES",
+    "NO_EXCLUSION",
     "ReleaseInputs",
     "ReleaseLabels",
+    "ReleaseProject",
     "ResolvedLabel",
     "action_for_label",
+    "interchange_validator",
     "label_from_case",
     "load_release_labels",
     "prepare_release_runtime",
@@ -1134,4 +1429,6 @@ __all__: Sequence[str] = (
     "released_label_record",
     "resolve_labels",
     "resolve_release",
+    "validate_frozen_project",
+    "validate_label_targets",
 )

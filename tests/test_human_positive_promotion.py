@@ -172,12 +172,15 @@ def test_promotion_may_reroute_and_holdout_release_may_not() -> None:
 
 
 def test_both_workflows_share_one_response_phase_runtime() -> None:
-    """One definition of "record the snapshot, build the phase configs"."""
+    """One definition of "record the snapshot, build the phase configs".
+
+    Both names resolve to the same function object, so neither workflow can
+    drift into its own copy of the setup the other depends on.
+    """
     import inspect
 
     from scout.holdouts import release as release_module
 
+    assert release_module.build_response_phase_runtime is promotion.build_response_phase_runtime
     assert "build_response_phase_runtime" in inspect.getsource(promotion.promote_negative_case)
-    assert "build_response_phase_runtime" in inspect.getsource(
-        release_module.release_one_holdout
-    )
+    assert "build_response_phase_runtime" in inspect.getsource(release_module)

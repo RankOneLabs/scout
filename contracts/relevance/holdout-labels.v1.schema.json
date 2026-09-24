@@ -87,7 +87,13 @@
   "$defs": {
     "resolution": {
       "title": "How one assay.label-packet-labels/v3 case resolves",
-      "description": "Precedence, first match wins. 1. `exclusion` is anything other than the empty string or the literal \"none\", compared stripped and case-folded: an exclusion fired, and the label is `exclusion`. 2. `substance` is \"in_post\": the label is `in_post`. 3. `substance` is \"pointer\": the label is `pointer`. 4. `substance` is \"none\": the label is `none`. Anything else is refused. In particular a null `substance` with no exclusion is an incomplete answer, not a `none` — the reviewer was asked what the post carries and did not say — and an unrecognised `substance` value never falls back to a label that happens to be safe."
+      "description": "Mirrors assay's own router rather than restating it. In assay, `exclusion` is answered from a closed set of catalogue names whose not-fired member is the literal \"none\"; the exclusion question is asked first and ends the case, so `substance` is only reached — and only answered — by a post that cleared it. Scout does not restate the rest of that set: the exclusion names belong to the catalogue and version with it, so any value other than \"none\" is read as the name of whichever exclusion fired. Precedence, first match wins, compared stripped and case-folded. 1. `exclusion` is neither blank nor \"none\": an exclusion fired, and the label is `exclusion`. 2. `substance` is \"in_post\": the label is `in_post`. 3. `substance` is \"pointer\": the label is `pointer`. 4. `substance` is \"none\": the label is `none`. Anything else is refused, never resolved to whichever label happens to be safe.",
+      "refusals": {
+        "blank exclusion": "The exclusion question is always asked and always answered from the catalogue's set, which holds no blank. A blank means the answer was not recorded, and is not read as not-fired.",
+        "exclusion beside a substance": "An excluded post is never asked the substance question, so its answer is absent rather than a value. Assay refuses the pair outright; reading past it here would grade a post on an answer the reviewer was never shown.",
+        "null substance with no exclusion": "An incomplete answer, not a `none` — the reviewer was asked what the post carries and did not say.",
+        "unrecognised substance": "Never falls back to a label."
+      }
     }
   }
 }

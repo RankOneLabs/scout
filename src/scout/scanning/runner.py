@@ -1399,7 +1399,16 @@ async def score_messages(
                     "execution_context": execution_context,
                     "projects": projects,
                     "jev_runtime": jev_runtime,
-                    "holdout_sampler": sampler,
+                    # Sampling is drawn once per post and then read, never
+                    # re-drawn. A post whose decision is already recorded
+                    # carries its own answer in `selected_for_holdout`; a
+                    # rescore that drew again would let a changed
+                    # RELEVANCE_HOLDOUT_RATE re-roll a settled decision.
+                    "holdout_sampler": (
+                        None
+                        if state.holdouts.sampling_is_settled_for_post(post_id) is True
+                        else sampler
+                    ),
                 },
             )
         except asyncio.CancelledError:

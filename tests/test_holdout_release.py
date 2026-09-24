@@ -8,8 +8,12 @@ surface event, a fenced stale completion — is a claim about what committed.
 
 from __future__ import annotations
 
+import asyncio
+import itertools
 import json
+import threading
 from collections.abc import Generator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +30,7 @@ from scout.config import Account, Message, RelevanceResult
 from scout.dossiers.resolver import DossierSummary
 from scout.errors import LLMError
 from scout.holdouts.release import (
-    NO_EXCLUSION_VALUES,
+    NO_EXCLUSION,
     AssayKeyCase,
     AssayKeyFile,
     AssayLabelCase,
@@ -98,7 +102,9 @@ def _case(
 @pytest.mark.parametrize(
     ("case", "label", "action"),
     [
-        pytest.param(_case(exclusion="promo_spam"), "exclusion", "drop", id="exclusion"),
+        pytest.param(
+            _case(exclusion="promo_spam", substance=None), "exclusion", "drop", id="exclusion"
+        ),
         pytest.param(_case(substance="in_post"), "in_post", "respond", id="in_post"),
         pytest.param(_case(substance="pointer"), "pointer", "review", id="pointer"),
         pytest.param(_case(substance="none"), "none", "drop", id="none"),
@@ -113,22 +119,40 @@ def test_every_label_maps_to_its_action(
     assert release_module.action_for_label(resolved.value) == action
 
 
-def test_an_exclusion_beats_a_substance_answer() -> None:
-    """Precedence, not a merge: an excluded post drops whatever it carried."""
+def test_an_exclusion_beside_a_substance_answer_is_refused() -> None:
+    """A state assay's own router refuses, so a saved file cannot hold it.
+
+    The exclusion question ends the case, so an excluded post is never asked
+    what it carries. Reading past the contradiction — in either direction —
+    would grade the post on an answer the reviewer was never shown.
+    """
     resolved = label_from_case(_case(exclusion="promo_spam", substance="in_post"))
-    assert isinstance(resolved, Ok)
-    assert resolved.value == "exclusion"
+    assert isinstance(resolved, Err)
+    assert "is not asked on an excluded post" in resolved.error.detail
 
 
-@pytest.mark.parametrize("value", ["", "none", "NONE", "  none  "])
-def test_a_blank_or_none_exclusion_did_not_fire(value: str) -> None:
+@pytest.mark.parametrize("value", ["none", "NONE", "  none  "])
+def test_only_the_literal_none_exclusion_did_not_fire(value: str) -> None:
     resolved = label_from_case(_case(exclusion=value, substance="in_post"))
     assert isinstance(resolved, Ok)
     assert resolved.value == "in_post"
 
 
-def test_the_no_exclusion_sentinels_are_the_documented_two() -> None:
-    assert frozenset({"", "none"}) == NO_EXCLUSION_VALUES
+def test_the_no_exclusion_sentinel_is_the_one_assay_writes() -> None:
+    assert NO_EXCLUSION == "none"
+
+
+def test_a_blank_exclusion_is_refused_rather_than_read_as_not_fired() -> None:
+    """The dangerous direction, pinned.
+
+    Assay answers `exclusion` from a closed set of catalogue names holding no
+    blank, so a blank means the answer was not recorded. Reading it as
+    not-fired would release the post on its substance answer as though a
+    reviewer had cleared it.
+    """
+    resolved = label_from_case(_case(exclusion="", substance="in_post"))
+    assert isinstance(resolved, Err)
+    assert "no exclusion answer was recorded" in resolved.error.detail
 
 
 def test_needs_thread_does_not_change_the_action() -> None:
@@ -169,6 +193,8 @@ def _key(*cases: AssayKeyCase, name: str = "round-6", digest: str = _DIGEST) -> 
         sitting="first",
         digest=digest,
         plan_digest=_PLAN,
+        seed="seed-1",
+        strata={"held": len(cases)},
         cases=list(cases),
     )
 
@@ -274,7 +300,7 @@ def test_one_malformed_label_refuses_the_whole_file() -> None:
 def test_a_mixed_file_resolves_every_label_it_carries() -> None:
     resolved = resolve_labels(
         _labels(
-            _case(case_id=1, exclusion="promo"),
+            _case(case_id=1, exclusion="promo", substance=None),
             _case(case_id=2, substance="in_post"),
             _case(case_id=3, substance="pointer"),
             _case(case_id=4, substance="none"),
@@ -482,10 +508,17 @@ def _draft() -> StructuredDraftOutput:
     )
 
 
+#: Distinguishes one seeded attempt's traces from the next. A real phase run
+#: gets a fresh trace id per model call; a fixture that reused one would trip
+#: the trace_id UNIQUE as soon as two attempts shared a scan.
+_seeded_attempts = itertools.count()
+
+
 def _seed_response_phase_runs(
     state: StateManager, scan_id: int, post_id: int
 ) -> tuple[int, ...]:
     """The reply_draft and critic runs a release actually produces."""
+    attempt = next(_seeded_attempts)
     snapshot = state.conn.execute(
         "SELECT id FROM feedback_snapshots WHERE scan_id = ?", (scan_id,)
     ).fetchone()
@@ -508,7 +541,7 @@ def _seed_response_phase_runs(
             post_id=post_id,
             snapshot_phase_id=phases[phase],
             phase=phase,
-            trace_id=f"trace-{phase}-{post_id}-{scan_id}",
+            trace_id=f"trace-{phase}-{post_id}-{scan_id}-{attempt}",
             model="model",
             status="complete",
         )
@@ -567,7 +600,8 @@ def release_env(sm: StateManager, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
     return {"state": sm, "calls": calls, "registry": registry, "seed": _seed_response_phase_runs}
 
 
-async def _release(env: dict[str, Any], labels: ReleaseLabels | None = None) -> Any:
+async def _release_result(env: dict[str, Any], labels: ReleaseLabels | None = None) -> Any:
+    """The raw Result, for the cases that assert a whole-run refusal."""
     return await release_pending_holdouts(
         state=env["state"],
         tracer=Mock(),
@@ -577,10 +611,28 @@ async def _release(env: dict[str, Any], labels: ReleaseLabels | None = None) -> 
     )
 
 
+async def _release(env: dict[str, Any], labels: ReleaseLabels | None = None) -> Any:
+    released = await _release_result(env, labels)
+    assert isinstance(released, Ok), released
+    return released.value
+
+
 def _labels_for(evaluation_id: int, label_case: AssayLabelCase) -> ReleaseLabels:
+    return _labels_for_project(evaluation_id, label_case, "agent-ops")
+
+
+def _labels_for_project(
+    evaluation_id: int, label_case: AssayLabelCase, project_key: str
+) -> ReleaseLabels:
     resolved = resolve_labels(
         _labels(label_case),
-        _key(_key_case(case_id=label_case.case_id, evaluation_id=evaluation_id)),
+        _key(
+            _key_case(
+                case_id=label_case.case_id,
+                evaluation_id=evaluation_id,
+                project_key=project_key,
+            )
+        ),
     )
     assert isinstance(resolved, Ok), resolved
     return resolved.value
@@ -641,7 +693,9 @@ async def test_a_graded_false_negative_drafts(release_env: dict[str, Any]) -> No
 async def test_a_graded_drop_never_drafts(release_env: dict[str, Any]) -> None:
     """The original decision was respond; the human excludes it, so it stops."""
     _holdout_id, evaluation_id = _hold(release_env["state"], action="respond")
-    labels = _labels_for(evaluation_id, _case(case_id=1, exclusion="promo_spam"))
+    labels = _labels_for(
+        evaluation_id, _case(case_id=1, exclusion="promo_spam", substance=None)
+    )
 
     report = await _release(release_env, labels)
 
@@ -680,30 +734,83 @@ async def test_release_records_the_current_dossier_identity(
     assert target is not None and target["dossier_summary_id"] == "d-current"
 
 
-async def test_a_wrong_project_label_is_refused_without_fallback(
+async def test_a_wrong_project_label_refuses_the_run_before_anything_is_claimed(
     release_env: dict[str, Any],
 ) -> None:
-    _holdout_id, evaluation_id = _hold(release_env["state"], action="respond")
+    """Checked up front: a wrong pair of files is a mistake about the whole run.
+
+    Discovering it on the fortieth hold would mean thirty-nine already
+    released under labels that may be just as wrong.
+    """
+    state: StateManager = release_env["state"]
+    holdout_id, evaluation_id = _hold(state, action="respond")
     resolved = resolve_labels(
         _labels(_case(case_id=1, substance="in_post")),
         _key(_key_case(case_id=1, evaluation_id=evaluation_id, project_key="other-project")),
     )
     assert isinstance(resolved, Ok)
 
-    report = await _release(release_env, resolved.value)
+    released = await _release_result(release_env, resolved.value)
 
-    assert report.failed == 1
-    assert "does not match the frozen project" in report.outcomes[0].error
+    assert isinstance(released, Err)
+    assert "froze project" in released.error.detail
     assert release_env["calls"] == []
+    held = state.holdouts.get(holdout_id)
+    assert held is not None
+    assert held.status == "pending" and held.attempts == 0
 
 
-async def test_a_label_for_no_pending_hold_is_reported(release_env: dict[str, Any]) -> None:
+async def test_a_label_for_an_evaluation_that_was_never_held_refuses_the_run(
+    release_env: dict[str, Any],
+) -> None:
+    """Labels written for a different population, caught before any release."""
     _hold(release_env["state"], action="respond")
     labels = _labels_for(9999, _case(case_id=3, substance="in_post"))
 
-    report = await _release(release_env, labels)
+    released = await _release_result(release_env, labels)
 
-    assert report.unmatched_label_cases == (3,)
+    assert isinstance(released, Err)
+    assert "never held" in released.error.detail
+
+
+async def test_a_label_for_an_already_released_hold_is_reported_not_refused(
+    release_env: dict[str, Any],
+) -> None:
+    """A re-run over last week's labels is ordinary, not an operator mistake."""
+    state: StateManager = release_env["state"]
+    _holdout_id, evaluation_id = _hold(state, action="respond")
+    labels = _labels_for(evaluation_id, _case(case_id=3, substance="in_post"))
+
+    first = await _release(release_env, labels)
+    assert first.released == 1
+
+    second = await _release(release_env, labels)
+
+    assert second.attempted == 0
+    assert second.unmatched_label_cases == (3,)
+
+
+def test_the_per_record_project_guard_stands_behind_the_preflight(
+    sm: StateManager,
+) -> None:
+    """Defence in depth: resolve_release refuses the same mismatch on its own.
+
+    The pre-flight is what an operator meets; this is what protects a caller
+    releasing a single hold without one.
+    """
+    _holdout_id, evaluation_id = _hold(sm, action="respond")
+    held = sm.holdouts.get_by_evaluation(evaluation_id)
+    assert held is not None
+    resolved = resolve_labels(
+        _labels(_case(case_id=1, substance="in_post")),
+        _key(_key_case(case_id=1, evaluation_id=evaluation_id, project_key="other-project")),
+    )
+    assert isinstance(resolved, Ok)
+
+    outcome = resolve_release(sm, held, resolved.value)
+
+    assert isinstance(outcome, Err)
+    assert "does not match the frozen project" in outcome.error.detail
 
 
 # --- the gates ---------------------------------------------------------------
@@ -798,20 +905,19 @@ async def test_a_failing_hold_does_not_stop_the_others(
     release_env: dict[str, Any],
 ) -> None:
     state: StateManager = release_env["state"]
-    monkeypatch_target, evaluation_id = _hold(state, "0x1", action="respond")
-    _hold(state, "0x2", action="respond", project_key="agent-ops")
-    resolved = resolve_labels(
-        _labels(_case(case_id=1, substance="in_post")),
-        _key(_key_case(case_id=1, evaluation_id=evaluation_id, project_key="other")),
-    )
-    assert isinstance(resolved, Ok)
+    # A hold whose frozen project no longer has a route fails its own config
+    # gate; the one behind it is untouched and must still be attempted.
+    stranded, _stranded_evaluation = _hold(state, "0x1", action="respond", project_key="gone")
+    healthy, _healthy_evaluation = _hold(state, "0x2", action="respond")
 
-    report = await _release(release_env, resolved.value)
+    report = await _release(release_env)
 
     assert report.attempted == 2
     assert report.failed == 1
     assert report.released == 1
-    assert monkeypatch_target in {o.holdout_id for o in report.outcomes}
+    by_holdout = {outcome.holdout_id: outcome for outcome in report.outcomes}
+    assert by_holdout[stranded].status == "failed"
+    assert by_holdout[healthy].status == "released"
 
 
 # --- concurrency and crash safety -------------------------------------------
@@ -1137,7 +1243,8 @@ async def test_a_committed_release_reads_back_idempotently(
         labels=ReleaseLabels(by_evaluation={}),
         owner="worker-2",
     )
-    assert second.attempted == 0
+    assert isinstance(second, Ok)
+    assert second.value.attempted == 0
 
     from scout.holdouts.release import release_one_holdout
 
@@ -1176,3 +1283,558 @@ async def test_model_calls_happen_outside_every_database_transaction(
     await _release(release_env)
 
     assert seen == [False]
+
+
+# --- the committed interchange, enforced -------------------------------------
+
+
+def _write(path: Path, document: dict[str, Any]) -> Path:
+    path.write_text(json.dumps(document))
+    return path
+
+
+def _labels_document(**overrides: Any) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "format": "assay.label-packet-labels/v3",
+        "packet": "round-6",
+        "packet_digest": _DIGEST,
+        "plan_digest": _PLAN,
+        "reviewer": "reviewer",
+        "saved_at": "2026-09-24T00:00:00Z",
+        "cases": [
+            {
+                "case_id": 1,
+                "exclusion": "none",
+                "needs_thread": False,
+                "substance": "in_post",
+                "note": None,
+            }
+        ],
+    }
+    document.update(overrides)
+    return document
+
+
+def _key_document(**overrides: Any) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "format": "assay.label-packet-key/v2",
+        "name": "round-6",
+        "sitting": "first",
+        "digest": _DIGEST,
+        "plan_digest": _PLAN,
+        "seed": "seed-1",
+        "strata": {"held": 1},
+        "cases": [
+            {
+                "case_id": 1,
+                "evaluation_id": 1,
+                "project_key": "agent-ops",
+                "production_decision": True,
+                "production_score": 1.0,
+            }
+        ],
+    }
+    document.update(overrides)
+    return document
+
+
+def _inputs(tmp_path: Path, labels: dict[str, Any], key: dict[str, Any]) -> ReleaseInputs:
+    return ReleaseInputs(
+        labels_path=_write(tmp_path / "labels.json", labels),
+        key_path=_write(tmp_path / "key.json", key),
+    )
+
+
+def test_conforming_files_load(tmp_path: Path) -> None:
+    resolved = load_release_labels(_inputs(tmp_path, _labels_document(), _key_document()))
+    assert isinstance(resolved, Ok), resolved
+    assert resolved.value.by_evaluation[1].label == "in_post"
+
+
+def test_a_labels_file_with_an_unknown_field_is_refused(tmp_path: Path) -> None:
+    """additionalProperties: false in the committed schema, enforced here."""
+    resolved = load_release_labels(
+        _inputs(tmp_path, _labels_document(rubric=["extra"]), _key_document())
+    )
+    assert isinstance(resolved, Err)
+    assert "assay.label-packet-labels/v3" in resolved.error.detail
+
+
+def test_a_labels_case_missing_note_is_refused(tmp_path: Path) -> None:
+    """`note` is required, nullable-but-present. An absent one is not v3."""
+    document = _labels_document()
+    del document["cases"][0]["note"]
+    resolved = load_release_labels(_inputs(tmp_path, document, _key_document()))
+    assert isinstance(resolved, Err)
+    assert "cases/0" in resolved.error.detail
+
+
+def test_a_key_missing_its_seed_is_refused(tmp_path: Path) -> None:
+    """A truncated or hand-made key, caught by the contract rather than used."""
+    document = _key_document()
+    del document["seed"]
+    resolved = load_release_labels(_inputs(tmp_path, _labels_document(), document))
+    assert isinstance(resolved, Err)
+    assert "assay.label-packet-key/v2" in resolved.error.detail
+
+
+def test_a_key_case_with_an_extra_field_is_refused(tmp_path: Path) -> None:
+    document = _key_document()
+    document["cases"][0]["human_label"] = "surfaced"
+    resolved = load_release_labels(_inputs(tmp_path, _labels_document(), document))
+    assert isinstance(resolved, Err)
+    assert "cases/0" in resolved.error.detail
+
+
+def test_a_wrong_format_string_is_refused(tmp_path: Path) -> None:
+    resolved = load_release_labels(
+        _inputs(
+            tmp_path,
+            _labels_document(format="assay.label-packet-labels/v2"),
+            _key_document(),
+        )
+    )
+    assert isinstance(resolved, Err)
+    assert "format" in resolved.error.detail
+
+
+def test_a_non_json_file_is_reported_as_one(tmp_path: Path) -> None:
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text("not json at all")
+    resolved = load_release_labels(
+        ReleaseInputs(
+            labels_path=labels_path,
+            key_path=_write(tmp_path / "key.json", _key_document()),
+        )
+    )
+    assert isinstance(resolved, Err)
+    assert "not valid JSON" in resolved.error.detail
+
+
+def test_a_blind_packet_is_validated_against_its_own_contract(tmp_path: Path) -> None:
+    packet = {
+        "format": "assay.label-packet/v1",
+        "name": "round-6",
+        "sitting": "first",
+        "digest": _DIGEST,
+        "plan_digest": _PLAN,
+        "rubric": [],
+        "cases": [{"case_id": 1, "text": "a post", "parent_text": None, "human_label": "yes"}],
+    }
+    resolved = load_release_labels(
+        ReleaseInputs(
+            labels_path=_write(tmp_path / "labels.json", _labels_document()),
+            key_path=_write(tmp_path / "key.json", _key_document()),
+            packet_path=_write(tmp_path / "packet.json", packet),
+        )
+    )
+    assert isinstance(resolved, Err)
+    assert "assay.label-packet/v1" in resolved.error.detail
+
+
+@pytest.mark.parametrize(
+    "interchange_format",
+    ["assay.label-packet-labels/v3", "assay.label-packet-key/v2", "assay.label-packet/v1"],
+)
+def test_every_interchange_format_has_a_committed_schema(interchange_format: str) -> None:
+    validator = release_module.interchange_validator(interchange_format)
+    assert validator.schema["properties"]["format"]["const"] == interchange_format
+    assert validator.schema["additionalProperties"] is False
+
+
+def test_the_models_and_the_committed_schemas_agree_on_required_fields() -> None:
+    """A model that drifts from its contract fails here, not in production."""
+    labels_schema = release_module.interchange_validator(
+        "assay.label-packet-labels/v3"
+    ).schema
+    assert set(labels_schema["required"]) <= set(AssayLabelsFile.model_fields)
+    case_schema = labels_schema["properties"]["cases"]["items"]
+    assert set(case_schema["required"]) == set(AssayLabelCase.model_fields)
+
+    key_schema = release_module.interchange_validator("assay.label-packet-key/v2").schema
+    assert set(key_schema["required"]) <= set(AssayKeyFile.model_fields)
+    key_case_schema = key_schema["properties"]["cases"]["items"]
+    assert set(key_case_schema["required"]) == set(AssayKeyCase.model_fields)
+
+
+# --- abandoned attempts stay attributable ------------------------------------
+
+
+def _abandoned_attempt(
+    state: StateManager, holdout_id: int, post_id: int
+) -> tuple[int, tuple[int, ...]]:
+    """The state a killed worker leaves: durable evidence, nothing closed.
+
+    The phase runs are complete and unlinked, the release scan was never
+    completed or failed, and the claim lease is left behind to expire. No
+    handler ran, because the process was gone before one could.
+    """
+    scan_id = state.start_scan(environment="test", run_kind="holdout_release")
+    runs = _seed_response_phase_runs(state, scan_id, post_id)
+    claim = state.holdouts.claim(holdout_id, owner="killed-worker", ttl_seconds=1)
+    assert isinstance(claim, Ok)
+    state.conn.execute(
+        "UPDATE relevance_holdouts SET claim_expires_at = ? WHERE id = ?",
+        ((datetime.now(UTC) - timedelta(hours=1)).isoformat(), holdout_id),
+    )
+    return scan_id, runs
+
+
+def _post_id_of(state: StateManager, holdout_id: int) -> int:
+    held = state.holdouts.get(holdout_id)
+    assert held is not None
+    return held.post_id
+
+
+def test_abandoned_evidence_is_attributable_to_the_hold(sm: StateManager) -> None:
+    """The model calls were made and paid for; their traces are still readable."""
+    holdout_id, _evaluation_id = _hold(sm, action="respond")
+    post_id = _post_id_of(sm, holdout_id)
+    _scan_id, runs = _abandoned_attempt(sm, holdout_id, post_id)
+
+    evidence = sm.holdouts.abandoned_release_evidence(post_id)
+
+    assert [run.id for run in evidence] == list(runs)
+    assert [run.phase for run in evidence] == ["reply_draft", "critic"]
+    assert all(run.trace_id for run in evidence)
+
+
+def test_an_ordinary_scan_s_evidence_is_not_read_as_an_abandoned_release(
+    sm: StateManager,
+) -> None:
+    """A live scan's in-flight phase runs are not a release attempt's leftovers."""
+    holdout_id, _evaluation_id = _hold(sm, action="respond")
+    post_id = _post_id_of(sm, holdout_id)
+    live_scan = sm.start_scan(environment="test", run_kind="live")
+    _seed_response_phase_runs(sm, live_scan, post_id)
+
+    assert sm.holdouts.abandoned_release_evidence(post_id) == []
+    assert sm.holdouts.abandoned_release_scan(post_id) is None
+
+
+def test_a_closed_release_scan_is_not_resumed(sm: StateManager) -> None:
+    """A handled failure closed its own scan; only a crash leaves one open."""
+    holdout_id, _evaluation_id = _hold(sm, action="respond")
+    post_id = _post_id_of(sm, holdout_id)
+    scan_id, _runs = _abandoned_attempt(sm, holdout_id, post_id)
+    assert sm.holdouts.abandoned_release_scan(post_id) == scan_id
+
+    sm.complete_scan(scan_id, messages_scanned=1, relevant_found=0)
+
+    assert sm.holdouts.abandoned_release_scan(post_id) is None
+    # The evidence itself stays attributable either way.
+    assert len(sm.holdouts.abandoned_release_evidence(post_id)) == 2
+
+
+async def test_a_retry_resumes_the_abandoned_release_scan(
+    release_env: dict[str, Any],
+) -> None:
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="respond")
+    post_id = _post_id_of(state, holdout_id)
+    abandoned_scan, _runs = _abandoned_attempt(state, holdout_id, post_id)
+    abandoned_traces = tuple(
+        run.trace_id for run in state.holdouts.abandoned_release_evidence(post_id)
+    )
+
+    report = await _release(release_env)
+
+    assert report.released == 1
+    outcome = report.outcomes[0]
+    assert outcome.scan_id == abandoned_scan
+    assert outcome.resumed_scan is True
+    assert outcome.abandoned_traces == abandoned_traces
+
+
+async def test_the_abandoned_runs_stay_unlinked_when_the_retry_commits(
+    release_env: dict[str, Any],
+) -> None:
+    """One attempt's outcome never claims another attempt's evidence."""
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="respond")
+    post_id = _post_id_of(state, holdout_id)
+    _abandoned_scan, abandoned_runs = _abandoned_attempt(state, holdout_id, post_id)
+
+    report = await _release(release_env)
+    target = report.outcomes[0].target_evaluation_id
+
+    linked = {
+        row["id"]
+        for row in state.conn.execute(
+            "SELECT id FROM evaluation_phase_runs WHERE evaluation_id = ?", (target,)
+        ).fetchall()
+    }
+    assert linked.isdisjoint(abandoned_runs)
+    assert len(linked) == 2
+    still_unlinked = state.conn.execute(
+        "SELECT COUNT(*) FROM evaluation_phase_runs "
+        "WHERE evaluation_id IS NULL AND id IN (?, ?)",
+        abandoned_runs,
+    ).fetchone()[0]
+    assert still_unlinked == 2
+
+
+async def test_a_handled_failure_reports_the_abandoned_work_on_the_next_run(
+    release_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash between generating and persisting costs calls; the retry says so."""
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="respond")
+    post_id = _post_id_of(state, holdout_id)
+
+    real_persist = release_module.persist_outcome
+    crashes = [True]
+
+    def _crash_once(*args: object, **kwargs: object) -> int:
+        if crashes:
+            crashes.pop()
+            raise RuntimeError("crashed after generation")
+        return real_persist(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(release_module, "persist_outcome", _crash_once)
+    first = await _release(release_env)
+    assert first.failed == 1
+    assert first.outcomes[0].abandoned_traces == ()
+
+    assert len(state.holdouts.abandoned_release_evidence(post_id)) == 2
+
+    retried = await _release(release_env)
+
+    assert retried.released == 1
+    assert len(retried.outcomes[0].abandoned_traces) == 2
+
+
+# --- overlapping workers -----------------------------------------------------
+
+
+def test_two_real_workers_racing_one_hold_produce_one_claim(tmp_path: Path) -> None:
+    """Concurrency asserted against real threads and real SQLite locking.
+
+    Two processes reaching the same hold is the ordinary case for a scheduled
+    release, so the compare-and-swap is tested by actually racing it rather
+    than by calling it twice in a row.
+    """
+    db_path = str(tmp_path / "scout.db")
+    with StateManager(db_path=db_path) as seeder:
+        holdout_id, _evaluation_id = _hold(seeder, action="respond")
+        seeder.commit()
+
+    barrier = threading.Barrier(2)
+    outcomes: list[Any] = []
+    lock = threading.Lock()
+
+    def worker(owner: str) -> None:
+        with StateManager(db_path=db_path) as state:
+            state.conn.execute("PRAGMA busy_timeout=5000")
+            barrier.wait()
+            claimed = state.holdouts.claim(holdout_id, owner=owner)
+            with lock:
+                outcomes.append(claimed)
+
+    threads = [threading.Thread(target=worker, args=(f"worker-{i}",)) for i in (1, 2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    won = [outcome for outcome in outcomes if isinstance(outcome, Ok)]
+    lost = [outcome for outcome in outcomes if isinstance(outcome, Err)]
+    assert len(won) == 1, outcomes
+    assert len(lost) == 1
+    assert "not claimable" in lost[0].error.detail
+    with StateManager(db_path=db_path) as reader:
+        held = reader.holdouts.get(holdout_id)
+        assert held is not None
+        assert held.status == "claimed"
+        assert held.claim_fence == 1
+        assert held.claim_token == won[0].value.token
+
+
+def test_a_superseded_worker_cannot_complete_behind_the_one_that_took_over(
+    tmp_path: Path,
+) -> None:
+    """The fence, exercised across two connections rather than one."""
+    db_path = str(tmp_path / "scout.db")
+    with StateManager(db_path=db_path) as seeder:
+        holdout_id, _evaluation_id = _hold(seeder, action="respond")
+        first = seeder.holdouts.claim(holdout_id, owner="slow-worker", ttl_seconds=1)
+        assert isinstance(first, Ok)
+        seeder.conn.execute(
+            "UPDATE relevance_holdouts SET claim_expires_at = ? WHERE id = ?",
+            ((datetime.now(UTC) - timedelta(hours=1)).isoformat(), holdout_id),
+        )
+        seeder.commit()
+
+    takeover: list[Any] = []
+
+    def worker() -> None:
+        with StateManager(db_path=db_path) as state:
+            state.conn.execute("PRAGMA busy_timeout=5000")
+            takeover.append(state.holdouts.claim(holdout_id, owner="fast-worker"))
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert isinstance(takeover[0], Ok)
+    assert takeover[0].value.fence == 2
+    with StateManager(db_path=db_path) as state:
+        state.conn.execute("PRAGMA busy_timeout=5000")
+        stale = state.holdouts.complete_release(
+            first.value, release_authority="recorded_action", release_action="drop"
+        )
+        assert isinstance(stale, Err)
+        assert "stale" in stale.error.detail
+        held = state.holdouts.get(holdout_id)
+        assert held is not None and held.status == "claimed"
+
+
+async def test_two_overlapping_release_runs_release_one_hold_once(
+    release_env: dict[str, Any],
+) -> None:
+    """Interleaved at every await, on one hold, with one surfaced event."""
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="respond")
+
+    first, second = await asyncio.gather(
+        _release_result(release_env),
+        _release_result(release_env),
+    )
+
+    assert isinstance(first, Ok) and isinstance(second, Ok)
+    assert first.value.released + second.value.released == 1
+    held = state.holdouts.get(holdout_id)
+    assert held is not None and held.status == "released"
+    assert state.conn.execute("SELECT COUNT(*) FROM surfaced_events").fetchone()[0] == 1
+    assert (
+        state.conn.execute(
+            "SELECT COUNT(*) FROM evaluations WHERE surface_status = 'surfaced'"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+# --- per-record isolation ----------------------------------------------------
+
+
+async def test_an_unexpected_error_on_one_hold_does_not_lose_the_rest(
+    release_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every eligible hold is attempted, whatever one of them does."""
+    state: StateManager = release_env["state"]
+    exploding, _first = _hold(state, "0x1", action="respond")
+    _hold(state, "0x2", action="respond")
+    _hold(state, "0x3", action="respond")
+
+    real_release = release_module.release_one_holdout
+
+    async def _explode_on_one(**kwargs: Any) -> Any:
+        if kwargs["holdout"].id == exploding:
+            raise ZeroDivisionError("something nothing here anticipated")
+        return await real_release(**kwargs)
+
+    monkeypatch.setattr(release_module, "release_one_holdout", _explode_on_one)
+
+    report = await _release(release_env)
+
+    assert report.attempted == 3
+    assert report.released == 2
+    assert report.failed == 1
+    failed = next(o for o in report.outcomes if o.holdout_id == exploding)
+    assert failed.error_category == "unexpected"
+    assert "ZeroDivisionError" in failed.error
+
+
+async def test_an_isolated_failure_leaves_its_hold_recoverable(
+    release_env: dict[str, Any],
+) -> None:
+    """The claim it took expires; the hold is not lost to the explosion."""
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="respond")
+
+    async def _explode(**kwargs: Any) -> Any:
+        raise ZeroDivisionError("boom")
+
+    # Scoped, so undoing it cannot also undo the fixture's own patches —
+    # both would otherwise be held by the same monkeypatch instance.
+    with pytest.MonkeyPatch.context() as exploding:
+        exploding.setattr(release_module, "release_one_holdout", _explode)
+        report = await _release(release_env)
+    assert report.failed == 1
+
+    state.conn.execute(
+        "UPDATE relevance_holdouts SET claim_expires_at = ? WHERE id = ?",
+        ((datetime.now(UTC) - timedelta(hours=1)).isoformat(), holdout_id),
+    )
+    retried = await _release(release_env)
+
+    assert retried.released == 1
+
+
+# --- the frozen project is validated on every path ---------------------------
+
+
+async def test_a_graded_drop_still_validates_the_frozen_project(
+    release_env: dict[str, Any],
+) -> None:
+    """A drop writes nothing, but it spends the hold, so the gate still runs."""
+    state: StateManager = release_env["state"]
+    holdout_id, evaluation_id = _hold(state, action="respond", project_key="gone")
+    labels = _labels_for_project(
+        evaluation_id, _case(case_id=1, exclusion="promo", substance=None), "gone"
+    )
+
+    report = await _release(release_env, labels)
+
+    assert report.failed == 1
+    assert "no longer active" in report.outcomes[0].error or (
+        "no active route" in report.outcomes[0].error
+    )
+    held = state.holdouts.get(holdout_id)
+    assert held is not None
+    assert held.status == "failed"
+    assert held.release_action is None
+
+
+async def test_an_ungraded_drop_still_validates_the_frozen_project(
+    release_env: dict[str, Any],
+) -> None:
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="drop", relevant=False, project_key="gone")
+
+    report = await _release(release_env)
+
+    assert report.failed == 1
+    held = state.holdouts.get(holdout_id)
+    assert held is not None and held.status == "failed"
+
+
+async def test_a_drop_on_a_live_project_still_completes(
+    release_env: dict[str, Any],
+) -> None:
+    """The gate must not block the ordinary case it exists to protect."""
+    state: StateManager = release_env["state"]
+    holdout_id, _evaluation_id = _hold(state, action="drop", relevant=False, score=0.0)
+
+    report = await _release(release_env)
+
+    assert report.released == 1
+    held = state.holdouts.get(holdout_id)
+    assert held is not None
+    assert held.status == "released" and held.release_action == "drop"
+    assert release_env["calls"] == []
+
+
+def test_a_hold_that_froze_no_project_has_nothing_to_validate(sm: StateManager) -> None:
+    """There is no project to check, and no label can name one that matches."""
+    holdout_id, _evaluation_id = _hold(sm, action="drop", relevant=False)
+    held = sm.holdouts.get(holdout_id)
+    assert held is not None
+    projectless = replace(
+        held, frozen_input=replace(held.frozen_input, project_key=None)
+    )
+
+    validated = release_module.validate_frozen_project(sm, projectless)
+
+    assert isinstance(validated, Ok)
+    assert validated.value is None
