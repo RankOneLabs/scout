@@ -17,6 +17,7 @@ docs/relevance-holdouts.md. The fixtures here carry invented content only.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,26 @@ from scout.scanning.jev_router import EXCLUSION_PREFIX, ROUTED, RouteDecision, r
 CATALOGUE = Path("tests/fixtures/relevance/routed-features.fixture.yaml")
 ANSWERS = Path("tests/fixtures/relevance/routed-answers.fixture.json")
 INTERCHANGE = Path("tests/fixtures/relevance/interchange.fixture.json")
+
+#: The authoritative source these expectations were produced at. Pinned here
+#: as well as in the fixture so parity evidence names one revision, and so a
+#: fixture re-recorded against a different revision has to say so in both
+#: places rather than one.
+AUTHORITATIVE = {
+    "repository": "RankOneLabs/assay",
+    "revision": "282479cdc877d1d470840684e8cbea891f9c54d3",
+    "path": "experiments/typesafe_relevance/route.py",
+}
+
+#: SHA-256 of each fixture, so a parity claim names the exact bytes it was
+#: made against. Editing a fixture without re-recording its expectations
+#: against the pinned revision fails here rather than silently changing what
+#: "parity" refers to.
+FIXTURE_DIGESTS = {
+    CATALOGUE: "f629925d8c88b75e560fa60f0ae1d725d33b5da6b92290f5b4df7bf47688a83c",
+    ANSWERS: "445ba7d2b4cb0cfb78123a16c779898cf6da59e93c223012551dbb5f4726d413",
+    INTERCHANGE: "af18d2c56078421ee73297eea117090d28c79bec802b473db5f2f3463e3888c7",
+}
 
 ACTIONS = frozenset({"respond", "review", "drop"})
 LINES = frozenset({"exclusion", "needs_thread", "respond", "points_somewhere", "otherwise"})
@@ -113,6 +134,40 @@ def test_a_missing_routed_feature_is_rejected() -> None:
     result = route(answers)
     assert isinstance(result, Err)
     assert "about_agent_work" in result.error.detail
+
+
+# --------------------------------------------------------------------------
+# What this evidence is anchored to
+# --------------------------------------------------------------------------
+
+
+def test_the_recorded_expectations_name_the_authoritative_source() -> None:
+    recorded = json.loads(ANSWERS.read_text(encoding="utf-8"))["expected_source"]
+    assert {key: recorded[key] for key in AUTHORITATIVE} == AUTHORITATIVE
+
+
+@pytest.mark.parametrize("path", list(FIXTURE_DIGESTS), ids=lambda path: path.name)
+def test_each_fixture_matches_the_digest_the_evidence_cites(path: Path) -> None:
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == FIXTURE_DIGESTS[path]
+
+
+def test_the_catalogue_fixture_cannot_be_mistaken_for_the_private_one() -> None:
+    """Scout is public. The redistributable fixture says so about itself."""
+    catalogue = _catalogue()
+    assert catalogue["id"] == "routed-features-fixture"
+    exclusions = {
+        name for name in catalogue["questions"] if name.startswith(EXCLUSION_PREFIX)
+    }
+    assert exclusions == {"excl_recipe", "excl_weather", "excl_sports_score"}
+
+
+def test_no_credential_appears_in_the_redistributable_fixtures() -> None:
+    """A tracked fixture carries no bearer token, key or endpoint secret."""
+    for path in FIXTURE_DIGESTS:
+        text = path.read_text(encoding="utf-8").lower()
+        assert "bearer " not in text
+        assert "typesafe_api_key" not in text
+        assert "authorization" not in text
 
 
 # --------------------------------------------------------------------------
