@@ -132,6 +132,32 @@ def validate_farcaster_byte_length(text: str) -> str | None:
 
 Verdict = Literal["approve", "revise", "reject"]
 
+RelevanceAction = Literal["respond", "review", "drop"]
+
+
+class RecordedRelevanceDecision(BaseModel):
+    """What produced one relevance verdict, carried to persistence.
+
+    Mirrors the `relevance_decisions` row (see scout.storage.holdouts). The
+    action is recorded at decision time so a later release acts on it rather
+    than recomputing a threshold against a value that may since have changed.
+    `answers` and `decision` are JEV-only: the full validated answer vector
+    and the complete router decision, kept so the stored evaluation can be
+    re-explained. Never carries a credential.
+    """
+
+    classifier: Literal["llm", "jev"]
+    model: str
+    action: RelevanceAction
+    reason: str | None = None
+    phase_run_id: int | None = None
+    catalogue_id: str | None = None
+    catalogue_version: str | None = None
+    router_version: str | None = None
+    answers: dict[str, JsonValue] | None = None
+    decision: dict[str, JsonValue] | None = None
+
+
 class ReplyCandidate(BaseModel):
     """Agent output: relevance verdict + optional draft + optional self-critique."""
 
@@ -153,6 +179,11 @@ class ReplyCandidate(BaseModel):
     # evaluation it produces. Never populated from any source but the
     # pipeline's own PhaseExecution results — see pipeline.score_and_draft_step.
     contributor_phase_run_ids: tuple[int, ...] = ()
+
+    # What produced the relevance verdict above. None on the human-override
+    # path (draft_and_critic_step), which makes no relevance model call and
+    # so has no classifier decision to record.
+    relevance_decision: RecordedRelevanceDecision | None = None
 
 
 class RelevancePhaseOutput(BaseModel):

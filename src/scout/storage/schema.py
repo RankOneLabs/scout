@@ -9,7 +9,107 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 47
+LATEST_SCHEMA_VERSION = 48
+
+#: Provenance for the decision behind one evaluation, and the durable
+#: relevance holdout rows C02's sampling and release run on. Separate from
+#: `evaluations` because the answers and the router decision are JEV-only
+#: blobs, and because an absent row is the honest representation of a
+#: pre-JEV evaluation whose classifier nothing recorded.
+RELEVANCE_DECISION_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS relevance_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_uid TEXT NOT NULL UNIQUE,
+        evaluation_id INTEGER NOT NULL UNIQUE REFERENCES evaluations(id),
+        selected_for_holdout INTEGER NOT NULL DEFAULT 0
+            CHECK(selected_for_holdout IN (0, 1)),
+        phase_run_id INTEGER REFERENCES evaluation_phase_runs(id),
+        classifier TEXT NOT NULL CHECK(classifier IN ('llm', 'jev')),
+        model TEXT NOT NULL,
+        catalogue_id TEXT,
+        catalogue_version TEXT,
+        router_version TEXT,
+        action TEXT NOT NULL CHECK(action IN ('respond', 'review', 'drop')),
+        reason TEXT,
+        answers_json TEXT CHECK(answers_json IS NULL OR json_valid(answers_json)),
+        decision_json TEXT CHECK(decision_json IS NULL OR json_valid(decision_json)),
+        created_at TEXT NOT NULL
+    )""",
+    """CREATE INDEX IF NOT EXISTS relevance_decisions_classifier_idx
+        ON relevance_decisions(classifier, created_at, id)""",
+    """CREATE INDEX IF NOT EXISTS relevance_decisions_phase_run_idx
+        ON relevance_decisions(phase_run_id)""",
+)
+
+#: One held post. `evaluation_id` is the immutable source evaluation the hold
+#: references; `target_evaluation_id` is the distinct evaluation a released
+#: outcome produces, so releasing never overwrites the original decision. Both
+#: are UNIQUE: one source cannot acquire two holds, and one released outcome
+#: cannot be claimed by two holds.
+RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS relevance_holdouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evaluation_id INTEGER NOT NULL UNIQUE REFERENCES evaluations(id),
+        post_id INTEGER NOT NULL REFERENCES posts(id),
+        scan_id INTEGER NOT NULL REFERENCES scans(id),
+        project_key TEXT,
+        status TEXT NOT NULL CHECK(
+            status IN ('pending', 'claimed', 'released', 'failed')
+        ),
+        held_at TEXT NOT NULL,
+        released_at TEXT,
+        frozen_input_json TEXT NOT NULL CHECK(json_valid(frozen_input_json)),
+        claim_token TEXT,
+        claim_fence INTEGER NOT NULL DEFAULT 0,
+        claim_owner TEXT,
+        claim_expires_at TEXT,
+        release_authority TEXT CHECK(
+            release_authority IS NULL
+            OR release_authority IN ('label', 'recorded_action')
+        ),
+        release_action TEXT CHECK(
+            release_action IS NULL
+            OR release_action IN ('respond', 'review', 'drop')
+        ),
+        label TEXT CHECK(
+            label IS NULL OR label IN ('exclusion', 'in_post', 'pointer', 'none')
+        ),
+        label_source TEXT,
+        label_provenance_json TEXT CHECK(
+            label_provenance_json IS NULL OR json_valid(label_provenance_json)
+        ),
+        key_provenance_json TEXT CHECK(
+            key_provenance_json IS NULL OR json_valid(key_provenance_json)
+        ),
+        labelled_at TEXT,
+        target_evaluation_id INTEGER UNIQUE REFERENCES evaluations(id),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        CHECK(target_evaluation_id IS NULL
+              OR target_evaluation_id <> evaluation_id),
+        CHECK(status <> 'released' OR released_at IS NOT NULL),
+        CHECK(status <> 'released' OR release_authority IS NOT NULL),
+        CHECK(status <> 'released' OR release_action IS NOT NULL)
+    )""",
+    """CREATE INDEX IF NOT EXISTS relevance_holdouts_status_idx
+        ON relevance_holdouts(status, held_at, id)""",
+    """CREATE INDEX IF NOT EXISTS relevance_holdouts_post_idx
+        ON relevance_holdouts(post_id)""",
+    """CREATE INDEX IF NOT EXISTS relevance_holdouts_scan_idx
+        ON relevance_holdouts(scan_id, id)""",
+    """CREATE TRIGGER IF NOT EXISTS relevance_holdouts_source_is_immutable
+    BEFORE UPDATE ON relevance_holdouts
+    BEGIN
+        SELECT RAISE(
+            ABORT, 'a holdout''s source evaluation and frozen input are immutable'
+        )
+        WHERE NEW.evaluation_id IS NOT OLD.evaluation_id
+           OR NEW.post_id IS NOT OLD.post_id
+           OR NEW.scan_id IS NOT OLD.scan_id
+           OR NEW.held_at IS NOT OLD.held_at
+           OR NEW.frozen_input_json IS NOT OLD.frozen_input_json;
+    END""",
+)
 
 SHADOW_RELEVANCE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS shadow_relevance_runs (
@@ -400,9 +500,13 @@ CREATE TABLE IF NOT EXISTS evaluations (
     -- already classified historical posture='abstain' rows as abstained;
     -- no rows require abstain_reason and it is not written going forward.
     abstain_reason TEXT,
+    -- 'held' is a lifecycle state of its own: the post was decided and its
+    -- decision recorded, then held back from surfacing for blind grading. It
+    -- is neither surfaced nor ready for drafting, and consumers must not fold
+    -- it into either. See docs/relevance-holdouts.md.
     surface_status TEXT NOT NULL CHECK(surface_status IN (
         'surfaced', 'low_relevance', 'abstained', 'critic_rejected',
-        'gate_blocked', 'not_relevant', 'drafting_failed'
+        'gate_blocked', 'not_relevant', 'drafting_failed', 'held'
     )),
     failure_reason TEXT,
     dossier_summary_id TEXT,
@@ -1216,6 +1320,8 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(LEASE_AND_RECOVERY_SCHEMA_STATEMENTS)};
 {';'.join(ACCOUNT_SCHEMA_STATEMENTS)};
 {';'.join(SHADOW_RELEVANCE_SCHEMA_STATEMENTS)};
+{';'.join(RELEVANCE_DECISION_SCHEMA_STATEMENTS)};
+{';'.join(RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

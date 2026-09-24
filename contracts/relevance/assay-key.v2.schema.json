@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:scout:assay-label-packet-key:v2",
+  "title": "Assay private relevance packet key v2",
+  "type": "object",
+  "required": ["format", "name", "sitting", "digest", "plan_digest", "seed", "strata", "cases"],
+  "properties": {
+    "format": {"const": "assay.label-packet-key/v2"},
+    "name": {"type": "string"},
+    "sitting": {"type": "string"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "seed": {"type": "string"},
+    "strata": {"type": "object"},
+    "excluded_earlier_rounds": {"type": "integer"},
+    "excluded_repeated_text": {"type": "integer"},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "evaluation_id", "project_key", "production_decision", "production_score"],
+        "properties": {
+          "case_id": {"type": "integer", "minimum": 1},
+          "evaluation_id": {"type": "integer", "minimum": 1},
+          "project_key": {"type": "string"},
+          "production_decision": {"type": "boolean"},
+          "production_score": {"type": "number"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

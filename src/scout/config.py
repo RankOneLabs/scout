@@ -180,6 +180,33 @@ TYPESAFE_PLACEHOLDER_ANSWERS_PATH: str = os.getenv(
     "TYPESAFE_PLACEHOLDER_ANSWERS_PATH", ""
 ).strip()
 
+# --- Relevance classifier selection ---
+# Exactly one classifier runs. 'llm' is the default and the rollback path;
+# 'jev' routes the relevance phase through Typesafe System One and the ported
+# router. There is no dual execution and no fallback from one to the other —
+# a failed JEV attempt stays a retryable relevance failure. See
+# docs/relevance-holdouts.md.
+_relevance_classifier = os.getenv("RELEVANCE_CLASSIFIER", "llm").strip().lower()
+if _relevance_classifier not in {"llm", "jev"}:
+    _env_errors.append("RELEVANCE_CLASSIFIER must be one of llm, jev")
+    _relevance_classifier = "llm"
+RELEVANCE_CLASSIFIER: Literal["llm", "jev"] = cast(
+    Literal["llm", "jev"], _relevance_classifier
+)
+# Credential and endpoint for the JEV request. Validated only under
+# RELEVANCE_CLASSIFIER=jev, so an llm deployment needs neither.
+TYPESAFE_API_KEY: str = os.getenv("TYPESAFE_API_KEY", "").strip()
+TYPESAFE_BASE_URL: str = (
+    os.getenv("TYPESAFE_BASE_URL", "").strip().rstrip("/") or "https://api.typesafe.ai"
+)
+# Probability a decided post is held back from surfacing for blind grading.
+# Sampling itself is not implemented here; this is the configured rate the
+# holdout work reads.
+RELEVANCE_HOLDOUT_RATE: float = _env_float("RELEVANCE_HOLDOUT_RATE", 0.1)
+if not 0.0 <= RELEVANCE_HOLDOUT_RATE <= 1.0:
+    _env_errors.append("RELEVANCE_HOLDOUT_RATE must be between 0.0 and 1.0")
+    RELEVANCE_HOLDOUT_RATE = 0.1
+
 # --- Dossier grounding ---
 # Root path of the read-only dossier-source checkout.
 # Empty string is accepted at import time; scan startup rejects it.

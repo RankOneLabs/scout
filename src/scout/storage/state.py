@@ -59,6 +59,7 @@ from scout.storage.grades import (
 )
 from scout.storage.grades import format_graded_at as format_graded_at
 from scout.storage.grades import parse_graded_at as parse_graded_at
+from scout.storage.holdouts import HoldoutStore
 from scout.storage.migrations import MIGRATIONS as MIGRATIONS
 from scout.storage.migrations import AutonomyEventsNotEmptyError as AutonomyEventsNotEmptyError
 from scout.storage.migrations import GradeConvergenceStatus as GradeConvergenceStatus
@@ -193,6 +194,7 @@ class StateManager:
         self._artifacts = ArtifactStore(self._uow)
         self._accounts = AccountStore(self._uow)
         self._shadow_relevance = ShadowRelevanceStore(self._uow)
+        self._holdouts = HoldoutStore(self._uow)
 
     @property
     def db(self) -> Db:
@@ -247,6 +249,11 @@ class StateManager:
     def shadow_relevance(self) -> ShadowRelevanceStore:
         """Non-gating typesafe shadow evaluation records."""
         return self._shadow_relevance
+
+    @property
+    def holdouts(self) -> HoldoutStore:
+        """Relevance decision provenance and the holdout lifecycle."""
+        return self._holdouts
 
     def record_account_snapshot(self, account: Account) -> bool:
         return self._accounts.record_account_snapshot(account)

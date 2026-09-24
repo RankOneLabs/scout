@@ -1,30 +1,55 @@
 # Relevance holdouts and the JEV handoff
 
-Scout is to gain a second relevance classifier (JEV, answered by Typesafe System
-One) and durable evidence for the decision it produces, so that a sampled holdout
-can be exported for blind grading and released later against stored labels.
+Scout gains a second relevance classifier (JEV, answered by Typesafe System One)
+and durable evidence for the decision it produces, so a sampled holdout can be
+exported for blind grading and released later against stored labels.
 
-This document is the handoff record for that work. It states what Scout already
-has, what the authoritative source outside Scout holds, which inputs are missing,
-and which product choices are still open. Implementation of the authoritative
-adapter, the router, and the holdout interchange stays blocked until the inputs
-below are pinned and the choices below are confirmed.
+This document is the contract record for that work. The project owner confirmed
+the four product choices below on 2026-09-24. The packet, labels, and private
+answer key use the existing assay and run-receipts formats described below.
+Release orchestration and merging remain gated on the private catalogue parity
+check; its inputs are not committed here.
 
-## Status
+## Confirmation status
 
-Blocked, on inputs that are not Scout's to produce.
+**Confirmed by the project owner on 2026-09-24:**
 
-| Gate | State |
-|---|---|
-| Pinned assay revision for `route()`, `build_state()` and the catalogue loader | Candidate found, not confirmed as a pin (see [The authoritative source](#the-authoritative-source)) |
-| The feature catalogue `route()` consumes | Private, outside Scout, must not be committed here |
-| Redistributable synthetic fixture in the routed feature form | Does not exist yet; Scout carries an invented one (see [Fixtures](#fixtures)) |
-| Request-path equivalence with the authoritative client | Unverified (see [The request path diverges](#the-request-path-diverges)) |
-| Four product choices | Proposed below, awaiting owner and assay confirmation |
-| Holdout export and label interchange | Proposed below, not written as a contract file |
+1. JEV requires keyword prefiltering. An unexpected unrouted post fails
+   retryably before the HTTP request, while LLM routing keeps its current behavior.
+2. JEV stores compatibility scores of 1.0 for `respond` and `review`, and 0.0
+   for `drop`. These values are not calibrated confidence.
+3. LLM stores `respond` only when relevant and at or above the threshold in
+   force at decision time; otherwise it stores `drop`. It never stores `review`.
+4. Holdout export extends the population record with stable holdout,
+   evaluation, post, and frozen project identity; a private envelope isolates
+   the production decision. Labels join through the private key's case mapping,
+   never row order or URL alone.
 
-Nothing in this document records a decision as settled. The proposals are written
-so that a reviewer can accept or reject each one on its own.
+The existing assay packet builder and the round 5 artifacts in run-receipts
+define the interchange. Scout's `holdout-export.v1` is the population input to
+that builder. `assay-packet.v1`, `assay-labels.v3`, and `assay-key.v2` schemas
+record the three existing artifact shapes. The prior Scout-only label sketch
+was removed. No private catalogue, packet content, label content, or answer
+key is committed here.
+
+## Where the decisions come from
+
+`comms/jev-cutover-spec.md` (2026-09-23) is a local proposal for this work.
+It is gitignored in Scout and cannot serve as a reviewable owner approval.
+
+`route()`, `build_state()` and the catalogue loader are ported from
+`RankOneLabs/assay`, `experiments/typesafe_relevance/`, at commit
+`282479cdc877d1d470840684e8cbea891f9c54d3`. Two provenance notes a reader should
+carry:
+
+- That commit is on `move-private-catalogues`, which is pushed but not merged
+  into `origin/main`. The SHA is immutable and is the pin; the branch label is
+  not. If the branch is ever dropped and the object collected, the port here
+  becomes the only surviving copy.
+- `route.py`'s docstring cites `comms/relevance-jev-round-spec.md` as its
+  written specification. That path is gitignored in assay and is in no git
+  history, so the router source at the pinned SHA, and the restatement below,
+  are the specification of record.
 
 ## Repository topology
 
@@ -38,20 +63,270 @@ here:
 At the time of writing `origin/epic/jev-integration` and the commit this work
 branched from are the same commit, `83e0eac`. No branch was created, repaired or
 renamed, no ancestry was inferred from the analysis revision, and no topology was
-mutated. If the provisioned base moves, this section is the thing to re-check
-before anything else in the document is trusted.
+mutated.
 
-## What Scout has today
+## The classifier
 
-### A disabled shadow node
+`RELEVANCE_CLASSIFIER` accepts `llm` or `jev` and defaults to `llm`. Exactly one
+runs. `llm` is the rollback path and stays until JEV has held up in production.
+There is no dual execution, no fallback from one to the other, and no
+experimenting inside Scout: classifier and prompt changes are proven in assay.
+
+Under `jev` the relevance phase builds the state and questions, calls JEV, runs
+`route()`, and returns the same `RelevancePhaseOutput` the LLM phase returns.
+Everything after the relevance phase reads only that value, so drafting, the
+critic, the verifier gates and grading are unchanged.
+
+| `route()` action | `relevant` | `score` | continues to drafting |
+|---|---|---|---|
+| `respond` | true | 1.0 | yes |
+| `review` | true | 1.0 | yes |
+| `drop` | false | 0.0 | no |
+
+`reason` is the line that decided it, and the exclusion when one fired.
+`relevant_to` is the routed project, as a single-element list.
+
+The scores are compatibility values for a column that requires a number. They
+are not calibrated confidence and nothing downstream may read them as one. The
+routing action is the decision. `classify_outcome` does not apply
+`RELEVANCE_THRESHOLD` to a JEV decision for that reason; every other gate
+(critic, abstention, verifier, author rate, account blocks) applies unchanged.
+
+`review` is carried through drafting exactly as `respond` is, and survives
+persistence as a recorded action, so a reviewer can tell the two apart on an
+evaluation that looks otherwise identical.
+
+A JEV call failure is a relevance failure and is handled as an LLM relevance
+failure is today: the post is preserved as unevaluated and stays retryable. No
+evaluation row is written for a failed attempt.
+
+### The routed project is required
+
+JEV's state carries a project, and the project comes from the keyword route.
+With `KEYWORD_PREFILTER=true` (the default) a post with no matching keyword is
+dropped before the relevance phase, so every post reaching JEV carries a winning
+route. With the prefilter off the route can be absent and there is no defined
+input.
+
+`RELEVANCE_CLASSIFIER=jev` therefore requires `KEYWORD_PREFILTER=true`;
+configuration validation fails at startup otherwise. An unrouted post that
+reaches the JEV adapter anyway fails retryably before any HTTP request is made.
+The LLM classifier keeps its existing unrouted behaviour unchanged.
+
+## The request
+
+JEV was graded on this exact request, so the request is a contract, not an
+implementation detail.
+
+```text
+POST {TYPESAFE_BASE_URL or https://api.typesafe.ai}/v1/systemone
+Authorization: Bearer $TYPESAFE_API_KEY
+Content-Type: application/json
+
+{"state": <state>, "model": "jev-latest", "questions": <questions>}
+```
+
+One request, 60-second timeout, no retry inside the adapter, `httpx` directly
+with no Typesafe SDK import. A failed attempt stays visible and retryable rather
+than being papered over by a second call or by the other classifier.
+
+The bearer credential is never stored on an evaluation, never written to a
+decision record, and never logged.
+
+### State
+
+```text
+post:                {platform, channel, url, text}
+parent_context_only: {author_name, text} | null
+author:              {name, handle}
+project:             {key, name, description}
+```
+
+`channel` comes from the message's `channel_name` and `text` from its `content`.
+The parent comes from `parent.author.name` and `parent.text`, and the whole
+`parent_context_only` value is null when there is no parent. A field the message
+does not carry is projected as null rather than omitted or defaulted to a string.
+
+This is the projection `build_state()` performs at the pinned revision. It is
+not the projection Scout's disabled shadow node performs; see
+[the shadow node](#the-disabled-shadow-node) below.
+
+### Questions
+
+The v6 catalogue's `questions` mapping, passed verbatim as loaded. Scout does
+not re-render, re-key or normalise it.
+
+The loader keeps the `true`/`false` criteria keys as strings. YAML 1.1 resolves
+bare `true` and `false` to booleans, so a plain `yaml.safe_load` turns those keys
+into Python `True`/`False` and the mapping sent to the classifier stops matching
+what the graded runs sent. The loader subclasses `yaml.SafeLoader` and removes
+`tag:yaml.org,2002:bool` from every implicit resolver. A test holds this.
+
+### Answers
+
+Each answer is `{"type": "noul", "noul": p}` with `p` a number. A missing
+question, a non-mapping answer, a missing or non-numeric `noul`, or a `type`
+other than `noul` is a failure. There is no partial answer vector and no silent
+negative: an incomplete reply is rejected before `route()` is called.
+
+## The router
+
+Restated here so a reviewer can check the port without reading assay. Over one
+post's feature probabilities, in order, stopping at the first match:
+
+```text
+any excl_* >= T_ex                                      -> drop
+needs_thread >= T_t                                     -> review
+answerable_from_post >= T_a and about_agent_work >= T_w  -> respond
+points_somewhere >= T_p                                 -> review
+otherwise                                               -> drop
+```
+
+Then one override: if any feature the path actually consulted is within a margin
+`m` of its threshold, the outcome becomes `review`. The exclusion line consults
+exactly one value, the largest `excl_*` probability, because that alone decides
+whether "any" holds. A feature the path never consulted is never close enough to
+matter, even when it sits exactly on its threshold.
+
+Every answer whose name starts with `excl_` is an exclusion, so the catalogue,
+not the router, decides which exclusions exist. An answer vector with no `excl_*`
+member is rejected.
+
+Every threshold defaults to `0.5` and the margin to `0.1`. Nothing is fitted.
+
+The router returns `action`, `path_action` (the action before the margin
+override), `line` (which line decided), `margin` (the consulted features that
+were close), `exclusion` (the winning exclusion name, or null when the exclusion
+line did not fire) and `features` (every probability it read). All of it is
+persisted, which is what lets a stored decision be explained later.
+
+## The catalogue stays private
+
+The catalogue `route()` consumes is `agent-ops-relevance-features.v6.yaml`. It
+lives in the run-receipts repository and is read through
+`TYPESAFE_CATALOGUE_PATH`. Scout is a public repository: v6 must not be
+committed here, quoted here, or reproduced in Scout's tests.
+
+What can be said about its shape without reproducing it: it declares the five
+top-level keys the loader requires (`id`, `decide`, `description`, `state`,
+`questions`), its state projection is the one above, and its `questions` mapping
+holds seven `excl_*` questions plus the four routed features
+`answerable_from_post`, `about_agent_work`, `points_somewhere` and
+`needs_thread`. All eleven are `type: noul` with a `criteria` mapping keyed by
+the two literal strings `true` and `false`.
+
+Scout's tests use an invented catalogue in that shape. See [Fixtures](#fixtures).
+
+### The pre-enable check
+
+Parity with the graded runs is established once, operationally, before
+`RELEVANCE_CLASSIFIER=jev` is enabled: on otto, with the real v6, check that
+Scout sends the same `questions` as assay's loader produces and projects a round
+5 export record to the same state as assay's `build_state`.
+
+This is the parity gate. It cannot be a committed fixture, because the catalogue
+it needs is private and the round 5 records are private evidence. Nothing in
+Scout's test suite asserts parity; the tests assert the port's own behaviour and
+the shapes the port must satisfy.
+
+## Holdouts
+
+`RELEVANCE_HOLDOUT_RATE` defaults to `0.1`. After the classifier decides, a post
+is held with that probability whatever the action, drops included.
+
+A held post gets its evaluation with the recorded action and
+`surface_status = held`, and stops there: no draft, no surfacing. `held` is a
+lifecycle state of its own. It is not surfaced, and it is not ready for
+drafting; consumers of `surface_status` must not fold it into either.
+
+A `relevance_holdouts` row records the hold. Release uses stored labels where
+they exist:
+
+| label | released action |
+|---|---|
+| `exclusion` | drop |
+| `in_post` | respond |
+| `pointer` | review |
+| `none` | drop |
+| ungraded | the recorded classifier action |
+
+`respond` and `review` continue through drafting and the critic on the existing
+human-relevance path. `drop` ends there. Release does not recompute a threshold:
+it acts on the recorded action.
+
+Sampling, the export command and the release command are C02's. This cohort
+supplies the storage and the claim primitives they run on, and the interchange
+both sides read.
+
+### Holdout storage
+
+A hold references an immutable source evaluation. A released outcome that drafts
+gets a distinct target evaluation, uniquely linked back to the hold, so the
+original decision survives release rather than being overwritten.
+
+The current row carries `held_at`, `released_at`, the claim token and lease, the
+release authority and value, a label source string, target identity, attempt
+and error state, and the frozen post, parent, author, project, route and dossier
+identity. Structured packet, label, and key provenance is still required before
+release can use this storage. Freezing the input identity lets a label join to
+the case it was written for once the interchange is agreed.
+
+Claims are compare-and-swap with a fence. A stale or competing completion is
+rejected; a committed completion is idempotently readable, so a retry after a
+lost response reads the first result rather than producing a second one. One
+source evaluation cannot acquire two holds, and cannot acquire two release
+targets. Completion and failure also require an unexpired claim lease, even
+before another holder takes over; token and fence must still match. Takeover
+advances the fence.
+
+## The interchange
+
+The versioned Scout population export under `contracts/relevance/` is
+`holdout-export.v1.schema.json`. Sampling, export, packet building and release
+orchestration belong to C02. The three assay schemas in the same directory
+describe the packet, labels, and key C02 exchanges with assay.
+
+The export is the population export format assay already reads, extended. Every
+`PopulationExportRecord` field is present and unchanged, so an assay packet
+builder that reads the population format reads this. Added on top: holdout,
+evaluation, post and project identity, the frozen project the decision was made
+against, and a `private` envelope.
+
+The `private` envelope holds the production decision a blind reviewer must not
+see: the recorded action, the score, the reason, and the classifier provenance.
+It is one named key so a blind projection can drop it and be checked, in the way
+assay's packet builder projects a blind case and then asserts nothing on its
+denylist survived.
+
+Assay's round 5 artifacts in run-receipts establish the actual three-file
+contract. The blind `packet.json` is `assay.label-packet/v1`, with `name`,
+`sitting`, `digest`, `plan_digest`, `rubric`, and blind `cases` containing only
+`case_id`, `text`, and `parent_text`. The saved `labels.json` is
+`assay.label-packet-labels/v3`, with `packet`, `packet_digest`, `plan_digest`,
+`reviewer`, `saved_at`, and cases with `case_id`, `exclusion`, `needs_thread`,
+`substance`, and `note`. The private `answer-key-private.json` is
+`assay.label-packet-key/v2`; its case mapping contains `case_id`,
+`evaluation_id`, `project_key`, `production_decision`, and `production_score`.
+These names and versions are observable in the existing artifacts, not new
+Scout inventions.
+
+C02 must verify the packet and plan digests across all three files, resolve
+each label's `case_id` through the private key, then verify that the mapped
+`evaluation_id` and `project_key` match the held evaluation and frozen project.
+It must reject unknown or duplicate case IDs. The private key never enters the
+blind packet. C01 stores structured label and key provenance on completion;
+it does not sample, build packets, or orchestrate release.
+
+## What Scout already had
+
+### The disabled shadow node
 
 `src/scout/typesafe/` runs one non-gating relevance call per post when
-`TYPESAFE_SHADOW_MODE=true`. It defaults to `false` and its only backend is
-`placeholder` (`src/scout/config.py:165-180`). It stays disabled and unchanged by
-this work.
+`TYPESAFE_SHADOW_MODE=true`. It defaults to `false`, its only backend is
+`placeholder`, and it stays disabled and unchanged by this work. Removing it is
+separate cleanup.
 
-The shadow node cannot stand in for the authoritative path. Its state projection
-(`src/scout/typesafe/state.py`) emits
+It is not a starting point for the JEV path. Its state projection emits
 
 ```text
 post: id, platform, channel_name, content, created_at, url
@@ -60,354 +335,125 @@ project: key, name, description, link
 parent_context: object or null, with id/text/url/author
 ```
 
-and the authoritative projection emits
+against the authoritative projection's `post: platform, channel, url, text`,
+`parent_context_only: {author_name, text}` and a project with no `link`.
+Different key names, a different parent key, and a field the authoritative
+projection does not carry.
 
-```text
-post: platform, channel, url, text
-author: name, handle
-project: key, name, description
-parent_context_only: object or null, with author_name/text
-```
+Its catalogue model is narrower too: it models `questions` as a list of objects
+with an `id` and `state.parent_context_only` as a boolean, where the
+authoritative catalogue keys questions by name in a mapping and lists the parent
+fields under `parent_context_only`. It also validates `decide` against a
+registered set the v6 catalogue is not in.
 
-Different key names, a different parent key, and a `project.link` field the
-authoritative projection does not carry. Parity cannot be argued from the shadow
-helpers; it has to be ported from the authoritative source.
-
-The shadow catalogue model is also narrower than the authoritative one:
-`src/scout/typesafe/catalogue.py` models `questions` as a list of objects with an
-`id`, and models `state.parent_context_only` as a boolean. The authoritative
-catalogue keys questions by name in a mapping and lists the parent fields it wants
-under `parent_context_only`.
+The JEV path therefore has its own loader, projection and router in
+`src/scout/scanning/jev_*.py`. The shadow modules are untouched.
 
 ### A population export that already matches the loader's input
 
-`PopulationExportRecord` (`src/scout/replay/population_export.py:20-38`) carries
+`PopulationExportRecord` (`src/scout/replay/population_export.py`) carries
 exactly the fields the authoritative `build_state()` reads from a record:
 `platform`, `channel`, `url`, `text`, `parent_author_name`, `parent_text`,
 `author_name`, `author_handle`, alongside `evaluation_id`, `snapshot_id`,
-`human_label`, `production_score` and `production_decision`. This is the one
-interchange input that does not need to be invented. The holdout export should
-extend it rather than replace it.
+`human_label`, `production_score` and `production_decision`. The holdout export
+extends it rather than replacing it.
 
 ### Durable phase evidence
 
-`evaluation_phase_runs` (`src/scout/storage/schema.py:916-961`) is the existing
-link between a relevance call and its trace. A row is inserted only after the
-tracer is flushed, the trace is read back, and the trace resolves to an
-`AGENT_RUN` root (`_finalize_and_persist_phase_run` and `_verify_agent_run_root`,
-`src/scout/scanning/pipeline.py:122-169`). The row is inserted unlinked and gets
-its one permitted `evaluation_id` update in the same transaction as the
+`evaluation_phase_runs` is the existing link between a relevance call and its
+trace. A row is inserted only after the tracer is flushed, the trace is read
+back, and the trace resolves to an `AGENT_RUN` root. The row is inserted unlinked
+and gets its one permitted `evaluation_id` update in the same transaction as the
 evaluation insert.
 
-Two things follow for a direct HTTP classifier:
+A direct HTTP classifier runs no jig agent, so it opens the `AGENT_RUN` root
+itself through the tracer's `start_trace`, and wraps the HTTP call and the
+routing in it. The same flush, read-back and root verification then runs
+unchanged. If that evidence cannot be verified, no phase run is inserted and no
+evaluation is claimed: an absent row is more truthful than one pointing at
+evidence that is not there. A failed JEV attempt still records its failed phase
+run, without evaluating the post.
 
-- `trace_id` is captured from the jig agent run today
-  (`src/scout/scanning/pipeline.py:414-454`). A direct POST runs no agent, so a
-  root has to be opened explicitly. Jig tracers expose
-  `start_trace(name, metadata, kind=SpanKind.AGENT_RUN)`, so this is available,
-  and the read-back verification then works unchanged.
-- `snapshot_phase_id` is `NOT NULL` and references `feedback_snapshot_phases`,
-  whose payload is the rendered feedback text injected into a phase prompt
-  (`src/scout/storage/schema.py:821-834`). A JEV call injects no feedback text.
-  The row still exists for every scan, so citing it is possible, but what it
-  means for a JEV run is an open question listed below.
+`snapshot_phase_id` is `NOT NULL` and references `feedback_snapshot_phases`,
+whose payload is rendered feedback text injected into a phase prompt. A JEV call
+injects no feedback text. The row exists for every scan and the JEV run cites the
+scan's relevance snapshot phase. For JEV this reference records only the scan's
+snapshot identity at decision time; it does not show that JEV received, read, or
+used the snapshot payload. Consumers must not interpret it as prompt feedback
+provenance for JEV.
 
-### An evaluation row with no classifier provenance
+### Classifier provenance
 
-`evaluations` (`src/scout/storage/schema.py:386-412`) has no column naming the
-classifier, model, catalogue or router that produced a decision, and
-`surface_status` is constrained to `('surfaced', 'low_relevance', 'abstained',
-'critic_rejected', 'gate_blocked', 'not_relevant', 'drafting_failed')`. `held` is
-not in that list. Adding it, and adding provenance columns, is a migration whose
-historical rows stay `unknown`/null. Nothing may be backfilled: no stored fact
-identifies which classifier produced a pre-JEV evaluation.
+`evaluations` had no column naming what produced a decision. It now records the
+classifier, the model, the catalogue id and version, and the router version, plus
+the action and the reason, with the full validated answers and the complete
+`route()` decision, including the deciding line and the exclusion, stored beside
+it.
 
-### Routing
+Every successful recorded decision gets a generated stable unique
+`decision_uid` and an explicit `selected_for_holdout` flag. C02's sampling
+step supplies the selection; C01 persists it with the evaluation and any hold.
+The decision, evaluation, hold, and phase contributor links share the same
+transaction so a failed write cannot leave a partial outcome.
 
-With `KEYWORD_PREFILTER=true` (the default, `src/scout/config.py:159`) a message
-with no matching keyword is dropped before the relevance phase
-(`src/scout/scanning/prefilter.py:138`), so every message that reaches relevance
-carries a winning route and therefore a routed project. With
-`KEYWORD_PREFILTER=false` the route may be `None` and `project_key` is `None`
-(`src/scout/scanning/pipeline.py:181-190`). JEV's state projection requires a
-project, so the unrouted case has no defined input. See semantics question 1.
-
-## The authoritative source
-
-### Where it is
-
-| What | Where |
-|---|---|
-| Repository | `RankOneLabs/assay` |
-| Path | `experiments/typesafe_relevance/` |
-| Branch | `move-private-catalogues` |
-| Commit | `282479cdc877d1d470840684e8cbea891f9c54d3` |
-| Pushed | yes, `origin/move-private-catalogues` |
-| Merged into `origin/main` | no |
-
-Files that matter here, all present at that commit: `route.py` (the round 4
-router), `state.py` (`build_state`), `catalogue.py` (the loader and
-content-addressed version), `backends.py` (the Typesafe and OpenRouter IO
-boundaries), `run_round4.py` (the wiring that proves how the pieces compose),
-`tests/test_relevance_route.py` (seven route tests), and
-`tests/fixtures/band-form.yaml` and `tests/fixtures/label-form.yaml` (two
-made-up catalogues).
-
-### Why this is a candidate and not yet a pin
-
-Three reasons, each needing an answer from the owner of assay:
-
-1. The commit sits on an unmerged branch. An unmerged branch can be rebased or
-   dropped, and a Scout port that cites it would then cite nothing. Either the
-   branch merges, or a tag is cut, or the owner states that this SHA is
-   immutable and is the pin.
-2. The branch is named for what it did: it moved the relevance catalogues out of
-   assay. At this commit `experiments/typesafe_relevance/catalogues/` no longer
-   exists. The router is there; the catalogue it routes over is not.
-3. `route.py`'s own docstring cites `comms/relevance-jev-round-spec.md` as the
-   written specification. `comms/` is gitignored in assay, so the specification
-   is in no git history and cannot be pinned at all. Either it is published
-   somewhere citable, or the router source itself becomes the specification of
-   record and this document says so.
-
-### What the router does
-
-Stated here so that a reviewer can check the port without reading assay. Over one
-post's feature probabilities, in order, stopping at the first match:
-
-```text
-any excl_* >= T_ex                                    -> drop
-needs_thread >= T_t                                   -> review
-answerable_from_post >= T_a and about_agent_work >= T_w -> respond
-points_somewhere >= T_p                               -> review
-otherwise                                             -> drop
-```
-
-and then one override: if any feature the path actually consulted is within a
-margin `m` of its threshold, the outcome becomes `review`. The exclusion line
-consults exactly one value, the largest `excl_*` probability, because that alone
-decides whether "any" holds. Every answer whose name starts with `excl_` is an
-exclusion, so the catalogue, not the router, decides which exclusions exist.
-
-Every threshold defaults to `0.5` and the margin to `0.1`. Nothing is fitted.
-
-The router returns `action`, `path_action` (the action before the margin
-override), `line` (which line decided), `margin` (the consulted features that
-were close), `exclusion` (the winning exclusion name, or null when the exclusion
-line did not fire) and `features` (every probability it read). Persisting all
-of it is what lets a stored decision be explained later.
-
-An answer is read as `answers[name]["noul"]`, a number. A missing name, a
-non-mapping value, or a missing or non-numeric `noul` raises rather than
-defaulting. There is no partial answer vector: a short or malformed reply is a
-failure, never a silent negative.
-
-### What the catalogue holds
-
-The catalogue `route()` consumes is `agent-ops-relevance-features.v6.yaml`. It is
-private and lives in the run-receipts repository. It must not be committed to
-Scout, quoted in Scout, or reproduced in Scout's tests.
-
-What can be said about its shape without reproducing it: it declares the same
-five top-level keys the loader requires (`id`, `decide`, `description`, `state`,
-`questions`), its `decide` is `agent_ops_route/v1`, its state projection is the
-authoritative projection shown above, and its `questions` mapping holds seven
-`excl_*` questions plus the four routed features `answerable_from_post`,
-`about_agent_work`, `points_somewhere` and `needs_thread`. Every one of the
-eleven is `type: noul` with a `criteria` mapping keyed by the two literal strings
-`true` and `false`.
-
-That last detail is load-bearing. YAML 1.1 resolves bare `true` and `false` to
-booleans, so a plain `yaml.safe_load` turns those criteria keys into Python
-`True`/`False` and the questions mapping sent to the classifier stops matching
-what the authoritative runs sent. The authoritative loader subclasses
-`yaml.SafeLoader` and removes `tag:yaml.org,2002:bool` from every implicit
-resolver so the keys stay strings. Scout's port has to do the same, and a test
-has to hold it.
-
-The questions mapping is passed to the classifier verbatim, exactly as loaded
-(`run_round4.py` calls the backend with `catalogue.questions`). Scout must not
-re-render, re-key or normalise it.
-
-### The request path diverges
-
-The authoritative backend calls the Typesafe SDK:
-
-```python
-with TypeSafeClient(api_key=..., model="jev-latest",
-                    retry=RetryPolicy(max_retries=0), timeout=60.0) as client:
-    response = client.system_one(state=state, questions=questions)
-```
-
-The approved Scout decision is a direct bearer-authenticated `httpx` POST to
-`/v1/systemone` on the configured base URL (default `https://api.typesafe.ai`),
-model `jev-latest`, 60-second timeout, no retry inside the adapter.
-
-The two are the same intent, and the direct POST is the decided path. What is not
-established is that they put the same bytes on the wire. The SDK's serialisation
-of `state` and `questions`, its request headers, and the shape it accepts back
-are not pinned anywhere in assay; they live inside `typesafe_sdk`. Until the
-request and response wire format is pinned (a captured request/response pair from
-an authoritative run would do it, with credentials stripped), a Scout adapter can
-be tested for its own behaviour but not for equivalence with the runs the
-published numbers came from.
-
-This is a parity gate on the adapter, separate from the pin gate on the router.
-
-## Missing inputs
-
-| Input | Should come from | State | Blocks |
-|---|---|---|---|
-| Pinned revision of `route()` and its tests | assay owner | candidate identified, unconfirmed | the router port, parity tests |
-| Pinned `build_state()` and catalogue loader | same revision | same | the state projection, the loader |
-| The routed feature catalogue | private, run-receipts | present but not redistributable | any end-to-end fixture |
-| Written round specification | `comms/relevance-jev-round-spec.md`, gitignored | not citable | the contract document |
-| Typesafe wire format for `/v1/systemone` | Typesafe SDK or a captured exchange | not pinned | adapter parity |
-| Holdout export and label interchange | agreement with assay | proposed below, unconfirmed | C02 |
-
-## Semantics awaiting confirmation
-
-Four product choices are unresolved in the approved plan. Each is stated as a
-question, with the proposed resolution, so it can be accepted or rejected on its
-own. None of them is implemented.
-
-### 1. What does JEV do with an unrouted post?
-
-JEV's state projection requires a project, and a post that arrives with no
-keyword route has none.
-
-**Proposed:** JEV requires `KEYWORD_PREFILTER=true`. Configuration validation
-fails at startup when the classifier is JEV and the prefilter is off. An
-unexpected unrouted input reaching the JEV adapter fails retryably before any
-HTTP request is made, leaving the post unevaluated. The LLM classifier keeps its
-existing unrouted behaviour unchanged.
-
-**Why it needs an answer:** it removes a supported configuration for JEV runs,
-which is a product choice, not an implementation detail.
-
-### 2. What numeric score does a JEV decision carry?
-
-Scout's evaluation row requires a `score`. JEV produces an action, not a
-calibrated probability of relevance.
-
-**Proposed:** `respond` and `review` record `score = 1.0`, `drop` records
-`score = 0.0`, as compatibility values only. These are explicitly not calibrated
-confidence and nothing downstream may read them as one. The routing action, not
-the score, controls JEV relevance.
-
-**Why it needs an answer:** these values will be stored and later exported. If
-anyone intends to compare scores across classifiers, the mapping has to be
-rejected now rather than discovered later.
-
-### 3. What action does an LLM decision record?
-
-Sampling and release need a stable action for every decision, including the LLM
-ones that predate JEV.
-
-**Proposed:** record `respond` when the LLM says relevant and its score is at or
-above the `RELEVANCE_THRESHOLD` in force at decision time, otherwise `drop`. The
-LLM never records `review`. The existing non-held LLM flow is unchanged, and an
-ungraded release uses the recorded action rather than recomputing a threshold
-later.
-
-**Why it needs an answer:** it fixes what a low-score LLM decision means for
-release, and it makes the recorded action, not a later threshold, the thing
-release acts on.
-
-### 4. What is the holdout interchange?
-
-Blind grading needs an export Scout produces and labels Scout reads back. Neither
-exists.
-
-**Proposed:** a versioned export that carries the existing population fields,
-plus holdout, evaluation, post and project identity, plus a clearly separated
-private envelope holding the production decision that a blind reviewer must not
-see. Labels join back on stable identity and the frozen project, never on row
-order and never on URL alone. Label precedence, when the same case is labelled
-more than once, is decided by assay and recorded here.
-
-**Why it needs an answer:** the format is an agreement between two repositories.
-Inventing it in Scout produces a packet assay cannot read.
-
-A sketch of the proposal, to argue against rather than to implement:
-
-```text
-export record  = PopulationExportRecord fields
-               + holdout_id, evaluation_id, post_id, project_key
-               + frozen project identity (key, name, description)
-               + private: { production_score, production_decision, action, reason }
-
-label record   = holdout_id, evaluation_id, label, labeller, labelled_at
-               + provenance: source packet identity and revision
-```
-
-The `private` envelope is named so that a blind projection can drop one key and
-be checkable, in the way the authoritative packet builder projects a blind case
-and then asserts that nothing on its denylist survived.
-
-The contract files `contracts/relevance/holdout-export.v1.schema.json` and
-`contracts/relevance/holdout-labels.v1.schema.json` are deliberately not written
-yet. A schema file in `contracts/` reads as settled, and this is not.
+Historical rows stay null. No stored fact identifies which classifier produced a
+pre-JEV evaluation, so nothing is backfilled and nothing is guessed. A null there
+means unknown, and reads as unknown.
 
 ## Fixtures
 
-The two made-up catalogues at the candidate assay revision are redistributable,
-and neither is in the form `route()` consumes:
+Neither redistributable catalogue at the pinned assay revision is in the form
+`route()` consumes: `band-form.yaml` is the band-era catalogue feeding
+`mappings.decide_argmax`, and `label-form.yaml` is the human label form. Scout
+uses an invented response fixture at `tests/fixtures/relevance/`. Assay's
+`tests/test_relevance_packet.py` supplies synthetic packet cases for the
+interchange; private round 5 artifacts are used only to identify the format,
+never copied into Scout:
 
-- `band-form.yaml` is the band-era catalogue: an exclusion choice question, the
-  substance features the band mapping reads, and a four-level band score. It
-  feeds `mappings.decide_argmax`, not `route`.
-- `label-form.yaml` is the human label form: exclusion, substance, and a
-  `needs_thread` flag. It is a form for people, not a feature catalogue for the
-  classifier.
-
-So there is no redistributable fixture in the routed feature form. Scout carries
-an invented one instead, at `tests/fixtures/relevance/`:
-
-- `routed-features.fixture.yaml`, a made-up catalogue in the authoritative routed
-  shape: the four routed `noul` features, three invented exclusions, literal
-  `true`/`false` criteria keys, and the authoritative state projection. Every
-  word of its content is invented, including the exclusion names. It is not the
-  real catalogue and produces no real decision.
+- `routed-features.fixture.yaml`, an invented catalogue in the authoritative
+  routed shape: the four routed `noul` features, three invented exclusions,
+  literal `true`/`false` criteria keys, and the authoritative state projection.
+  Every word of its content is invented, including the exclusion names. It is not
+  the real catalogue and produces no real decision.
 - `routed-answers.fixture.json`, seven answer vectors in the shape the router
   reads, one per routing outcome: respond, review on `needs_thread`, review on
   `points_somewhere`, drop on an exclusion, drop on `otherwise`, the margin
-  overriding a respond path, and a feature sitting on its threshold that the
-  path never consulted and must ignore.
+  overriding a respond path, and a feature sitting on its threshold that the path
+  never consulted and must ignore.
 
-Each case in the answers fixture carries an `expected` block. Those blocks were
-not written by hand: they are the output of running the authoritative `route()`
-at the candidate revision over the answers beside them, so they record what the
-authoritative router actually does rather than what this document claims it does.
-If the revision is rejected as the pin, the expectations have to be regenerated
-against whatever replaces it.
+Each case carries an `expected` block produced by running `route()` at the
+pinned revision over the answers beside it, so the fixture records observed
+behaviour rather than a restatement of this document.
 
-`tests/test_jev_parity.py` holds the fixtures to the shape the port has to
-satisfy: the routed feature names, the `excl_` prefix rule, `noul` types, the
-state projection keys, the criteria keys surviving as strings (and the plain
-`yaml.safe_load` that destroys them), and the cases covering every action and
-every deciding line. Those are shape assertions. They are not parity: parity
-needs the pinned source and the ported route tests, and stays blocked.
+The seven route tests at the pinned revision port across unchanged in substance,
+because they already use invented exclusion names and already exercise respond,
+review, drop, exclusion precedence, the `answerable and about` conjunction, and
+the margin override including the unconsulted-feature case.
 
-When the authoritative revision is pinned, the seven route tests at that revision
-port across unchanged in substance, because they use invented exclusion names
-already and exercise respond, review, drop, exclusion precedence, the
-`answerable and about` conjunction, and the margin override including the case
-where an unconsulted feature sits on its threshold and must be ignored.
+## Configuration
 
-## What stays blocked
+| variable | default | required under |
+|---|---|---|
+| `RELEVANCE_CLASSIFIER` | `llm` | always (`llm` or `jev`) |
+| `TYPESAFE_API_KEY` | none | `jev` |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | never |
+| `TYPESAFE_CATALOGUE_PATH` | shadow fixture | `jev`, explicitly |
+| `KEYWORD_PREFILTER` | `true` | must be `true` under `jev` |
+| `RELEVANCE_HOLDOUT_RATE` | `0.1` | never |
 
-Until the inputs are pinned and the four questions are answered:
+Catalogue, credential, endpoint and routed-input requirements are validated only
+when the classifier is `jev`, so an `llm` deployment needs none of them and
+rollback stays one variable.
 
-- the JEV adapter, router, catalogue loader and state projection
-  (`src/scout/scanning/jev*.py`)
-- the holdout export and label contracts under `contracts/relevance/`
-- classifier selection in the scanning pipeline, and the evidence and storage
-  work that depends on the chosen semantics
+`TYPESAFE_CATALOGUE_PATH` is shared with the disabled shadow node, whose default
+points at a shadow-form fixture the JEV loader would reject. Under `jev` the
+variable must be set explicitly; validation fails rather than falling back to
+that default.
 
-C02 depends on the storage and claim primitives this cohort was to supply, and on
-the interchange in question 4. It is blocked on the same gates, and Scout's merge
-stays gated on the source and contract handoff resolving.
+## Deploying
 
-What is not blocked, and is not waiting on anyone: this document, the invented
-fixtures and the shape tests over them.
+The catalogue is mounted read-only into the container from a run-receipts
+checkout on the host, and the classifier is selected in the app's environment
+file. Rollback is `RELEVANCE_CLASSIFIER=llm`. The springfield repository holds the
+compose and deploy specifics; they are not restated here, because that file is
+what actually runs.

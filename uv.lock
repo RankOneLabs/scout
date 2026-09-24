@@ -1491,6 +1491,7 @@ source = { editable = "." }
 dependencies = [
     { name = "discord-py" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jig", extra = ["anthropic", "ollama", "openrouter"] },
     { name = "jsonschema" },
     { name = "numpy" },
@@ -1517,6 +1518,7 @@ dev = [
 requires-dist = [
     { name = "discord-py", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "jig", extras = ["anthropic", "ollama", "openrouter"], git = "https://github.com/rankonelabs/jig.git?rev=55081e81cee5c6faf0c2d376ab4691f69e111b3d" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "numpy", specifier = ">=2.4.3" },
