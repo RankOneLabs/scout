@@ -1,0 +1,367 @@
+{
+  "description": "Answer vectors in the shape the router reads, one per routing outcome. Every probability is invented. Each expected block was produced by running the authoritative route() at assay 282479cdc877d1d470840684e8cbea891f9c54d3 over the answers beside it.",
+  "answer_shape": {
+    "type": "noul",
+    "noul": "probability in [0, 1]"
+  },
+  "expected_source": {
+    "repository": "RankOneLabs/assay",
+    "revision": "282479cdc877d1d470840684e8cbea891f9c54d3",
+    "path": "experiments/typesafe_relevance/route.py",
+    "thresholds": "defaults: every threshold 0.5, margin 0.1"
+  },
+  "cases": [
+    {
+      "name": "respond",
+      "note": "Nothing excluded, the post stands alone and is about agent work.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.03
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.91
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.88
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.3
+        }
+      },
+      "expected": {
+        "action": "respond",
+        "path_action": "respond",
+        "line": "respond",
+        "margin": [],
+        "exclusion": null,
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.03,
+          "excl_sports_score": 0.02,
+          "needs_thread": 0.05,
+          "answerable_from_post": 0.91,
+          "about_agent_work": 0.88,
+          "points_somewhere": 0.3
+        }
+      }
+    },
+    {
+      "name": "review_needs_thread",
+      "note": "The thread is needed, so review wins before respond is reached.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.84
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.9
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.87
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.2
+        }
+      },
+      "expected": {
+        "action": "review",
+        "path_action": "review",
+        "line": "needs_thread",
+        "margin": [],
+        "exclusion": null,
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.02,
+          "excl_sports_score": 0.02,
+          "needs_thread": 0.84,
+          "answerable_from_post": 0.9,
+          "about_agent_work": 0.87,
+          "points_somewhere": 0.2
+        }
+      }
+    },
+    {
+      "name": "review_points_somewhere",
+      "note": "Not answerable from the post, but it points somewhere on topic.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.12
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.83
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.79
+        }
+      },
+      "expected": {
+        "action": "review",
+        "path_action": "review",
+        "line": "points_somewhere",
+        "margin": [],
+        "exclusion": null,
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.02,
+          "excl_sports_score": 0.02,
+          "needs_thread": 0.05,
+          "answerable_from_post": 0.12,
+          "about_agent_work": 0.83,
+          "points_somewhere": 0.79
+        }
+      }
+    },
+    {
+      "name": "drop_exclusion",
+      "note": "An exclusion fires and stops the path before anything else is read.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.93
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.92
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.02
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "path_action": "drop",
+        "line": "exclusion",
+        "margin": [],
+        "exclusion": "weather",
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.93,
+          "excl_sports_score": 0.02,
+          "needs_thread": 0.05,
+          "answerable_from_post": 0.95,
+          "about_agent_work": 0.92,
+          "points_somewhere": 0.02
+        }
+      }
+    },
+    {
+      "name": "drop_otherwise",
+      "note": "Nothing fires on any line.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.1
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.15
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.08
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "path_action": "drop",
+        "line": "otherwise",
+        "margin": [],
+        "exclusion": null,
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.02,
+          "excl_sports_score": 0.02,
+          "needs_thread": 0.04,
+          "answerable_from_post": 0.1,
+          "about_agent_work": 0.15,
+          "points_somewhere": 0.08
+        }
+      }
+    },
+    {
+      "name": "review_margin_overrides_respond",
+      "note": "The path reaches respond, but a consulted feature sits within the margin.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.9
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.02
+        }
+      },
+      "expected": {
+        "action": "review",
+        "path_action": "respond",
+        "line": "respond",
+        "margin": [
+          "about_agent_work"
+        ],
+        "exclusion": null,
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.02,
+          "excl_sports_score": 0.02,
+          "needs_thread": 0.05,
+          "answerable_from_post": 0.9,
+          "about_agent_work": 0.55,
+          "points_somewhere": 0.02
+        }
+      }
+    },
+    {
+      "name": "drop_margin_ignores_unconsulted",
+      "note": "A feature on its threshold that the path never consulted does not trigger review.",
+      "answers": {
+        "excl_recipe": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_weather": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "excl_sports_score": {
+          "type": "noul",
+          "noul": 0.9
+        },
+        "needs_thread": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "answerable_from_post": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "about_agent_work": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "points_somewhere": {
+          "type": "noul",
+          "noul": 0.5
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "path_action": "drop",
+        "line": "exclusion",
+        "margin": [],
+        "exclusion": "sports_score",
+        "features": {
+          "excl_recipe": 0.02,
+          "excl_weather": 0.02,
+          "excl_sports_score": 0.9,
+          "needs_thread": 0.02,
+          "answerable_from_post": 0.02,
+          "about_agent_work": 0.02,
+          "points_somewhere": 0.5
+        }
+      }
+    }
+  ]
+}

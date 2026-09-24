@@ -367,15 +367,27 @@ an invented one instead, at `tests/fixtures/relevance/`:
 - `routed-features.fixture.yaml`, a made-up catalogue in the authoritative routed
   shape: the four routed `noul` features, three invented exclusions, literal
   `true`/`false` criteria keys, and the authoritative state projection. Every
-  word of its content is invented. It is not the real catalogue and produces no
-  real decision.
-- `routed-answers.fixture.json`, one answer vector in the shape the router reads.
+  word of its content is invented, including the exclusion names. It is not the
+  real catalogue and produces no real decision.
+- `routed-answers.fixture.json`, seven answer vectors in the shape the router
+  reads, one per routing outcome: respond, review on `needs_thread`, review on
+  `points_somewhere`, drop on an exclusion, drop on `otherwise`, the margin
+  overriding a respond path, and a feature sitting on its threshold that the
+  path never consulted and must ignore.
 
-`tests/test_jev_parity.py` holds these to the shape the port has to satisfy: the
-routed feature names, the `excl_` prefix rule, `noul` types, the state projection
-keys, and the criteria keys surviving as strings. Those are shape assertions. They
-are not parity: parity needs the pinned source and the ported route tests, and
-stays blocked.
+Each case in the answers fixture carries an `expected` block. Those blocks were
+not written by hand: they are the output of running the authoritative `route()`
+at the candidate revision over the answers beside them, so they record what the
+authoritative router actually does rather than what this document claims it does.
+If the revision is rejected as the pin, the expectations have to be regenerated
+against whatever replaces it.
+
+`tests/test_jev_parity.py` holds the fixtures to the shape the port has to
+satisfy: the routed feature names, the `excl_` prefix rule, `noul` types, the
+state projection keys, the criteria keys surviving as strings (and the plain
+`yaml.safe_load` that destroys them), and the cases covering every action and
+every deciding line. Those are shape assertions. They are not parity: parity
+needs the pinned source and the ported route tests, and stays blocked.
 
 When the authoritative revision is pinned, the seven route tests at that revision
 port across unchanged in substance, because they use invented exclusion names
