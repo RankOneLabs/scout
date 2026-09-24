@@ -157,12 +157,19 @@ def validate_answers(
                 )
             )
         value = answer.get(ANSWER_TYPE)
-        if (isinstance(value, bool) or not isinstance(value, (int, float))
-                or not math.isfinite(value)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 <= value <= 1
+            or not math.isfinite(value)
+        ):
             return Err(
                 JevFailure(
                     operation="validate_answers",
-                    detail=f"answer for {name!r} has a non-numeric or non-finite {ANSWER_TYPE}",
+                    detail=(
+                        f"answer for {name!r} has a non-numeric, non-finite, "
+                        f"or out-of-range {ANSWER_TYPE}"
+                    ),
                 )
             )
         probabilities[name] = float(value)

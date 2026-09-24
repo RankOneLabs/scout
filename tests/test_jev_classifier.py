@@ -332,6 +332,15 @@ def test_a_non_finite_noul_is_rejected(value: float) -> None:
     assert "non-finite" in result.error.detail
 
 
+@pytest.mark.parametrize("value", [-0.1, 1.1, 10**1000])
+def test_an_out_of_range_noul_is_rejected(value: float | int) -> None:
+    body = _noul_body(_questions())
+    body["answers"]["needs_thread"] = {"type": "noul", "noul": value}
+    result = validate_answers(body, _questions())
+    assert isinstance(result, Err)
+    assert "out-of-range" in result.error.detail
+
+
 def test_an_extra_exclusion_is_preserved_for_the_router() -> None:
     body = _noul_body(_questions(), 0.0)
     body["answers"]["excl_new"] = {"type": "noul", "noul": 0.9}
