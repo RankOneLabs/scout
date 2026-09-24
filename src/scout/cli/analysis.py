@@ -52,6 +52,7 @@ from scout.grading.studies import (
 from scout.result import Err, Ok, Result
 from scout.storage.artifacts import read_artifact_bundle
 from scout.storage.db import read_only_connection
+from scout.storage.evaluations import is_actionable_for_posting
 from scout.storage.state import StateManager
 
 
@@ -101,6 +102,232 @@ class StudyIndexEntry(BaseModel):
 
 class StudyIndex(BaseModel):
     entries: tuple[StudyIndexEntry, ...]
+
+
+class StatusAuditFinding(BaseModel):
+    """One invariant the holdout lifecycle guarantees, found violated."""
+
+    model_config = ConfigDict(extra="forbid")
+    invariant: str
+    count: int
+    detail: str
+
+
+class StatusConsumerAudit(BaseModel):
+    """How held, released and classified rows actually sit in one database.
+
+    The executable half of the status-consumer audit: every count a status
+    view reads, plus the lifecycle invariants those views depend on, read
+    through the same read-only connection the other read commands use.
+
+    It carries counts and invariant names only — never post content, answer
+    vectors, catalogue identity or a label — so its output is safe to attach
+    to a deployment record. A database predating the holdout schema audits
+    clean with empty classifier and holdout counts: an absent table is an
+    honest absence, not a violation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    evaluations_by_surface_status: dict[str, int]
+    held_evaluations: int
+    actionable_evaluations: int
+    holdouts_by_status: dict[str, int]
+    decisions_by_classifier: dict[str, int]
+    decisions_by_action: dict[str, int]
+    released_by_authority: dict[str, int]
+    released_targets_by_surface_status: dict[str, int]
+    evaluations_without_classifier_record: int
+    release_targets_without_classifier_record: int
+    held_evaluations_graded_in_scout: int
+    findings: tuple[StatusAuditFinding, ...]
+
+
+#: One lifecycle invariant: its name, the query counting rows that violate it,
+#: and what the violation would mean. Held as data so the audit reports every
+#: invariant it knows rather than however many an if-chain remembered.
+_STATUS_INVARIANTS: tuple[tuple[str, str, str], ...] = (
+    (
+        "held_evaluation_has_no_draft",
+        """SELECT COUNT(*) FROM evaluations e
+           WHERE e.surface_status = 'held'
+             AND EXISTS (SELECT 1 FROM draft_comments d WHERE d.evaluation_id = e.id)""",
+        "a held evaluation carries a draft; a hold stops before drafting",
+    ),
+    (
+        "held_evaluation_was_never_surfaced",
+        """SELECT COUNT(*) FROM evaluations e
+           WHERE e.surface_status = 'held'
+             AND EXISTS (
+               SELECT 1 FROM surfaced_events s WHERE s.evaluation_id = e.id
+             )""",
+        "a held evaluation carries a surfaced event; a hold never surfaces",
+    ),
+    (
+        "hold_source_is_held",
+        """SELECT COUNT(*) FROM relevance_holdouts h
+           JOIN evaluations e ON e.id = h.evaluation_id
+           WHERE e.surface_status <> 'held'""",
+        "a hold references a source evaluation that is not held",
+    ),
+    (
+        "release_target_is_not_held",
+        """SELECT COUNT(*) FROM relevance_holdouts h
+           JOIN evaluations e ON e.id = h.target_evaluation_id
+           WHERE e.surface_status = 'held'""",
+        "a released outcome landed on a held evaluation",
+    ),
+    (
+        "selected_decision_has_a_hold",
+        """SELECT COUNT(*) FROM relevance_decisions d
+           WHERE d.selected_for_holdout = 1
+             AND NOT EXISTS (
+               SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = d.evaluation_id
+             )""",
+        "a decision sampled into the holdout has no hold recorded",
+    ),
+    (
+        "hold_has_a_selected_decision",
+        """SELECT COUNT(*) FROM relevance_holdouts h
+           JOIN relevance_decisions d ON d.evaluation_id = h.evaluation_id
+           WHERE d.selected_for_holdout = 0""",
+        "a hold references a decision that records it was not sampled",
+    ),
+    (
+        "released_hold_records_its_authority",
+        """SELECT COUNT(*) FROM relevance_holdouts h
+           WHERE h.status = 'released'
+             AND (h.release_authority IS NULL OR h.release_action IS NULL
+                  OR h.released_at IS NULL)""",
+        "a released hold does not record what released it",
+    ),
+)
+
+
+def _tables(conn: sqlite3.Connection) -> frozenset[str]:
+    return frozenset(
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    )
+
+
+def _counts(conn: sqlite3.Connection, query: str) -> dict[str, int]:
+    """A `key, count` query as a mapping, with NULL keys named `unrecorded`."""
+    return {
+        ("unrecorded" if row[0] is None else str(row[0])): int(row[1])
+        for row in conn.execute(query)
+    }
+
+
+def _scalar(conn: sqlite3.Connection, query: str) -> int:
+    row = conn.execute(query).fetchone()
+    return 0 if row is None else int(row[0])
+
+
+def audit_status_consumers(conn: sqlite3.Connection) -> StatusConsumerAudit:
+    """Project the status counts and lifecycle invariants of one database.
+
+    Every query is guarded by the tables it reads, so the audit runs against
+    a pre-holdout database and reports absence rather than failing on it.
+    """
+    tables = _tables(conn)
+    has_decisions = "relevance_decisions" in tables
+    has_holdouts = "relevance_holdouts" in tables
+    has_grades = "grades" in tables
+
+    by_status = _counts(
+        conn, "SELECT surface_status, COUNT(*) FROM evaluations GROUP BY surface_status"
+    )
+    invariants = [
+        (name, query, detail)
+        for name, query, detail in _STATUS_INVARIANTS
+        if ("relevance_holdouts" not in query or has_holdouts)
+        and ("relevance_decisions" not in query or has_decisions)
+    ]
+    findings = tuple(
+        StatusAuditFinding(invariant=name, count=violations, detail=detail)
+        for name, query, detail in invariants
+        if (violations := _scalar(conn, query)) > 0
+    )
+    return StatusConsumerAudit(
+        evaluations_by_surface_status=by_status,
+        held_evaluations=by_status.get("held", 0),
+        actionable_evaluations=sum(
+            count
+            for status, count in by_status.items()
+            if is_actionable_for_posting(status)
+        ),
+        holdouts_by_status=(
+            _counts(conn, "SELECT status, COUNT(*) FROM relevance_holdouts GROUP BY status")
+            if has_holdouts
+            else {}
+        ),
+        decisions_by_classifier=(
+            _counts(
+                conn, "SELECT classifier, COUNT(*) FROM relevance_decisions GROUP BY classifier"
+            )
+            if has_decisions
+            else {}
+        ),
+        decisions_by_action=(
+            _counts(conn, "SELECT action, COUNT(*) FROM relevance_decisions GROUP BY action")
+            if has_decisions
+            else {}
+        ),
+        released_by_authority=(
+            _counts(
+                conn,
+                "SELECT release_authority, COUNT(*) FROM relevance_holdouts "
+                "WHERE status = 'released' GROUP BY release_authority",
+            )
+            if has_holdouts
+            else {}
+        ),
+        released_targets_by_surface_status=(
+            _counts(
+                conn,
+                "SELECT e.surface_status, COUNT(*) FROM relevance_holdouts h "
+                "JOIN evaluations e ON e.id = h.target_evaluation_id GROUP BY e.surface_status",
+            )
+            if has_holdouts
+            else {}
+        ),
+        evaluations_without_classifier_record=(
+            _scalar(
+                conn,
+                "SELECT COUNT(*) FROM evaluations e WHERE NOT EXISTS ("
+                "SELECT 1 FROM relevance_decisions d WHERE d.evaluation_id = e.id)",
+            )
+            if has_decisions
+            else _scalar(conn, "SELECT COUNT(*) FROM evaluations")
+        ),
+        # A released target legitimately has none: its authority is the hold's
+        # release record, not a classifier run. Counted separately so the
+        # unknown-classifier total above is not read as a gap.
+        release_targets_without_classifier_record=(
+            _scalar(
+                conn,
+                "SELECT COUNT(*) FROM relevance_holdouts h "
+                "WHERE h.target_evaluation_id IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM relevance_decisions d "
+                "WHERE d.evaluation_id = h.target_evaluation_id)",
+            )
+            if has_holdouts and has_decisions
+            else 0
+        ),
+        # Not an invariant: a held row carrying a sighted Scout grade is a
+        # fact an operator should see, because the blind label for that case
+        # is written in assay against the same post.
+        held_evaluations_graded_in_scout=(
+            _scalar(
+                conn,
+                "SELECT COUNT(*) FROM evaluations e JOIN grades g ON g.evaluation_id = e.id "
+                "WHERE e.surface_status = 'held'",
+            )
+            if has_grades
+            else 0
+        ),
+        findings=findings,
+    )
 
 
 def project_study_index(bundle: ArtifactBundle) -> Result[StudyIndex, ArtifactError]:
@@ -175,7 +402,16 @@ def add_analysis_parser(
     from scout.cli.assistance import add_assistance_parsers
 
     add_assistance_parsers(commands, default_db_path)
-    for command in ("preview", "snapshot", "export", "import", "index", "verify", "inventory"):
+    for command in (
+        "preview",
+        "snapshot",
+        "export",
+        "import",
+        "index",
+        "verify",
+        "inventory",
+        "status-audit",
+    ):
         child = commands.add_parser(command)
         child.add_argument("--db-path", default=default_db_path)
         if command in ("preview", "snapshot"):
@@ -310,6 +546,9 @@ def run_analysis(args: argparse.Namespace) -> Result[BaseModel, ArtifactError]:
             if isinstance(saved, Err):
                 return saved
             return Ok(_receipt("snapshot", bundle))
+        if args.analysis_command == "status-audit":
+            with read_only_connection(args.db_path) as conn:
+                return Ok(audit_status_consumers(conn))
         if args.analysis_command == "import":
             parsed = decode_bundle(args.bundle.read_bytes())
             if isinstance(parsed, Err):
