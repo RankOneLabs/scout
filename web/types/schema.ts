@@ -237,11 +237,6 @@ export interface EvaluationWithRoute extends Evaluation {
   matched_route: MatchedRoute | null;
 }
 
-/** Mirrors `evaluations.surface_status` (scout.storage.evaluations
- *  SURFACE_STATUSES). 'held' is a lifecycle state of its own: the post was
- *  decided and its decision recorded, then held back from surfacing for
- *  blind grading. It is neither surfaced nor drafting_failed, and no
- *  consumer may fold it into either — see docs/relevance-holdouts.md. */
 export type SurfaceStatus =
   | "surfaced"
   | "low_relevance"
@@ -249,84 +244,7 @@ export type SurfaceStatus =
   | "critic_rejected"
   | "gate_blocked"
   | "not_relevant"
-  | "drafting_failed"
-  | "held";
-
-/** Mirrors `relevance_decisions.classifier`. */
-export type RelevanceClassifier = "llm" | "jev";
-
-/** Mirrors `relevance_decisions.action` and `relevance_holdouts.release_action`. */
-export type RelevanceAction = "respond" | "review" | "drop";
-
-/** Mirrors `relevance_holdouts.status`. */
-export type HoldoutStatus = "pending" | "claimed" | "released" | "failed";
-
-/** Mirrors `relevance_holdouts.release_authority`: a stored blind label, or
- *  the action the classifier recorded when no label exists for the case. */
-export type ReleaseAuthority = "label" | "recorded_action";
-
-/** Mirrors `relevance_holdouts.label`. */
-export type HoldoutLabel = "exclusion" | "in_post" | "pointer" | "none";
-
-/** Mirrors one `relevance_decisions` row: what classified this evaluation.
- *  Absent for a historical row — nothing recorded what produced it — and
- *  absent for a released target, whose authority is its hold's release
- *  record rather than a classifier run. */
-export interface RelevanceDecisionRow {
-  decision_uid: string;
-  classifier: RelevanceClassifier;
-  model: string;
-  catalogue_id: string | null;
-  catalogue_version: string | null;
-  router_version: string | null;
-  action: RelevanceAction;
-  reason: string | null;
-  selected_for_holdout: boolean;
-  created_at: string;
-}
-
-/** Mirrors one `relevance_holdouts` row, read from the held evaluation's
- *  side: this evaluation is the immutable source the hold references. */
-export interface HoldoutRow {
-  id: number;
-  status: HoldoutStatus;
-  held_at: string;
-  released_at: string | null;
-  release_authority: ReleaseAuthority | null;
-  release_action: RelevanceAction | null;
-  label: HoldoutLabel | null;
-  label_source: string | null;
-  target_evaluation_id: number | null;
-  attempts: number;
-  last_error: string | null;
-}
-
-/** The same row read from the released target's side: this evaluation is
- *  what a release produced, and `source_evaluation_id` is the held decision
- *  it was released from. The target's own `surface_status` is a separate
- *  fact — a release that drafted may still have been rejected or blocked. */
-export interface ReleasedFromRow {
-  holdout_id: number;
-  source_evaluation_id: number;
-  release_authority: ReleaseAuthority;
-  release_action: RelevanceAction;
-  label: HoldoutLabel | null;
-  label_source: string | null;
-  released_at: string | null;
-}
-
-/** Every provenance fact recorded about one evaluation, kept apart.
- *
- * `decision` is what the classifier decided (the source action). `holdout`
- * is the hold this evaluation is the source of. `released_from` is the hold
- * this evaluation is the released target of. None of the three is the
- * evaluation's `surface_status`, which is what actually happened. */
-export interface RelevanceProvenance {
-  evaluation_id: number;
-  decision: RelevanceDecisionRow | null;
-  holdout: HoldoutRow | null;
-  released_from: ReleasedFromRow | null;
-}
+  | "drafting_failed";
 
 /** The complete, evaluation-scoped review population returned by the API. */
 export interface ReviewEvaluation extends EvaluationWithRoute {
@@ -340,9 +258,6 @@ export interface ReviewEvaluation extends EvaluationWithRoute {
   grade: Grade | null;
   /** Omitted for pre-v47 databases; null when v47 exists but has no run. */
   shadow_relevance?: ShadowRelevanceRunRow | null;
-  /** Omitted for databases predating the holdout schema; present with null
-   *  members when the tables exist but recorded nothing for this row. */
-  relevance_provenance?: RelevanceProvenance;
 }
 
 export interface PostWithEvaluation extends Post {
@@ -379,10 +294,6 @@ export interface DraftWithContext {
   surface_status?: string | null;
   posture?: string | null;
   dossier_revision?: string | null;
-  /** Omitted for databases predating the holdout schema. A draft can only
-   *  exist for an evaluation that was not held, so `holdout` here is always
-   *  null; `released_from` is what says this draft came out of a release. */
-  relevance_provenance?: RelevanceProvenance;
 }
 
 export interface ScanStats {
