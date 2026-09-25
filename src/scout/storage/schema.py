@@ -9,7 +9,7 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 48
+LATEST_SCHEMA_VERSION = 49
 
 #: Provenance for the decision behind one evaluation, and the durable
 #: relevance holdout rows C02's sampling and release run on. Separate from
@@ -41,11 +41,84 @@ RELEVANCE_DECISION_SCHEMA_STATEMENTS: tuple[str, ...] = (
         ON relevance_decisions(phase_run_id)""",
 )
 
+#: One post's holdout draw, recorded at the relevance boundary — after the
+#: relevance decision succeeded and before any drafting — and the fenced
+#: reservation that makes capturing it exactly one evaluation's job (v49).
+#:
+#: `post_id` is UNIQUE, so the row is both the durable record of the draw and
+#: the reservation on the post: the first attempt inserts it, every later
+#: attempt reads the recorded `rate`/`draw`/`selected` back instead of drawing
+#: again, and a rate that changed in between cannot flip a decision that is
+#: already durable. `capture_fence` is monotonic per post: an attempt that was
+#: abandoned mid-flight is resumed by bumping it, and the abandoned attempt's
+#: own later completion presents a fence the row has moved past and is
+#: refused. `evaluation_id` is the one evaluation this capture settled on —
+#: NULL means the capture is still open, and the NULL->set transition is the
+#: compare-and-swap that makes two concurrent first scans of one post produce
+#: one decision.
+#:
+#: `relevance_phase_run_id` is the relevance run of the attempt that holds the
+#: capture, and a resume repoints it: the row cites the classification whose
+#: decision will be persisted rather than one that was abandoned, and stays
+#: consistent with `relevance_decisions.phase_run_id` for the same post. The
+#: abandoned attempt's run is still readable as an unlinked phase run.
+#:
+#: The row is the post's reservation as well as its record, so it cannot be
+#: deleted either: removing it would free the post for a second draw at
+#: whatever rate is in force by then.
+RELEVANCE_SAMPLING_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS relevance_sampling_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        post_id INTEGER NOT NULL UNIQUE REFERENCES posts(id),
+        decision_key TEXT NOT NULL,
+        rate REAL NOT NULL CHECK(rate >= 0.0 AND rate <= 1.0),
+        draw REAL NOT NULL CHECK(draw >= 0.0 AND draw < 1.0),
+        selected INTEGER NOT NULL CHECK(selected IN (0, 1)),
+        capture_fence INTEGER NOT NULL DEFAULT 1 CHECK(capture_fence >= 1),
+        capture_owner TEXT NOT NULL,
+        relevance_phase_run_id INTEGER REFERENCES evaluation_phase_runs(id),
+        evaluation_id INTEGER UNIQUE REFERENCES evaluations(id),
+        settled_at TEXT,
+        created_at TEXT NOT NULL,
+        CHECK((evaluation_id IS NULL) = (settled_at IS NULL))
+    )""",
+    """CREATE INDEX IF NOT EXISTS relevance_sampling_decisions_open_idx
+        ON relevance_sampling_decisions(evaluation_id, created_at, id)""",
+    """CREATE TRIGGER IF NOT EXISTS relevance_sampling_decisions_draw_is_immutable
+    BEFORE UPDATE ON relevance_sampling_decisions
+    BEGIN
+        SELECT RAISE(
+            ABORT,
+            'a sampling draw is immutable, its capture only moves forward, and it settles once'
+        )
+        WHERE NEW.post_id IS NOT OLD.post_id
+           OR NEW.decision_key IS NOT OLD.decision_key
+           OR NEW.rate IS NOT OLD.rate
+           OR NEW.draw IS NOT OLD.draw
+           OR NEW.selected IS NOT OLD.selected
+           OR NEW.created_at IS NOT OLD.created_at
+           OR NEW.capture_fence < OLD.capture_fence
+           OR (OLD.evaluation_id IS NOT NULL
+               AND (NEW.evaluation_id IS NOT OLD.evaluation_id
+                    OR NEW.settled_at IS NOT OLD.settled_at));
+    END""",
+    """CREATE TRIGGER IF NOT EXISTS relevance_sampling_decisions_no_delete
+    BEFORE DELETE ON relevance_sampling_decisions
+    BEGIN
+        SELECT RAISE(
+            ABORT, 'a sampling decision is a post reservation and cannot be deleted'
+        );
+    END""",
+)
+
 #: One held post. `evaluation_id` is the immutable source evaluation the hold
 #: references; `target_evaluation_id` is the distinct evaluation a released
 #: outcome produces, so releasing never overwrites the original decision. Both
 #: are UNIQUE: one source cannot acquire two holds, and one released outcome
-#: cannot be claimed by two holds.
+#: cannot be claimed by two holds. `post_id` is UNIQUE too (v49): the
+#: reservation above is what makes a double capture impossible in the first
+#: place, and this is the storage-level backstop that makes a second hold on
+#: one post impossible rather than merely unreachable.
 RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS relevance_holdouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +166,7 @@ RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS relevance_holdouts_status_idx
         ON relevance_holdouts(status, held_at, id)""",
-    """CREATE INDEX IF NOT EXISTS relevance_holdouts_post_idx
+    """CREATE UNIQUE INDEX IF NOT EXISTS relevance_holdouts_post_unique
         ON relevance_holdouts(post_id)""",
     """CREATE INDEX IF NOT EXISTS relevance_holdouts_scan_idx
         ON relevance_holdouts(scan_id, id)""",
@@ -1321,6 +1394,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(ACCOUNT_SCHEMA_STATEMENTS)};
 {';'.join(SHADOW_RELEVANCE_SCHEMA_STATEMENTS)};
 {';'.join(RELEVANCE_DECISION_SCHEMA_STATEMENTS)};
+{';'.join(RELEVANCE_SAMPLING_SCHEMA_STATEMENTS)};
 {';'.join(RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};

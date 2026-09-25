@@ -115,6 +115,7 @@ from scout.scanning.pipeline import (
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
 from scout.scanning.relevance import JevRuntime
 from scout.scanning.schemas import (
+    HoldoutCaptureRef,
     HoldoutDraw,
     RecordedRelevanceDecision,
     ReplyCandidate,
@@ -123,6 +124,7 @@ from scout.scanning.schemas import (
 )
 from scout.storage.holdouts import (
     FrozenHoldoutInput,
+    HoldoutStorageError,
     HoldoutWrite,
     RelevanceDecisionWrite,
 )
@@ -674,6 +676,7 @@ class OutcomeDecision:
     contributor_phase_run_ids: tuple[int, ...]
     relevance_decision: RecordedRelevanceDecision | None = None
     holdout: HoldoutDraw | None = None
+    holdout_capture: HoldoutCaptureRef | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -774,6 +777,7 @@ def classify_outcome(
             contributor_phase_run_ids=candidate.contributor_phase_run_ids,
             relevance_decision=candidate.relevance_decision,
             holdout=candidate.holdout,
+            holdout_capture=candidate.holdout_capture,
         )
 
     # 0. Held. Checked before everything else because a held candidate never
@@ -882,6 +886,21 @@ def classify_outcome(
     )
 
 
+class HoldoutCaptureLostError(RuntimeError):
+    """Another attempt captured this post; this outcome was rolled back.
+
+    Not a defect and not a failure of this scan: the post has exactly one
+    decision, written by whoever holds its capture. Raised out of
+    `persist_outcome`'s transaction so every row this attempt wrote for the
+    post rolls back with it, and caught by the scan loop, which moves on.
+    """
+
+    def __init__(self, post_id: int, detail: str) -> None:
+        super().__init__(f"holdout capture on post {post_id} was lost: {detail}")
+        self.post_id = post_id
+        self.detail = detail
+
+
 def persist_outcome(
     state: StateManager,
     decision: OutcomeDecision,
@@ -907,6 +926,12 @@ def persist_outcome(
     that — the gate-blocked evaluation is a real evaluation, so it gets its
     provenance recorded, the transaction commits, and the error is re-raised
     outside it rather than rolling the durable gate block back.
+
+    The sampling capture taken at the relevance boundary is settled inside the
+    same transaction, before anything else is recorded against the evaluation:
+    it is what makes this attempt the one that decided the post, and a refusal
+    takes the whole outcome down rather than leaving a second decision beside
+    the capture's own.
     """
     rate_limited: SurfaceRateLimitedError | None = None
     with state.db.begin_immediate():
@@ -915,12 +940,39 @@ def persist_outcome(
         except SurfaceRateLimitedError as error:
             rate_limited = error
             evaluation_id = error.persisted_evaluation_id
+        _settle_holdout_capture(state, decision, evaluation_id)
         _record_relevance_decision(state, decision, evaluation_id)
         if decision.status == "held":
             _record_hold(state, decision, context, evaluation_id)
     if rate_limited is not None:
         raise rate_limited
     return evaluation_id
+
+
+def _settle_holdout_capture(
+    state: StateManager, decision: OutcomeDecision, evaluation_id: int
+) -> None:
+    """Settle this post's sampling capture on the evaluation it produced.
+
+    Absent whenever no sampler ran — the human-override path, a rescore of a
+    post whose sampling was already settled, and any caller that supplies
+    none. Present means this attempt took the capture at the boundary and the
+    compare-and-swap runs: there is no skip case, because a capture another
+    attempt already settled is refused before drafting.
+
+    A refusal is the concurrency guard doing its job: another attempt holds
+    the capture, so this one has no claim to decide the post.
+    """
+    capture = decision.holdout_capture
+    if capture is None:
+        return
+    settled = state.holdouts.settle_sampling_capture(
+        sampling_id=capture.sampling_id,
+        fence=capture.fence,
+        evaluation_id=evaluation_id,
+    )
+    if isinstance(settled, Err):
+        raise HoldoutCaptureLostError(capture.post_id, settled.error.detail)
 
 
 def _record_relevance_decision(
@@ -1404,6 +1456,10 @@ async def score_messages(
                     # carries its own answer in `selected_for_holdout`; a
                     # rescore that drew again would let a changed
                     # RELEVANCE_HOLDOUT_RATE re-roll a settled decision.
+                    # A post decided but not yet persisted reads as unsettled
+                    # here on purpose: the sampler runs, and the durable
+                    # capture hands back the draw the crashed attempt recorded
+                    # rather than a new one.
                     "holdout_sampler": (
                         None
                         if state.holdouts.sampling_is_settled_for_post(post_id) is True
@@ -1453,6 +1509,18 @@ async def score_messages(
         match result.step_outputs.get("score_and_draft"):
             case Ok(candidate):
                 pass
+            case Err(HoldoutStorageError(contended=True) as contention):
+                # Another attempt decided this post while this one was in its
+                # relevance call, and the sampling capture said so before any
+                # drafting happened. Nothing was written for this post and
+                # nothing needs retrying, so it is not a processing failure.
+                logger.info(
+                    "Skipping %s:%s; %s",
+                    msg.platform,
+                    msg.platform_id,
+                    contention.detail,
+                )
+                continue
             case Err(err):
                 detail = getattr(err, "detail", str(err))
                 operation = getattr(err, "operation", type(err).__name__)
@@ -1566,6 +1634,20 @@ async def score_messages(
                 error.persisted_evaluation_id, error.gate_block_ids,
             )
             evaluation_id = error.persisted_evaluation_id
+        except HoldoutCaptureLostError as error:
+            # Another attempt holds this post's capture and has written, or
+            # will write, its one decision. Every row this attempt wrote for
+            # the post has already rolled back inside persist_outcome; the
+            # post itself stays durable. Nothing to recover and nothing to
+            # retry, so this is not recorded as a processing failure.
+            logger.info(
+                "Skipping %s:%s; its holdout capture was taken by another "
+                "attempt (%s)",
+                msg.platform,
+                msg.platform_id,
+                error.detail,
+            )
+            continue
         except sqlite3.Error as e:
             # persist_outcome's own begin_immediate() context has already
             # rolled back every row for this post's outcome — post_id

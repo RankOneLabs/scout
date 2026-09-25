@@ -180,6 +180,27 @@ class HoldoutDraw(BaseModel):
     selected: bool
 
 
+class HoldoutCaptureRef(BaseModel):
+    """The durable sampling capture the draw above was recorded as.
+
+    Identity and fence only — the row itself lives in
+    `relevance_sampling_decisions` and is read through
+    `HoldoutStore.get_sampling_capture`. This is what persistence presents to
+    settle the capture on the evaluation it produced: the compare-and-swap
+    matches on `fence`, so a capture that moved on while this attempt was away
+    refuses the settlement instead of recording a competing decision.
+
+    Only ever an open capture. A post that another attempt has already decided
+    is refused at the boundary, before drafting, so there is no such thing here
+    as a candidate carrying a capture that is someone else's.
+    """
+
+    sampling_id: int
+    post_id: int
+    fence: int
+    resumed: bool = False
+
+
 class ReplyCandidate(BaseModel):
     """Agent output: relevance verdict + optional draft + optional self-critique."""
 
@@ -211,7 +232,14 @@ class ReplyCandidate(BaseModel):
     # drafting. None when no sampler ran — the human-override path, and any
     # caller that supplies none. A draw with selected=True is what makes this
     # candidate terminal at `held`: no reply draft, no critic, no surface.
+    # Always the draw as durably recorded: on a retry it is the earlier
+    # attempt's draw read back, not a fresh one.
     holdout: HoldoutDraw | None = None
+
+    # The reservation that draw was recorded under, present whenever `holdout`
+    # is. Consumed by persist_outcome to settle the capture on the evaluation
+    # this candidate produced — see scout.storage.holdouts.SamplingCapture.
+    holdout_capture: HoldoutCaptureRef | None = None
 
 
 class RelevancePhaseOutput(BaseModel):

@@ -437,23 +437,42 @@ def test_evaluation_hold_decision_and_contributor_link_roll_back_together(
     )
 
 
-def test_two_holds_cannot_share_one_release_target(sm: StateManager) -> None:
+def test_no_two_holds_can_compete_for_one_release_target(sm: StateManager) -> None:
+    """Two holds sharing a target is unreachable, from both directions.
+
+    Competing for one released outcome needs two holds on one post, which the
+    UNIQUE on `post_id` refuses outright (v49), and a target belonging to
+    another post, which completion refuses on its own. The UNIQUE on
+    `target_evaluation_id` stays as the storage-level backstop behind both.
+    """
     first = _hold(sm, "0xone")
-    second = _hold(sm, "0xone")
-    target, _post_id, _scan_id = _evaluation(sm, platform_id="0xone", surface_status="surfaced")
-    for held in (first, second):
-        claim = sm.holdouts.claim(held.id, owner="releaser")
-        assert isinstance(claim, Ok)
-        result = sm.holdouts.complete_release(
-            claim.value,
-            release_authority="recorded_action",
-            release_action="respond",
-            target_evaluation_id=target,
+    evaluation_id, post_id, scan_id = _evaluation(sm, platform_id="0xone")
+    second = sm.holdouts.hold(
+        HoldoutWrite(
+            evaluation_id=evaluation_id,
+            post_id=post_id,
+            scan_id=scan_id,
+            project_key="agent-ops",
+            frozen_input=_frozen("0xone"),
         )
-        if held is first:
-            assert isinstance(result, Ok)
-        else:
-            assert isinstance(result, Err)
+    )
+    assert isinstance(second, Err)
+    assert "UNIQUE constraint failed: relevance_holdouts.post_id" in second.error.detail
+
+    target, _other_post_id, _other_scan_id = _evaluation(
+        sm, platform_id="0xtwo", surface_status="surfaced"
+    )
+    claim = sm.holdouts.claim(first.id, owner="releaser")
+    assert isinstance(claim, Ok)
+    result = sm.holdouts.complete_release(
+        claim.value,
+        release_authority="recorded_action",
+        release_action="respond",
+        target_evaluation_id=target,
+    )
+
+    assert isinstance(result, Err)
+    assert "another post" in result.error.detail
 
 
 def test_a_hold_cannot_target_its_own_source_evaluation(sm: StateManager) -> None:
