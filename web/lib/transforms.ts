@@ -368,17 +368,15 @@ export type DraftWithGradeAndProvenance = DraftWithGrade & WithRelevanceProvenan
 // question goes through the two predicates below rather than enumerating the
 // negative cases and missing one. Mirrors scout.storage.evaluations.
 //
-// `SURFACE_STATUSES` in lib/filter-schemas.ts is the complete vocabulary,
-// `held` included. types/schema.ts's `SurfaceStatus` predates the hold state
-// and does not admit it, so the predicates below accept a plain string
-// rather than narrowing against a union that is missing a value the database
-// holds. Widening that union is a one-line change in a file outside this
-// change's authorized paths.
+// `SurfaceStatus` in types/schema.ts and `SURFACE_STATUSES` in
+// lib/filter-schemas.ts are the same vocabulary, `held` included — the type
+// and the runtime value. The predicates below narrow against the union, so a
+// status the database can hold but the union cannot name would not compile.
 
-export const HELD_SURFACE_STATUS = "held";
+export const HELD_SURFACE_STATUS: SurfaceStatus = "held";
 
 /** Whether this evaluation was held back from surfacing for blind grading. */
-export function isHeld(surfaceStatus: SurfaceStatus | string | null): boolean {
+export function isHeld(surfaceStatus: SurfaceStatus | null): boolean {
   return surfaceStatus === HELD_SURFACE_STATUS;
 }
 
@@ -388,7 +386,7 @@ export function isHeld(surfaceStatus: SurfaceStatus | string | null): boolean {
  * to post and no defect to fix, so it belongs in neither the draft queue nor
  * the review queue. */
 export function isActionableForPosting(
-  surfaceStatus: SurfaceStatus | string | null
+  surfaceStatus: SurfaceStatus | null
 ): boolean {
   return surfaceStatus === "surfaced";
 }
@@ -410,7 +408,7 @@ export interface SurfaceStatusCounts {
  * column: it is not added to `surfaced`, and it is not added to
  * `drafting_failed`. */
 export function selectSurfaceStatusCounts(
-  evaluations: ReadonlyArray<{ surface_status: SurfaceStatus | string | null }>
+  evaluations: ReadonlyArray<{ surface_status: SurfaceStatus | null }>
 ): SurfaceStatusCounts {
   const by_status = evaluations.reduce<Record<string, number>>((counts, evaluation) => {
     const status = evaluation.surface_status ?? "unrecorded";

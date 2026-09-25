@@ -1527,7 +1527,12 @@ function getReviewEvaluations({
       id: row.id, post_id: row.post_id, relevant: toBool(row.relevant),
       score: row.score, reason: row.reason, relevant_to: parseRelevantTo(row.relevant_to),
       keyword_route_id: row.keyword_route_id, scan_id: row.scan_id,
-      surface_status: (evaluationColumns.has("surface_status") ? row.surface_status : "not_relevant") as ReviewEvaluation["surface_status"], failure_reason: evaluationColumns.has("failure_reason") ? row.failure_reason : null,
+      // No cast: the row type declares this column as the canonical union,
+      // which names every status the database holds, 'held' included.
+      surface_status: evaluationColumns.has("surface_status")
+        ? row.surface_status
+        : "not_relevant",
+      failure_reason: evaluationColumns.has("failure_reason") ? row.failure_reason : null,
       project_key: row.project_key, posture: row.posture,
       dossier_revision: row.dossier_revision, dossier_summary_id: row.dossier_summary_id,
       matched_route: toMatchedRoute(row),

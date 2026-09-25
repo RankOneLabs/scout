@@ -237,6 +237,14 @@ export interface EvaluationWithRoute extends Evaluation {
   matched_route: MatchedRoute | null;
 }
 
+/** Mirrors the `evaluations.surface_status` vocabulary in
+ *  scout.storage.evaluations. `SURFACE_STATUSES` in lib/filter-schemas.ts is
+ *  the same vocabulary as a runtime value.
+ *
+ *  'held' is a lifecycle state of its own: decided, recorded, and held back
+ *  from surfacing for blind grading. It is listed here because the database
+ *  holds it and the evaluations endpoint returns it, so a read model that
+ *  omitted it could not represent a row it actually serves. */
 export type SurfaceStatus =
   | "surfaced"
   | "low_relevance"
@@ -244,7 +252,8 @@ export type SurfaceStatus =
   | "critic_rejected"
   | "gate_blocked"
   | "not_relevant"
-  | "drafting_failed";
+  | "drafting_failed"
+  | "held";
 
 /** The complete, evaluation-scoped review population returned by the API. */
 export interface ReviewEvaluation extends EvaluationWithRoute {
