@@ -135,6 +135,11 @@ def settle_holdout_draw(
 
     Commits on its own, before any drafting call is made, so the selected or
     unselected outcome survives a crash anywhere downstream of here.
+
+    Refused, `contended`, for a post another attempt has already decided —
+    which is how a worker whose settled-sampling check was taken before that
+    decision committed finds out here, rather than by spending a draft and a
+    critic call on an outcome it will not be allowed to persist.
     """
     captured = state.holdouts.capture_sampling(
         SamplingWrite(
@@ -173,7 +178,6 @@ def settle_holdout_draw(
                 sampling_id=capture.id,
                 post_id=capture.post_id,
                 fence=capture.fence,
-                settled_evaluation_id=capture.evaluation_id,
                 resumed=capture.resumed,
             ),
         )

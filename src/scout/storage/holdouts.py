@@ -63,12 +63,20 @@ DEFAULT_CLAIM_TTL_SECONDS = 900
 
 @dataclass(frozen=True, slots=True)
 class HoldoutStorageError:
-    """A holdout write was refused. Carries enough to trace which and why."""
+    """A holdout write was refused. Carries enough to trace which and why.
+
+    `contended` separates the two kinds of refusal a caller must treat
+    differently: True means another attempt legitimately owns the row, so this
+    attempt has nothing to fix and nothing to retry, and False means the write
+    itself was wrong. A scan that treated the first as a failure would file a
+    retryable error for a post that is already correctly decided.
+    """
 
     operation: str
     detail: str
     holdout_id: int | None = None
     evaluation_id: int | None = None
+    contended: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +124,7 @@ class SamplingWrite:
 
     `owner` identifies the attempt taking the capture, so a resumed or
     contended capture says which attempt currently holds it.
+    `relevance_phase_run_id` is that attempt's own successful relevance run.
     """
 
     post_id: int
@@ -133,9 +142,18 @@ class SamplingCapture:
 
     `evaluation_id` is None while the capture is still open: no evaluation has
     settled on it, and whoever holds `fence` is the one attempt allowed to
-    settle one. `resumed` describes the call that produced this value rather
-    than the row itself — True when the draw was read back from an earlier
-    attempt instead of being recorded now.
+    settle one. `capture_sampling` only ever hands back an open capture — a
+    settled one is refused there — so a value with `evaluation_id` set comes
+    from reading the row, not from holding it.
+
+    `relevance_phase_run_id` is the relevance run of the attempt that holds the
+    capture, which a resume repoints: the row cites the classification whose
+    decision will be persisted rather than one that was abandoned. An
+    abandoned attempt's own run stays readable as an unlinked phase run.
+
+    `resumed` describes the call that produced this value rather than the row
+    itself — True when the draw was read back from an earlier attempt instead
+    of being recorded now.
     """
 
     id: int
@@ -442,12 +460,19 @@ class HoldoutStore:
         selection are the ones the row was written with, not the ones this
         attempt drew.
 
-        Resuming an open capture bumps its fence and takes ownership, which is
-        what makes recovery safe rather than merely possible — the abandoned
+        Resuming an open capture bumps its fence, takes ownership, and repoints
+        `relevance_phase_run_id` at the resuming attempt's relevance run, which
+        is what makes recovery safe rather than merely possible — the abandoned
         attempt now holds a fence the row has moved past, so its own late
         `settle_sampling_capture` cannot land behind the attempt that resumed
-        it. A capture that already settled is returned as it stands, with its
-        `evaluation_id` set, and is never taken over.
+        it.
+
+        A capture that already settled is refused, `contended`, rather than
+        returned: the post has its one decision, and an attempt that arrives
+        after it — a worker whose settled-sampling check was taken before that
+        decision committed — has no claim to write a second one. Refusing here
+        is what stops it before it spends a draft and a critic call on a post
+        it cannot persist.
         """
         try:
             with self._uow.begin_immediate():
@@ -479,8 +504,20 @@ class HoldoutStore:
                             detail=f"no sampling decision for post {write.post_id}",
                         )
                     )
-                if inserted or current["evaluation_id"] is not None:
-                    return Ok(_sampling_capture(current, resumed=not inserted))
+                if inserted:
+                    return Ok(_sampling_capture(current, resumed=False))
+                if current["evaluation_id"] is not None:
+                    return Err(
+                        HoldoutStorageError(
+                            operation="capture_sampling",
+                            detail=(
+                                f"post {write.post_id} was already captured by "
+                                f"evaluation {current['evaluation_id']}"
+                            ),
+                            evaluation_id=int(current["evaluation_id"]),
+                            contended=True,
+                        )
+                    )
                 taken = self._conn.execute(
                     "UPDATE relevance_sampling_decisions "
                     "SET capture_fence = capture_fence + 1, capture_owner = ?, "
@@ -501,6 +538,7 @@ class HoldoutStore:
                                 f"capture on post {write.post_id} moved past fence "
                                 f"{current['capture_fence']} while it was being resumed"
                             ),
+                            contended=True,
                         )
                     )
                 resumed = self._sampling_row(write.post_id)

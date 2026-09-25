@@ -279,8 +279,19 @@ transaction that writes the evaluation. Two workers that both classify one
 undecided post therefore produce one decision — the one holding the live fence
 — and the other's rows roll back, leaving the post saved and undecided. The
 abandoned attempt of a crashed worker is refused the same way if it returns.
-`relevance_holdouts.post_id` is UNIQUE too, as the storage-level backstop
-behind that.
+
+A worker that arrives after the post was decided is refused earlier, at the
+boundary: a settled capture is never handed out, so it spends no draft or critic
+call on an outcome it would not be allowed to persist. That is the other order
+of the same race — the settled-sampling check the scan took before the decision
+committed — and it is reported as contention rather than as a scan failure,
+because nothing needs retrying.
+
+`relevance_holdouts.post_id` is UNIQUE too, as the storage-level backstop behind
+all of it. The sampling row itself can be neither updated nor deleted: the draw,
+its rate and its selection are immutable, the fence only moves forward, the
+settlement happens once, and deleting the row would free the post for a second
+draw at whatever rate is in force by then.
 
 ### Holdout storage
 

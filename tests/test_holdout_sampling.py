@@ -942,11 +942,14 @@ async def test_the_abandoned_attempt_cannot_settle_behind_the_one_that_resumed_i
     assert sm.holdouts.get_by_evaluation(evaluation_id) is not None
 
 
-def test_a_settled_capture_is_never_taken_over(sm: StateManager) -> None:
-    """A rescore of a decided post reads its capture; it does not compete for it.
+def test_a_settled_capture_is_refused_rather_than_taken_over(sm: StateManager) -> None:
+    """An attempt arriving after the post was decided has no claim on it.
 
-    The runner withholds the sampler from a settled post, so this is the
-    defence behind that guard rather than the ordinary path.
+    The runner withholds the sampler from a post whose decision is recorded, so
+    reaching here means that check was taken before the decision committed —
+    the lost race, not a rescore. Handing back the settled capture would let
+    the late attempt write a second decision for the post, so it is refused,
+    and refused as contention rather than as a defect.
     """
     msg = _message()
     evaluation_id, post_id, _scan_id = _persist_held(sm, _candidate(), msg)
@@ -977,10 +980,14 @@ def test_a_settled_capture_is_never_taken_over(sm: StateManager) -> None:
         )
     )
 
-    assert isinstance(again, Ok)
-    assert again.value.evaluation_id == evaluation_id
-    assert (again.value.fence, again.value.owner) == (1, "scan-1")
-    assert again.value.selected is True
+    assert isinstance(again, Err)
+    assert again.error.contended is True
+    assert again.error.evaluation_id == evaluation_id
+    assert "already captured by evaluation" in again.error.detail
+    # Untouched: still the first attempt's capture, at its own fence.
+    stored = sm.holdouts.get_sampling_capture(post_id)
+    assert stored is not None
+    assert (stored.fence, stored.owner, stored.selected) == (1, "scan-1", True)
 
 
 def test_a_second_evaluation_cannot_settle_a_capture_that_already_did(
@@ -1271,3 +1278,99 @@ def test_a_capture_fence_never_moves_backwards(sm: StateManager) -> None:
             "UPDATE relevance_sampling_decisions SET capture_fence = 1 WHERE id = ?",
             (captured.value.id,),
         )
+
+
+@pytest.mark.parametrize(
+    ("rate", "selected"),
+    [
+        pytest.param(1.0, True, id="selected"),
+        pytest.param(0.0, False, id="unselected"),
+    ],
+)
+async def test_an_attempt_arriving_after_the_decision_is_refused_before_drafting(
+    sm: StateManager, monkeypatch: pytest.MonkeyPatch, rate: float, selected: bool
+) -> None:
+    """The staggered race, which the fence alone does not cover.
+
+    Both workers passing the settled-sampling check before either commits is
+    the overlapping case. This is the other order: the first worker finishes
+    the post entirely while the second is still in its relevance call, so the
+    second arrives at the boundary holding a check that was true when it was
+    taken and is not any more. It must be refused there — not handed the
+    settled capture and allowed to persist a second decision, which for an
+    unselected draw nothing downstream would have stopped.
+    """
+    msg = _message()
+    first, post_id, scan_id = await _decide_at_the_boundary(
+        sm, msg, rate=rate, monkeypatch=monkeypatch
+    )
+    assert first.holdout is not None and first.holdout.selected is selected
+    decision = scan_runner.classify_outcome(first, msg, {})
+    evaluation_id = scan_runner.persist_outcome(
+        sm,
+        decision,
+        scan_runner.PersistenceContext(
+            post_id=post_id,
+            scan_id=scan_id,
+            keyword_route_id=None,
+            dossier_revision="r1",
+            dossier_summary_id="d1",
+            surfaced_at=msg.created_at.isoformat(),
+            project=scan_runner.FrozenProjectIdentity(
+                key="agent-ops", name="Agent Ops", description="A description."
+            ),
+        ),
+    )
+
+    ctx, late_post_id, phase_run_ids = _boundary(
+        sm, msg, sampler=build_holdout_sampler(rate)
+    )
+    spy = _PhaseSpy(
+        RelevancePhaseOutput(relevant=True, score=0.9, reason="r", relevant_to=["agent-ops"]),
+        phase_run_ids=phase_run_ids,
+    )
+    monkeypatch.setattr("scout.scanning.pipeline._run_phase", spy.run)
+
+    late = await score_and_draft_step(ctx)
+
+    assert late_post_id == post_id
+    assert isinstance(late, Err)
+    assert isinstance(late.error, HoldoutStorageError)
+    assert late.error.contended is True
+    assert late.error.evaluation_id == evaluation_id
+    # Refused before drafting, and nothing of the late attempt persisted.
+    assert spy.calls == ["relevance"]
+    assert sm.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 1
+    assert sm.conn.execute("SELECT COUNT(*) FROM relevance_decisions").fetchone()[0] == 1
+    assert sm.conn.execute("SELECT COUNT(*) FROM relevance_sampling_decisions").fetchone()[0] == 1
+    capture = sm.holdouts.get_sampling_capture(post_id)
+    assert capture is not None and capture.evaluation_id == evaluation_id
+
+
+def test_a_recorded_draw_cannot_be_deleted(sm: StateManager) -> None:
+    """The row is the post's reservation, so removing it would free a redraw.
+
+    Deleting it would leave the post with no recorded draw and no reservation,
+    and the next scan would draw again at whatever rate is in force by then —
+    the exact outcome the durable record exists to prevent.
+    """
+    scan_id = sm.start_scan(environment="test")
+    post_id = sm.save_post(_message(), scan_id)
+    captured = sm.holdouts.capture_sampling(
+        SamplingWrite(
+            post_id=post_id,
+            decision_key="farcaster:0xabc",
+            rate=1.0,
+            draw=0.0,
+            selected=True,
+            owner="scan-1",
+        )
+    )
+    assert isinstance(captured, Ok)
+
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
+        sm.conn.execute(
+            "DELETE FROM relevance_sampling_decisions WHERE id = ?", (captured.value.id,)
+        )
+
+    assert sm.holdouts.get_sampling_capture(post_id) is not None

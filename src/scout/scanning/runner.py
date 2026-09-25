@@ -124,6 +124,7 @@ from scout.scanning.schemas import (
 )
 from scout.storage.holdouts import (
     FrozenHoldoutInput,
+    HoldoutStorageError,
     HoldoutWrite,
     RelevanceDecisionWrite,
 )
@@ -955,14 +956,15 @@ def _settle_holdout_capture(
 
     Absent whenever no sampler ran — the human-override path, a rescore of a
     post whose sampling was already settled, and any caller that supplies
-    none. Already-settled means a capture this attempt only read: the
-    evaluation it settled on is durable, and nothing settles it twice.
+    none. Present means this attempt took the capture at the boundary and the
+    compare-and-swap runs: there is no skip case, because a capture another
+    attempt already settled is refused before drafting.
 
     A refusal is the concurrency guard doing its job: another attempt holds
     the capture, so this one has no claim to decide the post.
     """
     capture = decision.holdout_capture
-    if capture is None or capture.settled_evaluation_id is not None:
+    if capture is None:
         return
     settled = state.holdouts.settle_sampling_capture(
         sampling_id=capture.sampling_id,
@@ -1507,6 +1509,18 @@ async def score_messages(
         match result.step_outputs.get("score_and_draft"):
             case Ok(candidate):
                 pass
+            case Err(HoldoutStorageError(contended=True) as contention):
+                # Another attempt decided this post while this one was in its
+                # relevance call, and the sampling capture said so before any
+                # drafting happened. Nothing was written for this post and
+                # nothing needs retrying, so it is not a processing failure.
+                logger.info(
+                    "Skipping %s:%s; %s",
+                    msg.platform,
+                    msg.platform_id,
+                    contention.detail,
+                )
+                continue
             case Err(err):
                 detail = getattr(err, "detail", str(err))
                 operation = getattr(err, "operation", type(err).__name__)

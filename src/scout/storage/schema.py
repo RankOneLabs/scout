@@ -56,6 +56,16 @@ RELEVANCE_DECISION_SCHEMA_STATEMENTS: tuple[str, ...] = (
 #: NULL means the capture is still open, and the NULL->set transition is the
 #: compare-and-swap that makes two concurrent first scans of one post produce
 #: one decision.
+#:
+#: `relevance_phase_run_id` is the relevance run of the attempt that holds the
+#: capture, and a resume repoints it: the row cites the classification whose
+#: decision will be persisted rather than one that was abandoned, and stays
+#: consistent with `relevance_decisions.phase_run_id` for the same post. The
+#: abandoned attempt's run is still readable as an unlinked phase run.
+#:
+#: The row is the post's reservation as well as its record, so it cannot be
+#: deleted either: removing it would free the post for a second draw at
+#: whatever rate is in force by then.
 RELEVANCE_SAMPLING_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS relevance_sampling_decisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,6 +101,13 @@ RELEVANCE_SAMPLING_SCHEMA_STATEMENTS: tuple[str, ...] = (
            OR (OLD.evaluation_id IS NOT NULL
                AND (NEW.evaluation_id IS NOT OLD.evaluation_id
                     OR NEW.settled_at IS NOT OLD.settled_at));
+    END""",
+    """CREATE TRIGGER IF NOT EXISTS relevance_sampling_decisions_no_delete
+    BEFORE DELETE ON relevance_sampling_decisions
+    BEGIN
+        SELECT RAISE(
+            ABORT, 'a sampling decision is a post reservation and cannot be deleted'
+        );
     END""",
 )
 

@@ -190,15 +190,14 @@ class HoldoutCaptureRef(BaseModel):
     matches on `fence`, so a capture that moved on while this attempt was away
     refuses the settlement instead of recording a competing decision.
 
-    `settled_evaluation_id` is non-None only for a capture that was already
-    settled when this attempt read it — a rescore of a post decided earlier.
-    Nothing settles it a second time.
+    Only ever an open capture. A post that another attempt has already decided
+    is refused at the boundary, before drafting, so there is no such thing here
+    as a candidate carrying a capture that is someone else's.
     """
 
     sampling_id: int
     post_id: int
     fence: int
-    settled_evaluation_id: int | None = None
     resumed: bool = False
 
 

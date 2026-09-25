@@ -78,6 +78,7 @@ from scout.scanning.schemas import (
     ResourceSegment,
     StructuredDraftOutput,
 )
+from scout.storage.holdouts import HoldoutStorageError
 from scout.storage.scans import EnvironmentLease
 from scout.storage.state import StateManager, SurfaceRateLimitedError
 from scout.verifier import VerifyResult
@@ -3788,3 +3789,71 @@ async def test_a_second_scan_leaves_an_already_held_post_alone(
     assert (
         in_memory_state.conn.execute("SELECT COUNT(*) FROM relevance_holdouts").fetchone()[0] == 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("contended", "expected_failures"),
+    [
+        pytest.param(True, 0, id="contended-is-not-a-failure"),
+        pytest.param(False, 1, id="a-real-storage-error-still-is"),
+    ],
+)
+async def test_a_contended_capture_skips_the_post_without_a_processing_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    in_memory_state: StateManager,
+    tmp_path: Path,
+    contended: bool,
+    expected_failures: int,
+) -> None:
+    """Losing the race for a post is not a scan failure.
+
+    Another worker decided the post while this one was in its relevance call,
+    the capture said so before any drafting, and there is nothing here to
+    retry or repair. Filing a retryable scoring_error for it would report a
+    defect where the concurrency guard worked. A storage error that is *not*
+    contention still files one.
+    """
+    now = datetime.now(UTC)
+    msg = _message("contended-post", now)
+    scan_id = in_memory_state.start_scan()
+    in_memory_state.commit()
+
+    async def fake_run_pipeline(pipeline, *, input, context):
+        result = Mock()
+        result.step_outputs = {
+            "score_and_draft": Err(
+                HoldoutStorageError(
+                    operation="capture_sampling",
+                    detail="post 1 was already captured by evaluation 7",
+                    evaluation_id=7,
+                    contended=contended,
+                )
+            )
+        }
+        return result
+
+    monkeypatch.setattr(scan_runner, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(scan_runner, "build_scout_pipeline", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "build_scout_phase_configs", Mock(return_value=Mock()))
+    monkeypatch.setattr(scan_runner, "write_digest_header", Mock())
+    monkeypatch.setattr(scan_runner, "finalize_digest", Mock(return_value=""))
+
+    _digest, relevant_count, _ok, processing_failures = await scan_runner.score_messages(
+        [RoutedMessage(message=msg, keyword_route=None)],
+        [msg],
+        {"evaluate": "e", "respond": "r", "critique": "c"},
+        {}, {},
+        "model", "model", "model",
+        Mock(), Mock(),
+        in_memory_state,
+        scan_id,
+        str(tmp_path / "digest.md"),
+        feedback_snapshot=in_memory_state.record_feedback_snapshot(scan_id, mode="shadow"),
+    )
+
+    assert len(processing_failures) == expected_failures
+    assert relevant_count == 0
+    # The post itself stays durable either way; nothing was decided for it.
+    assert in_memory_state.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 0
+    assert in_memory_state.conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 1
