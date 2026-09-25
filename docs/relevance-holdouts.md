@@ -258,6 +258,30 @@ Sampling, the export command and the release command are C02's. This cohort
 supplies the storage and the claim primitives they run on, and the interchange
 both sides read.
 
+### The sampling decision is durable before drafting
+
+The draw is taken at the relevance boundary — after the decision succeeded,
+before any drafting — and `relevance_sampling_decisions` records it there, in
+its own committed transaction: the post, the decision key it was derived from,
+the rate in force, the drawn value, and whether it selected. A crash anywhere
+downstream leaves that answer readable.
+
+The retry reads it back rather than drawing again, so a `RELEVANCE_HOLDOUT_RATE`
+that moved in either direction in between cannot flip a decision that is already
+durable. A lowered rate does not release a post already marked for grading, and
+a raised one does not hold a post whose decision was already made in the open.
+
+`post_id` is UNIQUE there, which makes the row a reservation as well as a
+record. `capture_fence` is monotonic per post: resuming an open capture takes it
+over and advances the fence, and settling it on an evaluation is a
+compare-and-swap on `(evaluation_id IS NULL, capture_fence)` inside the same
+transaction that writes the evaluation. Two workers that both classify one
+undecided post therefore produce one decision — the one holding the live fence
+— and the other's rows roll back, leaving the post saved and undecided. The
+abandoned attempt of a crashed worker is refused the same way if it returns.
+`relevance_holdouts.post_id` is UNIQUE too, as the storage-level backstop
+behind that.
+
 ### Holdout storage
 
 A hold references an immutable source evaluation. A released outcome that drafts

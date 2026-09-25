@@ -37,12 +37,14 @@ from scout.scanning.relevance import (
 )
 from scout.scanning.schemas import (
     CritiquePhaseOutput,
+    HoldoutCaptureRef,
     HoldoutDraw,
     RecordedRelevanceDecision,
     RelevancePhaseOutput,
     ReplyCandidate,
     StructuredDraftOutput,
 )
+from scout.storage.holdouts import HoldoutStorageError, SamplingWrite
 from scout.storage.state import StateManager
 
 logger = logging.getLogger("scout.scanning.pipeline")
@@ -105,10 +107,89 @@ def build_holdout_sampler(rate: float) -> HoldoutSampler:
     return sample
 
 
+def capture_owner_for_scan(scan_id: int) -> str:
+    """Which attempt a capture belongs to.
+
+    One scan is one worker's pass over a post, so the scan is the finest
+    identity that distinguishes two attempts on the same post — including two
+    workers racing it, which each run their own scan.
+    """
+    return f"scan-{scan_id}"
+
+
+def settle_holdout_draw(
+    *,
+    state: StateManager,
+    post_id: int,
+    scan_id: int,
+    drawn: HoldoutDraw,
+    relevance_phase_run_id: int | None,
+) -> Result[tuple[HoldoutDraw, HoldoutCaptureRef], HoldoutStorageError]:
+    """Record this post's draw durably, before drafting, and take its capture.
+
+    The draw handed in is this pass's; the draw handed back is the one that is
+    durable. They differ exactly when an earlier attempt already recorded one
+    and the rate has moved since — the recorded answer wins, in both
+    directions, which is what stops a crash retry under a changed
+    `RELEVANCE_HOLDOUT_RATE` from re-deciding a post.
+
+    Commits on its own, before any drafting call is made, so the selected or
+    unselected outcome survives a crash anywhere downstream of here.
+    """
+    captured = state.holdouts.capture_sampling(
+        SamplingWrite(
+            post_id=post_id,
+            decision_key=drawn.decision_key,
+            rate=drawn.rate,
+            draw=drawn.value,
+            selected=drawn.selected,
+            owner=capture_owner_for_scan(scan_id),
+            relevance_phase_run_id=relevance_phase_run_id,
+        )
+    )
+    if isinstance(captured, Err):
+        return captured
+    capture = captured.value
+    settled = HoldoutDraw(
+        decision_key=capture.decision_key,
+        rate=capture.rate,
+        value=capture.draw,
+        selected=capture.selected,
+    )
+    if capture.resumed and settled != drawn:
+        logger.info(
+            "post %s resumes its recorded draw (rate %s, selected=%s) instead of "
+            "this pass's (rate %s, selected=%s)",
+            post_id,
+            capture.rate,
+            capture.selected,
+            drawn.rate,
+            drawn.selected,
+        )
+    return Ok(
+        (
+            settled,
+            HoldoutCaptureRef(
+                sampling_id=capture.id,
+                post_id=capture.post_id,
+                fence=capture.fence,
+                settled_evaluation_id=capture.evaluation_id,
+                resumed=capture.resumed,
+            ),
+        )
+    )
+
+
 async def score_and_draft_step(
     ctx: dict[str, Any],
-) -> Result[ReplyCandidate, LLMError | ParseError]:
-    """Run Scout's relevance, draft, and critic phases for one message."""
+) -> Result[ReplyCandidate, LLMError | ParseError | HoldoutStorageError]:
+    """Run Scout's relevance, draft, and critic phases for one message.
+
+    A refused holdout capture is returned as the storage error it is rather
+    than dressed up as a model failure: the decision itself succeeded, and what
+    failed is the attempt to record it. The runner treats it like any other
+    retryable per-post failure — the post stays saved and unevaluated.
+    """
     msg_input = ctx["input"]
     phase_configs: ScoutPhaseConfigs = ctx["phase_configs"]
     dossier_summaries: Mapping[str, DossierSummary] = ctx.get("dossier_summaries", {})
@@ -173,12 +254,27 @@ async def score_and_draft_step(
     # sampled: there is no decision to hold. The draw covers every action,
     # drops included, because the holdout population is the decision
     # population and not just the positives.
+    #
+    # The draw is durable before the next line runs, and taking it reserves
+    # this post: a crash between here and the evaluation leaves the recorded
+    # answer to resume from, and a second worker that decided the same post
+    # concurrently is refused at persistence rather than writing a competing
+    # decision.
     sampler: HoldoutSampler | None = ctx.get("holdout_sampler")
-    holdout = (
-        sampler(platform=msg.platform, platform_id=msg.platform_id)
-        if sampler is not None
-        else None
-    )
+    holdout: HoldoutDraw | None = None
+    holdout_capture: HoldoutCaptureRef | None = None
+    if sampler is not None:
+        settled = settle_holdout_draw(
+            state=execution.state,
+            post_id=execution.post_id,
+            scan_id=execution.scan_id,
+            drawn=sampler(platform=msg.platform, platform_id=msg.platform_id),
+            relevance_phase_run_id=recorded.phase_run_id,
+        )
+        if isinstance(settled, Err):
+            return settled
+        holdout, holdout_capture = settled.value
+
     if holdout is not None and holdout.selected:
         # Terminal here. `relevant` is carried through unchanged so the
         # recorded evaluation still says what the classifier decided; the
@@ -193,6 +289,7 @@ async def score_and_draft_step(
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=recorded,
                 holdout=holdout,
+                holdout_capture=holdout_capture,
             )
         )
 
@@ -207,6 +304,7 @@ async def score_and_draft_step(
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=recorded,
                 holdout=holdout,
+                holdout_capture=holdout_capture,
             )
         )
 
@@ -221,6 +319,7 @@ async def score_and_draft_step(
         contributor_ids=contributor_ids,
         relevance_decision=recorded,
         holdout=holdout,
+        holdout_capture=holdout_capture,
     )
 
 
@@ -339,13 +438,14 @@ async def _draft_and_critic(
     contributor_ids: list[int],
     relevance_decision: RecordedRelevanceDecision | None = None,
     holdout: HoldoutDraw | None = None,
+    holdout_capture: HoldoutCaptureRef | None = None,
 ) -> Result[ReplyCandidate, LLMError | ParseError]:
     """Shared reply-draft and critic implementation for model and human relevance.
 
     `holdout` is only ever an unselected draw here — a selected one is
-    terminal at the relevance boundary and never reaches drafting. It is
-    carried so the persisted decision records that this post was drawn and
-    passed over.
+    terminal at the relevance boundary and never reaches drafting. It and its
+    capture are carried so the persisted decision records that this post was
+    drawn and passed over, and settles the capture it was drawn under.
     """
     dossier = dossier_summaries.get(project_key) if project_key is not None else None
 
@@ -388,6 +488,7 @@ async def _draft_and_critic(
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=relevance_decision,
                 holdout=holdout,
+                holdout_capture=holdout_capture,
             )
         )
 
@@ -432,6 +533,7 @@ async def _draft_and_critic(
                 contributor_phase_run_ids=tuple(contributor_ids),
                 relevance_decision=relevance_decision,
                 holdout=holdout,
+                holdout_capture=holdout_capture,
             )
         )
 
@@ -465,6 +567,7 @@ async def _draft_and_critic(
             contributor_phase_run_ids=tuple(contributor_ids),
             relevance_decision=relevance_decision,
             holdout=holdout,
+            holdout_capture=holdout_capture,
         )
     )
 

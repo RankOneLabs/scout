@@ -16,6 +16,17 @@ snapshot. None can route through Db (db.py has no `mode=ro`/URI connection
 mode), and none is a StateManager consumer, so each is exempted the same
 way db.py is: it is the sole owner of transaction mechanics for its own
 private, read-only connection.
+
+Why the holdout cohort touched this guard, and how far: `scout holdout release`
+put the English word "Release" at the start of a module docstring, a CLI
+subcommand name and a help string, and the pattern matched any literal opening
+with a transaction-control keyword — so correct code failed the guard. The
+change is confined to what the guard recognizes as a statement, and it
+recognizes strictly more than before rather than less: every real call in db.py
+still matches, verified case by case, and a transaction-control statement inside
+a multi-statement `executescript()` literal now matches too, which the earlier
+whole-literal anchoring missed. No module was added to OWNER_MODULES and no file
+was exempted.
 """
 
 from __future__ import annotations
@@ -46,21 +57,10 @@ OWNER_MODULES = {
 # f-string placeholder standing in for one.
 _SAVEPOINT_NAME = r"(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)"
 
-# Case-insensitive: a literal opening quote (either style), optionally
-# followed by leading whitespace/newline (e.g. execute("\nBEGIN") or a
-# triple-quoted f"""  COMMIT"""), holding one complete transaction-control
-# statement and nothing else, e.g. execute("BEGIN IMMEDIATE"),
-# execute('begin'), f"SAVEPOINT {name}" — quote-style-agnostic and
-# case-agnostic, unlike a fixed uppercase literal-string pattern list,
-# which a lowercase or single-quoted call would slip past undetected.
-#
-# "and nothing else" is what keeps English prose out: SAVEPOINT, RELEASE
-# and ROLLBACK TO each require a savepoint name and a closing quote right
-# after it, so a docstring or a CLI help string that happens to open with
-# "Release ..." is not a match, while `f"RELEASE SAVEPOINT {name}"` still
-# is. sqlite3's execute() rejects multiple statements in one string, so a
-# transaction-control statement that actually reaches the driver is always
-# the whole literal.
+# Case-insensitive and quote-style-agnostic, unlike a fixed uppercase
+# literal-string pattern list, which a lowercase or single-quoted call would
+# slip past undetected. SAVEPOINT, RELEASE and ROLLBACK TO each require a
+# savepoint name, spelled as a plain identifier or an f-string placeholder.
 _TRANSACTION_STATEMENTS = (
     r"BEGIN\s+IMMEDIATE",
     r"BEGIN",
@@ -70,8 +70,36 @@ _TRANSACTION_STATEMENTS = (
     rf"ROLLBACK\s+TO\s+(?:SAVEPOINT\s+)?{_SAVEPOINT_NAME}",
     r"ROLLBACK",
 )
+_STATEMENT = "|".join(_TRANSACTION_STATEMENTS)
+_LITERAL_OPEN = r"""['"]{1,3}"""
+
+# Two shapes reach the driver, and both count.
+#
+# `execute()` rejects multiple statements, so what it is given is a literal
+# that is one transaction-control statement and nothing else — matched whole,
+# allowing leading whitespace or a newline (`execute("\nBEGIN")`, a
+# triple-quoted f"""  COMMIT""") and an optional trailing semicolon.
+#
+# `executescript()` accepts a whole script, so a transaction-control statement
+# can sit anywhere inside a longer literal. That shape is matched at a
+# statement position — right after the opening quote or after a preceding
+# statement's semicolon — and only when terminated by its own semicolon, which
+# is what keeps `executescript("BEGIN; ...; COMMIT")` visible to this guard
+# rather than passing as "not the whole literal".
+#
+# Neither shape matches English prose. A docstring or a CLI help string that
+# opens with "Release ..." has no savepoint name and closing quote after it and
+# no terminating semicolon; a sentence that happens to end "...so those rows
+# commit;" is not at a statement position; and a trigger body's `BEGIN` is
+# followed by the statement it guards rather than by a semicolon. \b keeps
+# "BEGIN" out of "beginning" and "COMMIT" out of "committed".
 _SQL_LITERAL_RE = re.compile(
-    r"""['"]\s*(?:""" + "|".join(_TRANSACTION_STATEMENTS) + r""")\s*;?\s*['"]""",
+    "|".join(
+        (
+            rf"""{_LITERAL_OPEN}\s*(?:{_STATEMENT})\s*;?\s*['"]""",
+            rf"""(?:{_LITERAL_OPEN}|;)\s*\b(?:{_STATEMENT})\s*;""",
+        )
+    ),
     re.IGNORECASE,
 )
 
@@ -122,9 +150,17 @@ def test_only_db_py_issues_transaction_control(path: pathlib.Path) -> None:
         "conn.execute('begin')",
         'conn.execute("\nBEGIN")',
         'conn.execute("  COMMIT")',
+        'conn.execute("COMMIT;")',
         'conn.execute(f"""\n    ROLLBACK""")',
+        'conn.execute(f"SAVEPOINT {name}")',
+        'conn.execute(f"RELEASE SAVEPOINT {name}")',
         "state.conn.commit()",
         "scout.db.conn.rollback()",
+        # A script is the other thing that reaches the driver, and the
+        # statement inside it is no less real for having company.
+        'conn.executescript("BEGIN; UPDATE posts SET id = 1; COMMIT")',
+        'conn.executescript("""\n    BEGIN IMMEDIATE;\n    DELETE FROM posts;\n    """)',
+        "conn.executescript('SAVEPOINT s; DELETE FROM posts; RELEASE s;')",
     ],
 )
 def test_has_transaction_control_detects_every_shape(text: str) -> None:
@@ -138,6 +174,18 @@ def test_has_transaction_control_detects_every_shape(text: str) -> None:
         'logger.info("beginning scan")',
         "state.commit()",
         "state.rollback()",
+        # Prose that opens on one of the keywords. The release subcommand's own
+        # help string is this shape, and is what the earlier whole-literal
+        # anchoring was added for.
+        '"""Release held posts against stored labels."""',
+        'parser.add_parser("release", help="Release one holdout")',
+        '"Releases the claim lease; the fence advances"',
+        # Prose that closes on one, semicolon included — not at a statement
+        # position, so not a script.
+        '"persist_surfaced_outcome raises only so those rows commit; this mirrors it"',
+        # A trigger body, which owns a BEGIN that is not transaction control.
+        '"""CREATE TRIGGER t BEFORE UPDATE ON posts\n'
+        "BEGIN\n    SELECT RAISE(ABORT, 'posts is immutable');\nEND\"\"\"",
     ],
 )
 def test_has_transaction_control_does_not_false_positive(text: str) -> None:

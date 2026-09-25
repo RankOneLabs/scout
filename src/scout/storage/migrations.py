@@ -3261,6 +3261,36 @@ def _migrate_to_48(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_49(conn: sqlite3.Connection) -> None:
+    """One durable, fenced capture per post (v49).
+
+    Adds `relevance_sampling_decisions`: the record of one post's holdout draw
+    written at the relevance boundary, before any drafting, and the
+    reservation that makes settling it exactly one evaluation's job. Nothing
+    is backfilled — a pre-v49 decision has no recorded rate or draw, so
+    inventing one would misattribute the sampling that actually happened. An
+    absent row reads as captured before the reservation existed, and
+    `sampling_is_settled_for_post` still recognizes those posts from their
+    recorded decision.
+
+    The plain `post_id` index on `relevance_holdouts` becomes UNIQUE, which is
+    what makes a second hold on one post impossible rather than merely
+    unreachable. The holdout lifecycle has never shipped, so no database can
+    hold a duplicate; if one somehow does, this fails loudly here rather than
+    leaving two competing holds in place.
+    """
+    from scout.storage.schema import RELEVANCE_SAMPLING_SCHEMA_STATEMENTS
+
+    for statement in RELEVANCE_SAMPLING_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+    conn.execute("DROP INDEX IF EXISTS relevance_holdouts_post_idx")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS relevance_holdouts_post_unique "
+        "ON relevance_holdouts(post_id)"
+    )
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3309,4 +3339,5 @@ MIGRATIONS: dict[int, Migration] = {
     46: _migrate_to_46,
     47: _migrate_to_47,
     48: _migrate_to_48,
+    49: _migrate_to_49,
 }

@@ -1,8 +1,16 @@
 """Typed repository for relevance holdouts and decision provenance.
 
-Two tables, one purpose: keep a relevance decision explainable after the fact,
-and keep a held post releasable exactly once even across concurrent or
-abandoned attempts.
+Three tables, one purpose: keep a relevance decision explainable after the
+fact, capture each post exactly once, and keep a held post releasable exactly
+once even across concurrent or abandoned attempts.
+
+`relevance_sampling_decisions` records one post's holdout draw at the moment
+it was taken — at the relevance boundary, after the decision succeeded and
+before any drafting — and reserves the post while the rest of that outcome is
+written. A retry reads the recorded draw back rather than taking a new one, so
+a changed rate cannot flip a settled decision; the reservation's monotonic
+fence is what stops an abandoned attempt from committing behind the attempt
+that resumed it.
 
 `relevance_decisions` records what produced one evaluation — classifier, model,
 catalogue and router identity, the action and its reason, and for JEV the full
@@ -100,6 +108,49 @@ class RelevanceDecision:
     answers: dict[str, Any] | None
     decision: dict[str, Any] | None
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class SamplingWrite:
+    """One post's holdout draw, as taken at the relevance boundary.
+
+    `owner` identifies the attempt taking the capture, so a resumed or
+    contended capture says which attempt currently holds it.
+    """
+
+    post_id: int
+    decision_key: str
+    rate: float
+    draw: float
+    selected: bool
+    owner: str
+    relevance_phase_run_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SamplingCapture:
+    """One post's durably recorded draw, and the fenced capture on it.
+
+    `evaluation_id` is None while the capture is still open: no evaluation has
+    settled on it, and whoever holds `fence` is the one attempt allowed to
+    settle one. `resumed` describes the call that produced this value rather
+    than the row itself — True when the draw was read back from an earlier
+    attempt instead of being recorded now.
+    """
+
+    id: int
+    post_id: int
+    decision_key: str
+    rate: float
+    draw: float
+    selected: bool
+    fence: int
+    owner: str
+    relevance_phase_run_id: int | None
+    evaluation_id: int | None
+    settled_at: str | None
+    created_at: str
+    resumed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +295,24 @@ def _decision_row(row: sqlite3.Row) -> RelevanceDecision:
     )
 
 
+def _sampling_capture(row: sqlite3.Row, *, resumed: bool) -> SamplingCapture:
+    return SamplingCapture(
+        id=int(row["id"]),
+        post_id=int(row["post_id"]),
+        decision_key=row["decision_key"],
+        rate=float(row["rate"]),
+        draw=float(row["draw"]),
+        selected=bool(row["selected"]),
+        fence=int(row["capture_fence"]),
+        owner=row["capture_owner"],
+        relevance_phase_run_id=row["relevance_phase_run_id"],
+        evaluation_id=row["evaluation_id"],
+        settled_at=row["settled_at"],
+        created_at=row["created_at"],
+        resumed=resumed,
+    )
+
+
 def _holdout_row(row: sqlite3.Row) -> Holdout:
     data = dict(row)
     frozen = json.loads(data.pop("frozen_input_json"))
@@ -340,6 +409,12 @@ class HoldoutStore:
         otherwise re-roll a settled decision — and a post that has already
         surfaced could come back held, or a held one be drafted. The recorded
         row is what makes the answer survive a configuration change.
+
+        This is the settled-*outcome* check, not the record of the draw:
+        `capture_sampling` writes that before drafting and resumes it after a
+        crash. A post whose capture is still open — decided, but with no
+        evaluation committed yet — reads as unsettled here, which is what lets
+        the retry resume the recorded draw instead of skipping the post.
         """
         row = self._conn.execute(
             "SELECT 1 FROM relevance_decisions d "
@@ -348,6 +423,155 @@ class HoldoutStore:
             (post_id,),
         ).fetchone()
         return row is not None
+
+    # -- the durable sampling capture ---------------------------------------
+
+    def capture_sampling(
+        self, write: SamplingWrite
+    ) -> Result[SamplingCapture, HoldoutStorageError]:
+        """Record one post's draw durably, before drafting, and take the capture.
+
+        Insert-or-resume, in one transaction that commits on its own — the
+        point of the row is to be durable before any drafting happens, so a
+        crash between here and the evaluation leaves the draw readable.
+
+        The first attempt records the draw. A later attempt over the same post
+        reads the recorded one back instead of taking a second draw, so a
+        `RELEVANCE_HOLDOUT_RATE` that moved in either direction in between
+        cannot flip a decision that is already durable: the returned rate and
+        selection are the ones the row was written with, not the ones this
+        attempt drew.
+
+        Resuming an open capture bumps its fence and takes ownership, which is
+        what makes recovery safe rather than merely possible — the abandoned
+        attempt now holds a fence the row has moved past, so its own late
+        `settle_sampling_capture` cannot land behind the attempt that resumed
+        it. A capture that already settled is returned as it stands, with its
+        `evaluation_id` set, and is never taken over.
+        """
+        try:
+            with self._uow.begin_immediate():
+                inserted = (
+                    self._conn.execute(
+                        "INSERT INTO relevance_sampling_decisions "
+                        "(post_id, decision_key, rate, draw, selected, capture_fence, "
+                        "capture_owner, relevance_phase_run_id, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?) "
+                        "ON CONFLICT(post_id) DO NOTHING",
+                        (
+                            write.post_id,
+                            write.decision_key,
+                            write.rate,
+                            write.draw,
+                            int(write.selected),
+                            write.owner,
+                            write.relevance_phase_run_id,
+                            _now(),
+                        ),
+                    ).rowcount
+                    == 1
+                )
+                current = self._sampling_row(write.post_id)
+                if current is None:
+                    return Err(
+                        HoldoutStorageError(
+                            operation="capture_sampling",
+                            detail=f"no sampling decision for post {write.post_id}",
+                        )
+                    )
+                if inserted or current["evaluation_id"] is not None:
+                    return Ok(_sampling_capture(current, resumed=not inserted))
+                taken = self._conn.execute(
+                    "UPDATE relevance_sampling_decisions "
+                    "SET capture_fence = capture_fence + 1, capture_owner = ?, "
+                    "    relevance_phase_run_id = ? "
+                    "WHERE id = ? AND evaluation_id IS NULL AND capture_fence = ?",
+                    (
+                        write.owner,
+                        write.relevance_phase_run_id,
+                        current["id"],
+                        current["capture_fence"],
+                    ),
+                )
+                if taken.rowcount != 1:
+                    return Err(
+                        HoldoutStorageError(
+                            operation="capture_sampling",
+                            detail=(
+                                f"capture on post {write.post_id} moved past fence "
+                                f"{current['capture_fence']} while it was being resumed"
+                            ),
+                        )
+                    )
+                resumed = self._sampling_row(write.post_id)
+        except sqlite3.IntegrityError as exc:
+            return Err(
+                HoldoutStorageError(operation="capture_sampling", detail=str(exc))
+            )
+        assert resumed is not None
+        return Ok(_sampling_capture(resumed, resumed=True))
+
+    def settle_sampling_capture(
+        self, *, sampling_id: int, fence: int, evaluation_id: int
+    ) -> Result[SamplingCapture, HoldoutStorageError]:
+        """Settle one capture on the single evaluation it produced.
+
+        The compare-and-swap on `(evaluation_id IS NULL, capture_fence)` is
+        what makes one capture per post exactly one decision: a second worker
+        that classified the same post concurrently, and an attempt that was
+        abandoned and has since been resumed by another, both present a
+        capture the row has moved past and are refused. Composable inside the
+        transaction that wrote the evaluation, so a refusal takes that
+        evaluation down with it rather than leaving a competing decision.
+        """
+        with self._uow.begin_immediate():
+            applied = (
+                self._conn.execute(
+                    "UPDATE relevance_sampling_decisions "
+                    "SET evaluation_id = ?, settled_at = ? "
+                    "WHERE id = ? AND evaluation_id IS NULL AND capture_fence = ?",
+                    (evaluation_id, _now(), sampling_id, fence),
+                ).rowcount
+                == 1
+            )
+            current = self._conn.execute(
+                "SELECT * FROM relevance_sampling_decisions WHERE id = ?",
+                (sampling_id,),
+            ).fetchone()
+            if applied:
+                assert current is not None
+                return Ok(_sampling_capture(current, resumed=False))
+            if current is None:
+                detail = f"no sampling decision {sampling_id}"
+            elif current["evaluation_id"] is not None:
+                detail = (
+                    f"post {current['post_id']} was already captured by evaluation "
+                    f"{current['evaluation_id']}"
+                )
+            else:
+                detail = (
+                    f"capture fence {fence} is stale; post {current['post_id']} is at "
+                    f"{current['capture_fence']}"
+                )
+        return Err(
+            HoldoutStorageError(
+                operation="settle_sampling_capture",
+                detail=detail,
+                evaluation_id=evaluation_id,
+            )
+        )
+
+    def get_sampling_capture(self, post_id: int) -> SamplingCapture | None:
+        """This post's recorded draw and capture, if one was ever taken."""
+        row = self._sampling_row(post_id)
+        return None if row is None else _sampling_capture(row, resumed=False)
+
+    def _sampling_row(self, post_id: int) -> sqlite3.Row | None:
+        row: sqlite3.Row | None = self._conn.execute(
+            "SELECT * FROM relevance_sampling_decisions WHERE post_id = ?",
+            (post_id,),
+        ).fetchone()
+        return row
 
     # -- holds --------------------------------------------------------------
 
