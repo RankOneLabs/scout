@@ -9,7 +9,7 @@ exports blind, and labelled and unlabelled holds release through the real
 `release_pending_holdouts`, whose reply phases run the real
 `draft_and_critic_step`.
 
-Exactly two boundaries are replaced, and both are external IO:
+In the scan, exactly two boundaries are replaced, and both are external IO:
 
 - **the model.** `from_model` returns a scripted `LLMClient` that answers
   each phase's `submit_output` call from a table. Everything above it —
@@ -18,6 +18,10 @@ Exactly two boundaries are replaced, and both are external IO:
 - **the JEV endpoint.** An `httpx.MockTransport` answers the catalogue's
   questions with a per-post probability vector. The request, the router and
   the recorded decision are production code.
+
+The release half replaces `from_model` again, plus the dossier git checkout
+and the runtime-registry read the scan never seeded; `release_env` documents
+all three and why none of them is a step of the pipeline.
 
 Nothing else is faked: no `classify_outcome` shim, no hand-inserted phase
 runs, no fabricated trace ids. Every status, decision, hold and phase-run
@@ -935,14 +939,25 @@ async def release_env(
     state: StateManager, population: dict[str, int], tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    """Release through the production path, over the same two boundaries.
+    """Release through the production path, with no orchestration replaced.
 
     `release_pending_holdouts` builds its own phase runtime and runs the
     real `draft_and_critic_step`, so the reply and critic phases here write
-    the same durable, trace-verified evidence the scan half did. Only the
-    model and the dossier checkout — both external IO — are replaced. The
-    content verifier runs for real, against the grounding `_dossiers`
-    carries.
+    the same durable, trace-verified evidence the scan half did. The content
+    verifier runs for real, against the grounding `_dossiers` carries.
+
+    Three substitutions, none of them a step of the pipeline:
+
+    - `from_model` and `load_project_dossiers` are the external IO — the
+      model, and a git checkout of the private dossier repository. These are
+      the same seams the scan half replaces (`from_model` there too, the JEV
+      endpoint via `MockTransport`).
+    - `load_runtime_registry` reads projects and keywords out of the
+      database, and the scan half registered none: it passed its routes
+      straight to `score_messages`. The patch supplies the fixture data those
+      rows would have held, not a different code path.
+
+    `SCOUT_DOSSIER_ROOT` is emptied so the checkout stub is what answers.
     """
     registry = _registry()
     monkeypatch.setattr(state, "load_runtime_registry", lambda: registry)
