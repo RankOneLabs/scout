@@ -186,6 +186,20 @@ _STATUS_INVARIANTS: tuple[tuple[str, str, str], ...] = (
         "a decision sampled into the holdout has no hold recorded",
     ),
     (
+        # Existence, checked separately from content: the invariant below joins
+        # `relevance_decisions`, so a hold with no decision row at all drops out
+        # of it before its predicate is reached. Nothing in the schema forbids
+        # that row's absence — there is no foreign key from a hold to a
+        # decision, and `HoldoutStore.hold` sets `selected_for_holdout` with an
+        # UPDATE that is a silent no-op when no row is there.
+        "hold_has_a_decision_row",
+        """SELECT COUNT(*) FROM relevance_holdouts h
+           WHERE NOT EXISTS (
+             SELECT 1 FROM relevance_decisions d WHERE d.evaluation_id = h.evaluation_id
+           )""",
+        "a hold has no decision recorded; an ungraded release has no action to use",
+    ),
+    (
         "hold_has_a_selected_decision",
         """SELECT COUNT(*) FROM relevance_holdouts h
            JOIN relevance_decisions d ON d.evaluation_id = h.evaluation_id

@@ -486,8 +486,13 @@ uv run scout analysis status-audit --db-path scout.db
 Reads the status counts every view reads, plus the lifecycle invariants those
 views depend on: a held row with a draft or a surfaced event, a hold whose
 source is not held, a release that landed on a held evaluation, a decision
-sampled into the holdout with no hold recorded, a released hold with no
-recorded authority. It reports counts and invariant names only — never post
+sampled into the holdout with no hold recorded, a hold with no decision
+recorded at all, a hold whose decision says it was never sampled, a released
+hold with no recorded authority. The missing-decision and not-sampled cases
+are checked separately because a hold with no decision row would drop out of
+a join, and because the two mean different things: no recorded action to
+release on at all, against a recorded action that contradicts the hold.
+It reports counts and invariant names only — never post
 content, answers, catalogue identity or a label — so its output can be
 attached to a deployment record. A database predating the holdout schema
 audits clean with empty classifier and holdout counts.

@@ -822,6 +822,26 @@ def test_the_status_audit_reports_a_held_row_that_acquired_a_draft(
     assert findings == {"held_evaluation_has_no_draft": 1}
 
 
+def test_the_status_audit_reports_a_hold_whose_decision_is_missing(
+    state: StateManager, population: dict[str, int]
+) -> None:
+    """A hold with no decision row at all is a violation, not an absence.
+
+    `hold_has_a_selected_decision` joins `relevance_decisions`, so this hold
+    would drop out of it and the audit would report clean on a database whose
+    hold can never release ungraded: `resolve_release` needs the recorded
+    action and there is none. `hold_has_a_decision_row` is what catches it.
+    """
+    held = population["llm_respond_held"]
+    state.conn.execute("DELETE FROM relevance_decisions WHERE evaluation_id = ?", (held,))
+
+    findings = {
+        finding.invariant: finding.count for finding in audit_status_consumers(state.conn).findings
+    }
+
+    assert findings == {"hold_has_a_decision_row": 1}
+
+
 def test_the_status_audit_runs_as_an_analysis_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
