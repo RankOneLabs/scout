@@ -450,6 +450,127 @@ points at a shadow-form fixture the JEV loader would reject. Under `jev` the
 variable must be set explicitly; validation fails rather than falling back to
 that default.
 
+## Status views
+
+Three facts about one evaluation are recorded separately and are rendered
+separately. Collapsing any two of them reports something nobody decided.
+
+| fact | where it lives | what it means |
+|---|---|---|
+| source action | `relevance_decisions.action` | what the classifier decided |
+| release authority | `relevance_holdouts.release_authority` / `release_action` | what acted on the hold: a blind label, or the recorded action |
+| actual outcome | `evaluations.surface_status` | what actually happened |
+
+A released `respond` that the critic then rejected is a real and ordinary
+combination: authority `recorded_action`, action `respond`, and a target whose
+`surface_status` is `critic_rejected`. The UI shows all three.
+
+`held` is neither `surfaced` nor `drafting_failed`. A hold reached a decision
+and stopped before drafting, so nothing about it failed and nothing about it
+was published. No held row is actionable for posting, and none appears in a
+draft or review queue — a held evaluation has no draft to queue. It stays
+visible in the scan's evaluation view, with its own count and its own filter
+value.
+
+A released target records no classifier of its own. Its authority is the
+hold's release record, not a classifier run, and a null classifier there
+reads as unknown rather than being backfilled with a guess. The same is true
+of every pre-JEV row.
+
+### The repository-side audit
+
+```bash
+uv run scout analysis status-audit --db-path scout.db
+```
+
+Reads the status counts every view reads, plus the lifecycle invariants those
+views depend on: a held row with a draft or a surfaced event, a hold whose
+source is not held, a release that landed on a held evaluation, a decision
+sampled into the holdout with no hold recorded, a hold with no decision
+recorded at all, a hold whose decision says it was never sampled, a released
+hold with no recorded authority. The missing-decision and not-sampled cases
+are checked separately because a hold with no decision row would drop out of
+a join, and because the two mean different things: no recorded action to
+release on at all, against a recorded action that contradicts the hold.
+It reports counts and invariant names only — never post
+content, answers, catalogue identity or a label — so its output can be
+attached to a deployment record. A database predating the holdout schema
+audits clean with empty classifier and holdout counts.
+
+A non-empty `findings` array is a stop: it means the database disagrees with
+what the lifecycle guarantees, and no further rollout step should run until
+it is understood.
+
+## Rolling out
+
+### Rollback
+
+Rollback is one variable: `RELEVANCE_CLASSIFIER=llm`. Every JEV requirement —
+the credential, the catalogue path, the `KEYWORD_PREFILTER=true` requirement —
+is validated only under `jev`, so a rolled-back deployment cannot fail startup
+on a setting it no longer uses.
+
+`RELEVANCE_HOLDOUT_RATE` is a separate control and is read whatever the
+classifier is. Rolling back neither resets it nor disables sampling; set it
+to `0` if sampling should also stop.
+
+Pending holds survive the rollback. A hold is a recorded decision and a
+recorded action, not a live classifier session: `scout holdout release` acts
+on the action stored at decision time, so a hold taken under `jev` still
+releases as the `jev` decision said after the classifier has gone back to
+`llm`. Release never recomputes a threshold and never re-classifies. A
+rollback therefore loses no pending decision, and the pending population can
+be exported and released at any point afterwards.
+
+### External gates
+
+Repository implementation is not rollout completion. Each gate below is
+outside this repository, and none of them is satisfied here. The evidence
+owner is where the evidence is produced and where it has to be recorded.
+
+**Every gate in the table is open, and stays open until its named owner
+supplies the evidence.** A gate closes on an artifact from that owner — a
+recorded parity run on otto, a scored packet from assay, a deployed compose
+file and a secret check on willie, a checked-out run-receipts on the host, a
+canary scan with its audit output and its exercised rollback. Nothing in this
+repository can close one of them.
+
+In particular, repository checks are not evidence for any gate. A green CI
+run, a passing test suite, a clean `ruff`/`mypy`, and the integrated scan
+tests in `tests/test_holdout_lifecycle.py` all say the same thing: the code in
+this repository behaves as its contract says. None of them observes the real
+v6 catalogue, the round 5 records, the willie container, the mounted secret or
+a live scan, because none of those is present here — the catalogue and the
+graded records are private and deliberately uncommitted. Reading a repository
+check as gate evidence would be reading a test of the port as a test of the
+thing the port talks to.
+
+| gate | what must be shown | evidence owner / source |
+|---|---|---|
+| real-v6 parity | On otto, with the real v6 catalogue: Scout sends the same `questions` mapping assay's loader produces, and projects a round 5 export record to the same state as assay's `build_state`. Any question or state mismatch blocks JEV enablement. | otto, against the private catalogue in run-receipts and assay's loader/`build_state` at the pinned revision |
+| assay blind and score conformance | One blind packet per pending export record; rounds 4/5 form preserved; the final action and the respond/review-versus-drop split scored against the recorded classifier actions, with actual `surface_status` kept separate from the scored intent. | assay, in separately provisioned work |
+| catalogue mount and secret | The v6 catalogue mounted read-only into the container on willie from a run-receipts checkout, `TYPESAFE_CATALOGUE_PATH` pointing at the mounted path, and `TYPESAFE_API_KEY` present from the environment and absent from every log and stored row. | springfield, `machines/willie/docker-compose.yml`, deployed through `machines/willie/scripts/deploy-scout.sh` |
+| run-receipts availability | run-receipts cloned on the host with forwarded SSH, holding the v6 catalogue and the round 5 artifacts the parity check reads. | run-receipts, on willie |
+| canary | A live scan under `RELEVANCE_CLASSIFIER=jev` with a clean `scout analysis status-audit`, and a recorded, exercised `RELEVANCE_CLASSIFIER=llm` rollback. | the production deployment |
+
+None of these were executed in this repository and none is represented as
+completed. Scout's own test suite asserts the port's behaviour and the shapes
+the port must satisfy; it asserts no parity with the graded runs, because the
+catalogue and the round 5 records that parity needs are private.
+
+### Enablement
+
+`RELEVANCE_CLASSIFIER=jev` goes to production only when every gate above has
+produced its evidence: real-v6 parity on otto, assay blind and score
+conformance, read-only mount and secret validation on willie, a successful
+canary, and a documented `llm` rollback. A mismatch in the real-v6 question
+mapping or round 5 state blocks enablement on its own.
+
+Enablement is not a repository decision. Merging this work changes the default
+for nothing: `RELEVANCE_CLASSIFIER` defaults to `llm`, and the switch is an
+environment change on the host made by whoever holds the closed gates'
+evidence. Do not set `jev` on the strength of the checks in this repository.
+
 ## Deploying
 
 The catalogue is mounted read-only into the container from a run-receipts

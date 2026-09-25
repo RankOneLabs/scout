@@ -9,8 +9,6 @@ import {
   type MatchedRoute,
   type PromptBundle,
   type PostWithEvaluation,
-  type DraftWithContext,
-  type DraftWithGrade,
   type ReviewEvaluation,
   type Grade,
   type GradingProgress,
@@ -27,6 +25,17 @@ import {
   type SourceProbeRun,
   type ShadowRelevanceRunRow,
 } from "@/types/schema";
+import type {
+  DraftWithGradeAndProvenance,
+  DraftWithProvenance,
+  HoldoutLabel,
+  HoldoutStatus,
+  RelevanceAction,
+  RelevanceClassifier,
+  RelevanceProvenance,
+  ReleaseAuthority,
+  ReviewEvaluationWithProvenance,
+} from "@/lib/transforms";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -186,6 +195,168 @@ function isHistoricalTrueEmptyCompletedScan(row: ScanWithCounts): boolean {
     (row.draft_count ?? 0) === 0 &&
     (row.critique_count ?? 0) === 0
   );
+}
+
+// Relevance provenance
+//
+// Three independently-recorded facts, read together and kept apart: what
+// classified an evaluation (`relevance_decisions`), the hold this evaluation
+// is the source of, and the hold this evaluation is the released target of.
+// None of them is the evaluation's `surface_status`, which is what actually
+// happened to it. See docs/relevance-holdouts.md.
+
+interface DecisionRow {
+  evaluation_id: number;
+  decision_uid: string;
+  classifier: string;
+  model: string;
+  catalogue_id: string | null;
+  catalogue_version: string | null;
+  router_version: string | null;
+  action: string;
+  reason: string | null;
+  selected_for_holdout: number;
+  created_at: string;
+}
+
+interface HoldoutSourceRow {
+  id: number;
+  evaluation_id: number;
+  status: string;
+  held_at: string;
+  released_at: string | null;
+  release_authority: string | null;
+  release_action: string | null;
+  label: string | null;
+  label_source: string | null;
+  target_evaluation_id: number | null;
+  attempts: number;
+  last_error: string | null;
+}
+
+function hasTable(name: string): boolean {
+  return (
+    getDb()
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(name) !== undefined
+  );
+}
+
+function idListParameter(evaluationIds: number[]): string {
+  return JSON.stringify(evaluationIds);
+}
+
+/** Read every provenance fact recorded for these evaluations, in one batch.
+ *
+ * Returns `null` when the database predates the holdout schema: absent
+ * tables are an honest absence, so consumers omit the field entirely rather
+ * than rendering "nothing recorded" over a database that could not record
+ * anything. */
+export function getRelevanceProvenanceBatch(
+  evaluationIds: number[]
+): Map<number, RelevanceProvenance> | null {
+  if (!hasTable("relevance_decisions") || !hasTable("relevance_holdouts")) return null;
+  const provenance = new Map<number, RelevanceProvenance>(
+    evaluationIds.map((id) => [
+      id,
+      { evaluation_id: id, decision: null, holdout: null, released_from: null },
+    ])
+  );
+  if (evaluationIds.length === 0) return provenance;
+  const db = getDb();
+  const ids = idListParameter(evaluationIds);
+  const idSelect = "SELECT CAST(value AS INTEGER) FROM json_each(?)";
+
+  for (const row of db
+    .prepare(
+      `SELECT evaluation_id, decision_uid, classifier, model, catalogue_id,
+              catalogue_version, router_version, action, reason,
+              selected_for_holdout, created_at
+         FROM relevance_decisions
+        WHERE evaluation_id IN (${idSelect})`
+    )
+    .all(ids) as DecisionRow[]) {
+    const entry = provenance.get(row.evaluation_id);
+    if (entry === undefined) continue;
+    entry.decision = {
+      decision_uid: row.decision_uid,
+      classifier: row.classifier as RelevanceClassifier,
+      model: row.model,
+      catalogue_id: row.catalogue_id,
+      catalogue_version: row.catalogue_version,
+      router_version: row.router_version,
+      action: row.action as RelevanceAction,
+      reason: row.reason,
+      selected_for_holdout: toBool(row.selected_for_holdout),
+      created_at: row.created_at,
+    };
+  }
+
+  for (const row of db
+    .prepare(
+      `SELECT id, evaluation_id, status, held_at, released_at, release_authority,
+              release_action, label, label_source, target_evaluation_id, attempts,
+              last_error
+         FROM relevance_holdouts
+        WHERE evaluation_id IN (${idSelect})`
+    )
+    .all(ids) as HoldoutSourceRow[]) {
+    const entry = provenance.get(row.evaluation_id);
+    if (entry === undefined) continue;
+    entry.holdout = {
+      id: row.id,
+      status: row.status as HoldoutStatus,
+      held_at: row.held_at,
+      released_at: row.released_at,
+      release_authority: row.release_authority as ReleaseAuthority | null,
+      release_action: row.release_action as RelevanceAction | null,
+      label: row.label as HoldoutLabel | null,
+      label_source: row.label_source,
+      target_evaluation_id: row.target_evaluation_id,
+      attempts: row.attempts,
+      last_error: row.last_error,
+    };
+  }
+
+  // The same table read from the other side. A released target's authority
+  // is this row, not a classifier run of its own — it has no
+  // relevance_decisions row at all, by design.
+  for (const row of db
+    .prepare(
+      `SELECT id, evaluation_id AS source_evaluation_id, target_evaluation_id,
+              release_authority, release_action, label, label_source, released_at
+         FROM relevance_holdouts
+        WHERE target_evaluation_id IN (${idSelect})
+          AND release_authority IS NOT NULL AND release_action IS NOT NULL`
+    )
+    .all(ids) as Array<{
+    id: number;
+    source_evaluation_id: number;
+    target_evaluation_id: number;
+    release_authority: string;
+    release_action: string;
+    label: string | null;
+    label_source: string | null;
+    released_at: string | null;
+  }>) {
+    const entry = provenance.get(row.target_evaluation_id);
+    if (entry === undefined) continue;
+    entry.released_from = {
+      holdout_id: row.id,
+      source_evaluation_id: row.source_evaluation_id,
+      release_authority: row.release_authority as ReleaseAuthority,
+      release_action: row.release_action as RelevanceAction,
+      label: row.label as HoldoutLabel | null,
+      label_source: row.label_source,
+      released_at: row.released_at,
+    };
+  }
+  return provenance;
+}
+
+/** One evaluation's provenance, or null when nothing could record it. */
+export function getRelevanceProvenance(evaluationId: number): RelevanceProvenance | null {
+  return getRelevanceProvenanceBatch([evaluationId])?.get(evaluationId) ?? null;
 }
 
 // Queries
@@ -551,7 +722,7 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
   return { data, has_more };
 }
 
-export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
+export function getDrafts(filters?: DraftFilters): Paginated<DraftWithProvenance> {
   const db = getDb();
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -675,7 +846,9 @@ export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
     .all(...params, limit + 1) as DraftRow[];
 
   const has_more = rows.length > limit;
-  const data = (has_more ? rows.slice(0, limit) : rows).map((row) => {
+  const sliced = has_more ? rows.slice(0, limit) : rows;
+  const provenance = getRelevanceProvenanceBatch(sliced.map((row) => row.evaluation_id));
+  const data = sliced.map((row) => {
     const parentCtx = toSourceParent(row);
     return {
       draft_id: row.draft_id,
@@ -701,6 +874,9 @@ export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
       posture: row.posture ?? null,
       dossier_revision: row.dossier_revision ?? null,
       relevant: toBool(row.relevant),
+      ...(provenance === null
+        ? {}
+        : { relevance_provenance: provenance.get(row.evaluation_id) }),
     };
   });
   return { data, has_more };
@@ -827,7 +1003,7 @@ export function getGradeByEvaluationId(evaluationId: number): Grade | null {
   return parseGradeRow(db.prepare("SELECT * FROM grades WHERE evaluation_id = ?").get(evaluationId) as Record<string, unknown> | undefined);
 }
 
-export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWithGrade> {
+export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWithGradeAndProvenance> {
   const db = getDb();
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -995,6 +1171,7 @@ export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWith
   const revisionMeta = getGradeRevisionMetaBatch(
     sliced.filter((row) => row.grade_id !== null).map((row) => row.grade_id!)
   );
+  const provenance = getRelevanceProvenanceBatch(sliced.map((row) => row.evaluation_id));
 
   const data = sliced.map((row) => {
     const parentCtx = toSourceParent(row);
@@ -1022,6 +1199,9 @@ export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWith
       posture: row.posture ?? null,
       dossier_revision: row.dossier_revision ?? null,
       relevant: toBool(row.relevant),
+      ...(provenance === null
+        ? {}
+        : { relevance_provenance: provenance.get(row.evaluation_id) }),
       grade: row.grade_id
         ? {
             id: row.grade_id,
@@ -1066,7 +1246,7 @@ function getReviewEvaluations({
   params,
   orderBy,
   limit,
-}: ReviewEvaluationQuery): ReviewEvaluation[] {
+}: ReviewEvaluationQuery): ReviewEvaluationWithProvenance[] {
   const db = getDb();
   const columnCache = new Map<string, Set<string>>();
   const columns = (table: string) => {
@@ -1261,6 +1441,7 @@ function getReviewEvaluations({
   if (rows.length === 0) return [];
 
   const evaluationIds = JSON.stringify(rows.map((row) => row.id));
+  const provenance = getRelevanceProvenanceBatch(rows.map((row) => row.id));
 
   const violations = tableNames.has("gate_blocks") ? db.prepare(
     `SELECT id, reason_code, offending_text, segment_index, project_key,
@@ -1346,7 +1527,12 @@ function getReviewEvaluations({
       id: row.id, post_id: row.post_id, relevant: toBool(row.relevant),
       score: row.score, reason: row.reason, relevant_to: parseRelevantTo(row.relevant_to),
       keyword_route_id: row.keyword_route_id, scan_id: row.scan_id,
-      surface_status: (evaluationColumns.has("surface_status") ? row.surface_status : "not_relevant") as ReviewEvaluation["surface_status"], failure_reason: evaluationColumns.has("failure_reason") ? row.failure_reason : null,
+      // No cast: the row type declares this column as the canonical union,
+      // which names every status the database holds, 'held' included.
+      surface_status: evaluationColumns.has("surface_status")
+        ? row.surface_status
+        : "not_relevant",
+      failure_reason: evaluationColumns.has("failure_reason") ? row.failure_reason : null,
       project_key: row.project_key, posture: row.posture,
       dossier_revision: row.dossier_revision, dossier_summary_id: row.dossier_summary_id,
       matched_route: toMatchedRoute(row),
@@ -1380,11 +1566,20 @@ function getReviewEvaluations({
       gate_violations: violationsByEvaluation.get(row.id) ?? [],
       grade: gradesByEvaluation.get(row.id) ?? null,
       ...(hasShadowRelevance ? { shadow_relevance: shadowRelevance } : {}),
+      ...(provenance === null
+        ? {}
+        : { relevance_provenance: provenance.get(row.id) }),
     };
   });
 }
 
-export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
+/** One scan's complete evaluation population, every status included.
+ *
+ * Unnarrowed on purpose: `held` is a status of its own, and a status view
+ * that reads this population counts it beside `surfaced` and
+ * `drafting_failed` rather than asking the database to pre-select one.
+ * See `selectSurfaceStatusCounts`. */
+export function getEvaluationsByScan(scanId: number): ReviewEvaluationWithProvenance[] {
   return getReviewEvaluations({
     whereClause: "e.scan_id = ?",
     params: [scanId],

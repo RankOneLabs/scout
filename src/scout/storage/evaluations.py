@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -49,6 +49,75 @@ SURFACE_STATUSES: frozenset[str] = frozenset({
     "surfaced", "low_relevance", "abstained", "critic_rejected",
     "gate_blocked", "not_relevant", "drafting_failed", "held",
 })
+
+#: The one status that means a reply exists and may be posted. Every status
+#: consumer that asks "can an operator act on this" asks it through
+#: `is_actionable_for_posting`, so 'held' can never be folded in by a
+#: consumer that enumerated the negative cases and missed one.
+ACTIONABLE_SURFACE_STATUSES: frozenset[str] = frozenset({"surfaced"})
+
+#: The hold. Named rather than spelled inline so a consumer reads the intent.
+HELD_SURFACE_STATUS = "held"
+
+#: The status a drafting attempt that failed records. Kept beside `held` in
+#: this module exactly because the two are routinely confused: a hold never
+#: reached drafting, so nothing about it failed.
+DRAFTING_FAILED_SURFACE_STATUS = "drafting_failed"
+
+
+def is_held(surface_status: str) -> bool:
+    """Whether this evaluation was held back from surfacing for blind grading."""
+    return surface_status == HELD_SURFACE_STATUS
+
+
+def is_actionable_for_posting(surface_status: str) -> bool:
+    """Whether an operator can still post a reply for this evaluation.
+
+    False for 'held': a hold produced a decision and stopped. It is neither
+    an approved reply nor a drafting defect, and it must not enter a draft
+    or review queue on either reading.
+    """
+    return surface_status in ACTIONABLE_SURFACE_STATUSES
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceStatusCounts:
+    """Evaluation counts keyed by `surface_status`, with no status folded.
+
+    'held' is its own count here and everywhere downstream. The named
+    properties exist so a status view reads one derived value rather than
+    re-deriving the same sum, and so `actionable` cannot drift from
+    `is_actionable_for_posting`.
+    """
+
+    by_status: Mapping[str, int]
+
+    def count(self, surface_status: str) -> int:
+        return self.by_status.get(surface_status, 0)
+
+    @property
+    def total(self) -> int:
+        return sum(self.by_status.values())
+
+    @property
+    def held(self) -> int:
+        return self.count(HELD_SURFACE_STATUS)
+
+    @property
+    def surfaced(self) -> int:
+        return self.count("surfaced")
+
+    @property
+    def drafting_failed(self) -> int:
+        return self.count(DRAFTING_FAILED_SURFACE_STATUS)
+
+    @property
+    def actionable(self) -> int:
+        return sum(
+            count
+            for status, count in self.by_status.items()
+            if is_actionable_for_posting(status)
+        )
 
 # Canonical phase execution order. Ordinary model-scored evaluations use a
 # prefix of the full sequence. Human-positive promotions intentionally skip
@@ -1459,11 +1528,33 @@ class EvaluationStore:
         )
 
     def count_relevant_evaluations(self) -> int:
-        """Total relevant evaluations across all scans — one leg of ScanStats."""
+        """Total relevant evaluations across all scans — one leg of ScanStats.
+
+        Relevance and surfacing are different facts: a held `respond` post is
+        relevant and was never surfaced. Read `count_by_surface_status` for
+        what actually happened to it.
+        """
         return int(
             self._conn.execute(
                 "SELECT COUNT(*) FROM evaluations WHERE relevant = 1"
             ).fetchone()[0]
+        )
+
+    def count_by_surface_status(self, scan_id: int | None = None) -> SurfaceStatusCounts:
+        """Evaluation counts by `surface_status`, for one scan or all of them.
+
+        The projection every status view reads. It never collapses 'held'
+        into 'surfaced' or 'drafting_failed' because it never collapses
+        anything: the row's own status is the key.
+        """
+        query = "SELECT surface_status, COUNT(*) AS count FROM evaluations"
+        params: tuple[int, ...] = ()
+        if scan_id is not None:
+            query += " WHERE scan_id = ?"
+            params = (scan_id,)
+        rows = self._conn.execute(f"{query} GROUP BY surface_status", params).fetchall()
+        return SurfaceStatusCounts(
+            by_status={str(row["surface_status"]): int(row["count"]) for row in rows}
         )
 
     def count_drafts(self) -> int:

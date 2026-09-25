@@ -353,6 +353,55 @@ class TestRelevanceClassifierConfig:
         assert reloaded.RELEVANCE_HOLDOUT_RATE == 0.1
         assert any("RELEVANCE_HOLDOUT_RATE" in error for error in get_env_errors())
 
+    def test_a_zero_holdout_rate_is_accepted_and_holds_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch, RELEVANCE_HOLDOUT_RATE="0")
+        assert reloaded.RELEVANCE_HOLDOUT_RATE == 0.0
+        assert get_env_errors() == []
+
+    def test_a_full_holdout_rate_is_accepted_and_holds_everything(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reloaded = self._reload(monkeypatch, RELEVANCE_HOLDOUT_RATE="1")
+        assert reloaded.RELEVANCE_HOLDOUT_RATE == 1.0
+        assert get_env_errors() == []
+
+    def test_the_holdout_rate_is_independent_of_the_classifier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The two are separate controls, so rollback is one variable.
+
+        Rolling the classifier back to `llm` does not silently reset or
+        disable sampling, and a non-default rate does not require any JEV
+        setting. See docs/relevance-holdouts.md.
+        """
+        rolled_back = self._reload(
+            monkeypatch, RELEVANCE_CLASSIFIER="llm", RELEVANCE_HOLDOUT_RATE="0.25"
+        )
+        assert rolled_back.RELEVANCE_CLASSIFIER == "llm"
+        assert rolled_back.RELEVANCE_HOLDOUT_RATE == 0.25
+        assert get_env_errors() == []
+
+    def test_a_rollback_to_llm_needs_no_jev_setting_at_all(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every JEV requirement is validated only under `jev`.
+
+        The whole rollback is `RELEVANCE_CLASSIFIER=llm`: the credential, the
+        catalogue path and the prefilter requirement all stop applying, so a
+        rolled-back deployment cannot fail startup on a JEV setting it no
+        longer uses.
+        """
+        import scout.config as config_module
+        from scout.scanning.runner import validate_jev_config
+
+        monkeypatch.setattr(config_module, "RELEVANCE_CLASSIFIER", "llm")
+        monkeypatch.setattr(config_module, "TYPESAFE_API_KEY", "")
+        monkeypatch.setattr(config_module, "KEYWORD_PREFILTER", False)
+        monkeypatch.delenv("TYPESAFE_CATALOGUE_PATH", raising=False)
+        assert validate_jev_config() == []
+
     def _jev_errors(self, monkeypatch: pytest.MonkeyPatch, **env: str) -> list[str]:
         """Patch the already-imported config module rather than reloading
         scout.scanning.runner: validate_jev_config reads `_config.X` at call

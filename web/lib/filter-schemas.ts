@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { SurfaceStatus } from "@/types/schema";
+
 export const postFiltersSchema = z.object({
   platform: z.enum(["discord", "farcaster", "bluesky"]).optional(),
   relevant: z
@@ -24,6 +26,33 @@ export const draftFiltersSchema = z.object({
     .optional()
     .transform((v) => v === "true"),
 });
+
+/** The complete `evaluations.surface_status` vocabulary as a runtime value,
+ *  mirroring scout.storage.evaluations. 'held' is a value of its own and is
+ *  never implied by another: anything that folded it into 'surfaced' or
+ *  'drafting_failed' would report a hold as an outcome it never reached.
+ *
+ *  `SurfaceStatus` in types/schema.ts is the same vocabulary as a type, and
+ *  `satisfies` is what keeps the two from drifting: a member here that the
+ *  union does not name fails to compile, and the list is pinned member for
+ *  member by __tests__/filter-schemas.test.ts. Import `SurfaceStatus` for the
+ *  type — this module does not define a second one.
+ *
+ *  This is the vocabulary, not a filter. `evaluationFiltersSchema` below is
+ *  deliberately unchanged — the evaluations route returns a scan's whole
+ *  population and the status breakdown is derived from it by
+ *  `selectSurfaceStatusCounts`, so no status is selected away before a
+ *  status view can count it. */
+export const SURFACE_STATUSES = [
+  "surfaced",
+  "low_relevance",
+  "abstained",
+  "critic_rejected",
+  "gate_blocked",
+  "not_relevant",
+  "drafting_failed",
+  "held",
+] as const satisfies readonly SurfaceStatus[];
 
 export const evaluationFiltersSchema = z.object({
   scan_id: z.coerce.number().int().positive(),

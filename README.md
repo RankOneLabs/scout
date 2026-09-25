@@ -112,6 +112,30 @@ changes are backed by an append-only event log and content-addressed evidence.
 See [Architecture](docs/architecture.md) for the design and
 [PAA operations](docs/runbooks/paa-operations.md) for commands and procedures.
 
+### Relevance classifiers and holdouts
+
+Relevance is decided by exactly one classifier, selected with
+`RELEVANCE_CLASSIFIER`: `llm` (the default, and the rollback path) or `jev`, a
+direct call to Typesafe System One followed by a ported router. A sampled
+fraction of decided posts — `RELEVANCE_HOLDOUT_RATE`, drops included — is held
+back from surfacing so it can be graded blind and released later against the
+stored labels.
+
+`held` is a lifecycle state of its own. A held post has a recorded decision and
+no draft: it is neither surfaced nor a drafting failure, it is not actionable
+for posting, and no status view folds it into either. `scout analysis
+status-audit` reports the status counts and the lifecycle invariants behind
+them without emitting any post content.
+
+`RELEVANCE_CLASSIFIER=jev` is not enabled in production. Enabling it depends on
+external evidence produced outside this repository — real-catalogue parity,
+assay blind and score conformance, host mount and secret validation, and a
+canary with a documented rollback. Every one of those gates is open, and a
+green CI run here is not evidence for any of them: the catalogue and the graded
+records they need are private and are not in this repository. See
+[Relevance holdouts and the JEV handoff](docs/relevance-holdouts.md), which
+names every outstanding gate and the owner its evidence has to come from.
+
 Human grades also feed future prompts through immutable feedback snapshots.
 Offline replay can compare candidate models and prompts without changing live
 state. See [Grading and feedback](docs/grading-and-feedback.md) and
@@ -167,6 +191,7 @@ README publishes no "current position" value.
 - [Deployment security](docs/deployment-security.md)
 - [Evaluations](docs/evaluations.md)
 - [Grading and feedback](docs/grading-and-feedback.md)
+- [Relevance holdouts and the JEV handoff](docs/relevance-holdouts.md)
 - [Dossier contract](docs/dossier-contract.md)
 - [Platform adapters](docs/platform-adapters.md)
 - [PAA operator runbook](docs/runbooks/paa-operations.md)

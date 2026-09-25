@@ -1,9 +1,12 @@
 import type {
   PostWithEvaluation,
   DraftWithContext,
+  DraftWithGrade,
+  ReviewEvaluation,
   TraceSpan,
   Scan,
   ScanFetchFailure,
+  SurfaceStatus,
 } from "@/types/schema";
 
 // Mirrors scout.config.SCOUT_STALE_WATERMARK_HOURS's default (the env var
@@ -256,6 +259,172 @@ export function isLeaseHeld(
 ): boolean {
   if (!lease.owner_id || !lease.expires_at) return false;
   return parseUtc(lease.expires_at).getTime() > parseUtc(nowIso).getTime();
+}
+
+// Relevance provenance — row mirrors
+//
+// These mirror the `relevance_decisions` and `relevance_holdouts` tables
+// (scout/storage/schema.py, v48) and would conventionally live in
+// types/schema.ts beside the other table mirrors. They are here because
+// types/schema.ts is outside this change's authorized paths; moving them
+// there is a mechanical relocation once that is authorized. One definition
+// each, imported by lib/queries.ts, the selectors and the components —
+// nothing is duplicated or hand-synced.
+
+/** Mirrors `relevance_decisions.classifier`. */
+export type RelevanceClassifier = "llm" | "jev";
+
+/** Mirrors `relevance_decisions.action` and `relevance_holdouts.release_action`. */
+export type RelevanceAction = "respond" | "review" | "drop";
+
+/** Mirrors `relevance_holdouts.status`. */
+export type HoldoutStatus = "pending" | "claimed" | "released" | "failed";
+
+/** Mirrors `relevance_holdouts.release_authority`: a stored blind label, or
+ *  the action the classifier recorded when no label exists for the case. */
+export type ReleaseAuthority = "label" | "recorded_action";
+
+/** Mirrors `relevance_holdouts.label`. */
+export type HoldoutLabel = "exclusion" | "in_post" | "pointer" | "none";
+
+/** Mirrors one `relevance_decisions` row: what classified this evaluation.
+ *  Absent for a historical row — nothing recorded what produced it — and
+ *  absent for a released target, whose authority is its hold's release
+ *  record rather than a classifier run. */
+export interface RelevanceDecisionRow {
+  decision_uid: string;
+  classifier: RelevanceClassifier;
+  model: string;
+  catalogue_id: string | null;
+  catalogue_version: string | null;
+  router_version: string | null;
+  action: RelevanceAction;
+  reason: string | null;
+  selected_for_holdout: boolean;
+  created_at: string;
+}
+
+/** Mirrors one `relevance_holdouts` row, read from the held evaluation's
+ *  side: this evaluation is the immutable source the hold references. */
+export interface HoldoutRow {
+  id: number;
+  status: HoldoutStatus;
+  held_at: string;
+  released_at: string | null;
+  release_authority: ReleaseAuthority | null;
+  release_action: RelevanceAction | null;
+  label: HoldoutLabel | null;
+  label_source: string | null;
+  target_evaluation_id: number | null;
+  attempts: number;
+  last_error: string | null;
+}
+
+/** The same row read from the released target's side: this evaluation is
+ *  what a release produced, and `source_evaluation_id` is the held decision
+ *  it was released from. The target's own `surface_status` is a separate
+ *  fact — a release that drafted may still have been rejected or blocked. */
+export interface ReleasedFromRow {
+  holdout_id: number;
+  source_evaluation_id: number;
+  release_authority: ReleaseAuthority;
+  release_action: RelevanceAction;
+  label: HoldoutLabel | null;
+  label_source: string | null;
+  released_at: string | null;
+}
+
+/** Every provenance fact recorded about one evaluation, kept apart.
+ *
+ * `decision` is what the classifier decided (the source action). `holdout`
+ * is the hold this evaluation is the source of. `released_from` is the hold
+ * this evaluation is the released target of. None of the three is the
+ * evaluation's `surface_status`, which is what actually happened. */
+export interface RelevanceProvenance {
+  evaluation_id: number;
+  decision: RelevanceDecisionRow | null;
+  holdout: HoldoutRow | null;
+  released_from: ReleasedFromRow | null;
+}
+
+/** Carried by a row read from a database that has the holdout schema.
+ *
+ * Omitted entirely for a database that predates it: an absent field is an
+ * honest absence, where a null would read as "nothing was recorded" over a
+ * database that could not record anything. */
+export interface WithRelevanceProvenance {
+  relevance_provenance?: RelevanceProvenance;
+}
+
+export type ReviewEvaluationWithProvenance = ReviewEvaluation & WithRelevanceProvenance;
+export type DraftWithProvenance = DraftWithContext & WithRelevanceProvenance;
+export type DraftWithGradeAndProvenance = DraftWithGrade & WithRelevanceProvenance;
+
+// Surface-status selectors
+//
+// A hold is a lifecycle state of its own — decided, recorded, held back from
+// surfacing for blind grading. It is neither an approved reply nor a
+// drafting defect, so every count and every "can an operator act on this"
+// question goes through the two predicates below rather than enumerating the
+// negative cases and missing one. Mirrors scout.storage.evaluations.
+//
+// `SurfaceStatus` in types/schema.ts and `SURFACE_STATUSES` in
+// lib/filter-schemas.ts are the same vocabulary, `held` included — the type
+// and the runtime value. The predicates below narrow against the union, so a
+// status the database can hold but the union cannot name would not compile.
+
+export const HELD_SURFACE_STATUS: SurfaceStatus = "held";
+
+/** Whether this evaluation was held back from surfacing for blind grading. */
+export function isHeld(surfaceStatus: SurfaceStatus | null): boolean {
+  return surfaceStatus === HELD_SURFACE_STATUS;
+}
+
+/** Whether an operator can still post a reply for this evaluation.
+ *
+ * False for 'held'. A hold produced a decision and stopped: it has no draft
+ * to post and no defect to fix, so it belongs in neither the draft queue nor
+ * the review queue. */
+export function isActionableForPosting(
+  surfaceStatus: SurfaceStatus | null
+): boolean {
+  return surfaceStatus === "surfaced";
+}
+
+export interface SurfaceStatusCounts {
+  by_status: Record<string, number>;
+  total: number;
+  held: number;
+  surfaced: number;
+  drafting_failed: number;
+  /** How many an operator can act on. Derived from isActionableForPosting so
+   *  it cannot drift from the predicate the queues use. */
+  actionable: number;
+}
+
+/** Count one evaluation population by `surface_status`, folding nothing.
+ *
+ * The status breakdown a scan's evaluation view reads. 'held' is its own
+ * column: it is not added to `surfaced`, and it is not added to
+ * `drafting_failed`. */
+export function selectSurfaceStatusCounts(
+  evaluations: ReadonlyArray<{ surface_status: SurfaceStatus | null }>
+): SurfaceStatusCounts {
+  const by_status = evaluations.reduce<Record<string, number>>((counts, evaluation) => {
+    const status = evaluation.surface_status ?? "unrecorded";
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+  return {
+    by_status,
+    total: evaluations.length,
+    held: by_status[HELD_SURFACE_STATUS] ?? 0,
+    surfaced: by_status["surfaced"] ?? 0,
+    drafting_failed: by_status["drafting_failed"] ?? 0,
+    actionable: evaluations.filter((evaluation) =>
+      isActionableForPosting(evaluation.surface_status)
+    ).length,
+  };
 }
 
 /** Whether an environment's watermark is stale against a fixed threshold —
