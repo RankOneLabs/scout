@@ -9,8 +9,6 @@ import {
   type MatchedRoute,
   type PromptBundle,
   type PostWithEvaluation,
-  type DraftWithContext,
-  type DraftWithGrade,
   type ReviewEvaluation,
   type Grade,
   type GradingProgress,
@@ -26,14 +24,18 @@ import {
   type RecoveryOperation,
   type SourceProbeRun,
   type ShadowRelevanceRunRow,
-  type HoldoutLabel,
-  type HoldoutStatus,
-  type RelevanceAction,
-  type RelevanceClassifier,
-  type RelevanceProvenance,
-  type ReleaseAuthority,
-  type SurfaceStatus,
 } from "@/types/schema";
+import type {
+  DraftWithGradeAndProvenance,
+  DraftWithProvenance,
+  HoldoutLabel,
+  HoldoutStatus,
+  RelevanceAction,
+  RelevanceClassifier,
+  RelevanceProvenance,
+  ReleaseAuthority,
+  ReviewEvaluationWithProvenance,
+} from "@/lib/transforms";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -720,7 +722,7 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
   return { data, has_more };
 }
 
-export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
+export function getDrafts(filters?: DraftFilters): Paginated<DraftWithProvenance> {
   const db = getDb();
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -1001,7 +1003,7 @@ export function getGradeByEvaluationId(evaluationId: number): Grade | null {
   return parseGradeRow(db.prepare("SELECT * FROM grades WHERE evaluation_id = ?").get(evaluationId) as Record<string, unknown> | undefined);
 }
 
-export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWithGrade> {
+export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWithGradeAndProvenance> {
   const db = getDb();
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -1244,7 +1246,7 @@ function getReviewEvaluations({
   params,
   orderBy,
   limit,
-}: ReviewEvaluationQuery): ReviewEvaluation[] {
+}: ReviewEvaluationQuery): ReviewEvaluationWithProvenance[] {
   const db = getDb();
   const columnCache = new Map<string, Set<string>>();
   const columns = (table: string) => {
@@ -1566,17 +1568,16 @@ function getReviewEvaluations({
   });
 }
 
-/** One scan's complete evaluation population, optionally narrowed to one
- *  `surface_status`. Narrowing selects exactly the status asked for — 'held'
- *  is its own selection, never folded into 'surfaced' or 'drafting_failed'. */
-export function getEvaluationsByScan(
-  scanId: number,
-  surfaceStatus?: SurfaceStatus
-): ReviewEvaluation[] {
+/** One scan's complete evaluation population, every status included.
+ *
+ * Unnarrowed on purpose: `held` is a status of its own, and a status view
+ * that reads this population counts it beside `surfaced` and
+ * `drafting_failed` rather than asking the database to pre-select one.
+ * See `selectSurfaceStatusCounts`. */
+export function getEvaluationsByScan(scanId: number): ReviewEvaluationWithProvenance[] {
   return getReviewEvaluations({
-    whereClause:
-      surfaceStatus === undefined ? "e.scan_id = ?" : "e.scan_id = ? AND e.surface_status = ?",
-    params: surfaceStatus === undefined ? [scanId] : [scanId, surfaceStatus],
+    whereClause: "e.scan_id = ?",
+    params: [scanId],
     orderBy: "e.score DESC",
   });
 }

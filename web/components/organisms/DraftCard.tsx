@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { DraftWithGrade, Grade } from "@/types/schema";
+import type { Grade } from "@/types/schema";
+import type { DraftWithGradeAndProvenance } from "@/lib/transforms";
 import { Badge } from "@/components/atoms/Badge";
 import { ScoreBar } from "@/components/atoms/ScoreBar";
 import { ExternalLink } from "@/components/atoms/ExternalLink";
@@ -19,7 +20,7 @@ import { truncateContent, formatTimestamp } from "@/lib/transforms";
 import { GRADE_COLORS } from "@/lib/design-tokens";
 
 interface DraftCardProps {
-  draft: DraftWithGrade;
+  draft: DraftWithGradeAndProvenance;
   onGradeUpdate?: (evaluationId: number, grade: Grade) => void;
 }
 

@@ -25,10 +25,16 @@ export const draftFiltersSchema = z.object({
     .transform((v) => v === "true"),
 });
 
-/** Mirrors `evaluations.surface_status` (scout.storage.evaluations
- *  SURFACE_STATUSES). 'held' is selectable on its own and is never implied
- *  by another value: a filter that folded it into 'surfaced' or
- *  'drafting_failed' would report a hold as an outcome it never reached. */
+/** The complete `evaluations.surface_status` vocabulary, mirroring
+ *  scout.storage.evaluations. 'held' is a value of its own and is never
+ *  implied by another: anything that folded it into 'surfaced' or
+ *  'drafting_failed' would report a hold as an outcome it never reached.
+ *
+ *  This is the vocabulary, not a filter. `evaluationFiltersSchema` below is
+ *  deliberately unchanged — the evaluations route returns a scan's whole
+ *  population and the status breakdown is derived from it by
+ *  `selectSurfaceStatusCounts`, so no status is selected away before a
+ *  status view can count it. */
 export const SURFACE_STATUSES = [
   "surfaced",
   "low_relevance",
@@ -40,9 +46,10 @@ export const SURFACE_STATUSES = [
   "held",
 ] as const;
 
+export type SurfaceStatusValue = (typeof SURFACE_STATUSES)[number];
+
 export const evaluationFiltersSchema = z.object({
   scan_id: z.coerce.number().int().positive(),
-  surface_status: z.enum(SURFACE_STATUSES).optional(),
 });
 
 export const negativeGradingFiltersSchema = z.object({

@@ -1,11 +1,10 @@
+import type { Grade, ShadowRelevanceRunRow } from "@/types/schema";
 import type {
-  Grade,
   HoldoutLabel,
   RelevanceAction,
   RelevanceProvenance,
   ReleaseAuthority,
-  ShadowRelevanceRunRow,
-} from "@/types/schema";
+} from "@/lib/transforms";
 import type { QueueReviewItem, ReviewCosts, ReviewDisposition, ReviewStatus, ReviewScorePresentation } from "@/types/review-queues";
 
 export function selectReviewScore(score: QueueReviewItem["score"]): ReviewScorePresentation | null {

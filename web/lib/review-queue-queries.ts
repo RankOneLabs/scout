@@ -12,7 +12,8 @@ import {
   type QueueDetail, type QueueReviewItem, type QueueSummary, type RejectedInput,
   type ReviewDisposition, type ReviewResult,
 } from "@/types/review-queues";
-import type { Grade, RelevanceProvenance } from "@/types/schema";
+import type { Grade } from "@/types/schema";
+import type { RelevanceProvenance } from "@/lib/transforms";
 
 interface ArtifactRow { digest: string; content: Buffer; recorded_at: string }
 // Both JSON documents mirror migrations.grade_revision_comparison_shape,
@@ -62,12 +63,18 @@ function queueProducers() {
 
 /** Project the recorded population a queue was built from.
  *
- * Every artifact is read through its schema, which strips keys the schema
- * does not name. That strip is the blind projection: `recordedEvaluationSchema`
- * names no classifier, no recorded action, no holdout and no catalogue
- * identity, so classifier metadata cannot reach a queue view even if a
- * producer later writes it into the artifact. Adding it here would be a
- * deliberate act, which is the point. */
+ * This is a sighted surface — the reviewer working the queue sees the post,
+ * the recorded reason and the dossier context. What it excludes is
+ * classifier metadata: every artifact is read through its schema, and
+ * `recordedEvaluationSchema` names no classifier, no recorded action, no
+ * holdout and no catalogue identity, so a producer that later writes any of
+ * them into the artifact cannot surface it in a queue view. Grading
+ * assistance asks for a judgment about a reply, not a re-adjudication of
+ * what the classifier decided.
+ *
+ * The blind projection is a different thing in a different place:
+ * `scout.holdouts.export.blind_case`, allowlisted by BLIND_CASE_FIELDS. No
+ * web view is blind. */
 function populationInputs(digest: string): RejectedInput[] {
   const value = artifact(digest);
   const legacy = legacyPopulationSchema.safeParse(value);

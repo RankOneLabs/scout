@@ -209,14 +209,23 @@ describe("held rows in counts, filters and queues", () => {
     expect(selectSurfaceStatusCounts(getEvaluationsByScan(SCAN)).actionable).toBe(1);
   });
 
-  it("selects exactly the held rows when asked for held", async () => {
+  it("returns held rows in the scan population rather than hiding them", async () => {
     const { getEvaluationsByScan } = await import("@/lib/queries");
-    expect(getEvaluationsByScan(SCAN, "held").map((row) => row.id).sort()).toEqual([12, 13, 14]);
+    const { isHeld } = await import("@/lib/transforms");
+    const held = getEvaluationsByScan(SCAN)
+      .filter((row) => isHeld(row.surface_status))
+      .map((row) => row.id)
+      .sort();
+    expect(held).toEqual([12, 13, 14]);
   });
 
-  it("never returns a held row when asked for surfaced", async () => {
+  it("reads held as its own status, never as actionable", async () => {
     const { getEvaluationsByScan } = await import("@/lib/queries");
-    expect(getEvaluationsByScan(SCAN, "surfaced").map((row) => row.id)).toEqual([11]);
+    const { isActionableForPosting } = await import("@/lib/transforms");
+    const actionable = getEvaluationsByScan(SCAN).filter((row) =>
+      isActionableForPosting(row.surface_status)
+    );
+    expect(actionable.map((row) => row.id)).toEqual([11]);
   });
 
   it("puts no held evaluation in the draft queue", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Grade, ReviewEvaluation } from "@/types/schema";
+import type { Grade } from "@/types/schema";
 import { EvaluationCard } from "@/components/organisms/EvaluationCard";
 import { RelevanceActionBadge } from "@/components/molecules/RelevanceActionBadge";
 import {
@@ -10,11 +10,12 @@ import {
 } from "@/lib/review-selectors";
 import {
   selectSurfaceStatusCounts,
+  type ReviewEvaluationWithProvenance,
   type SurfaceStatusCounts,
 } from "@/lib/transforms";
 
 export function EvaluationList({ evaluations, onGradeUpdate }: {
-  evaluations: ReviewEvaluation[];
+  evaluations: ReviewEvaluationWithProvenance[];
   onGradeUpdate?: (evaluationId: number, grade: Grade) => void;
 }) {
   if (!evaluations.length) return <p className="py-8 text-center text-sm text-gray-600 dark:text-gray-500">No evaluations found.</p>;
@@ -51,7 +52,7 @@ function SurfaceStatusSummary({ counts }: { counts: SurfaceStatusCounts }) {
 }
 
 /** The decided facts, above the card that renders what actually happened. */
-function RelevanceProvenanceStrip({ evaluation }: { evaluation: ReviewEvaluation }) {
+function RelevanceProvenanceStrip({ evaluation }: { evaluation: ReviewEvaluationWithProvenance }) {
   const provenance = evaluation.relevance_provenance;
   const badge = selectRelevanceActionBadge(provenance);
   const hold = selectHoldProvenance(provenance);

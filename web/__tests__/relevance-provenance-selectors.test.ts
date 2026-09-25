@@ -14,8 +14,8 @@ import type {
   RelevanceDecisionRow,
   RelevanceProvenance,
   ReleasedFromRow,
-  SurfaceStatus,
-} from "@/types/schema";
+} from "@/lib/transforms";
+import type { SurfaceStatusValue } from "@/lib/filter-schemas";
 
 function decision(overrides: Partial<RelevanceDecisionRow> = {}): RelevanceDecisionRow {
   return {
@@ -217,7 +217,7 @@ describe("selectReleaseOrigin", () => {
 });
 
 describe("surface-status selectors", () => {
-  const population: Array<{ surface_status: SurfaceStatus }> = [
+  const population: Array<{ surface_status: SurfaceStatusValue }> = [
     { surface_status: "surfaced" },
     { surface_status: "surfaced" },
     { surface_status: "held" },

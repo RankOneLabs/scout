@@ -140,19 +140,13 @@ describe("evaluationFiltersSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("leaves surface_status absent when none is asked for", () => {
-    const result = evaluationFiltersSchema.safeParse({ scan_id: "7" });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.surface_status).toBeUndefined();
-  });
-
-  it("accepts held as a status of its own", () => {
+  it("still filters on scan_id alone, so no status is selected away", () => {
     const result = evaluationFiltersSchema.safeParse({ scan_id: "7", surface_status: "held" });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.surface_status).toBe("held");
+    if (result.success) expect(Object.keys(result.data)).toEqual(["scan_id"]);
   });
 
-  it("offers every persisted status, held included", () => {
+  it("names every persisted status, held included", () => {
     expect([...SURFACE_STATUSES]).toEqual([
       "surfaced",
       "low_relevance",
@@ -165,10 +159,9 @@ describe("evaluationFiltersSchema", () => {
     ]);
   });
 
-  it("rejects a status the database cannot hold", () => {
-    expect(
-      evaluationFiltersSchema.safeParse({ scan_id: "7", surface_status: "released" }).success
-    ).toBe(false);
+  it("does not fold held into another status", () => {
+    expect(SURFACE_STATUSES).toContain("held");
+    expect(new Set(SURFACE_STATUSES).size).toBe(SURFACE_STATUSES.length);
   });
 });
 

@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { EvaluationReviewProvenance } from "@/lib/review-queue-queries";
-import type { RelevanceProvenance } from "@/types/schema";
+import type { RelevanceProvenance } from "@/lib/transforms";
 import {
   selectHoldProvenance,
   selectRelevanceActionBadge,
