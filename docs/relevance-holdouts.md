@@ -523,6 +523,23 @@ Repository implementation is not rollout completion. Each gate below is
 outside this repository, and none of them is satisfied here. The evidence
 owner is where the evidence is produced and where it has to be recorded.
 
+**Every gate in the table is open, and stays open until its named owner
+supplies the evidence.** A gate closes on an artifact from that owner — a
+recorded parity run on otto, a scored packet from assay, a deployed compose
+file and a secret check on willie, a checked-out run-receipts on the host, a
+canary scan with its audit output and its exercised rollback. Nothing in this
+repository can close one of them.
+
+In particular, repository checks are not evidence for any gate. A green CI
+run, a passing test suite, a clean `ruff`/`mypy`, and the integrated scan
+tests in `tests/test_holdout_lifecycle.py` all say the same thing: the code in
+this repository behaves as its contract says. None of them observes the real
+v6 catalogue, the round 5 records, the willie container, the mounted secret or
+a live scan, because none of those is present here — the catalogue and the
+graded records are private and deliberately uncommitted. Reading a repository
+check as gate evidence would be reading a test of the port as a test of the
+thing the port talks to.
+
 | gate | what must be shown | evidence owner / source |
 |---|---|---|
 | real-v6 parity | On otto, with the real v6 catalogue: Scout sends the same `questions` mapping assay's loader produces, and projects a round 5 export record to the same state as assay's `build_state`. Any question or state mismatch blocks JEV enablement. | otto, against the private catalogue in run-receipts and assay's loader/`build_state` at the pinned revision |
@@ -543,6 +560,11 @@ produced its evidence: real-v6 parity on otto, assay blind and score
 conformance, read-only mount and secret validation on willie, a successful
 canary, and a documented `llm` rollback. A mismatch in the real-v6 question
 mapping or round 5 state blocks enablement on its own.
+
+Enablement is not a repository decision. Merging this work changes the default
+for nothing: `RELEVANCE_CLASSIFIER` defaults to `llm`, and the switch is an
+environment change on the host made by whoever holds the closed gates'
+evidence. Do not set `jev` on the strength of the checks in this repository.
 
 ## Deploying
 

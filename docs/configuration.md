@@ -40,6 +40,11 @@ the stored action rather than re-classifying. See
 lifecycle, the status vocabulary, and the external gates production enablement
 depends on.
 
+Setting `jev` needs those gates' evidence, not a passing build. Each one is
+still open and each one is closed by its named owner — parity on otto, scoring
+in assay, the mount and secret on willie, a canary on the deployment — so no
+check that runs inside this repository advances any of them.
+
 ## Typesafe shadow relevance
 
 | Variable | Default | Description |

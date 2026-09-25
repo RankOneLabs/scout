@@ -130,9 +130,11 @@ them without emitting any post content.
 `RELEVANCE_CLASSIFIER=jev` is not enabled in production. Enabling it depends on
 external evidence produced outside this repository — real-catalogue parity,
 assay blind and score conformance, host mount and secret validation, and a
-canary with a documented rollback. See
+canary with a documented rollback. Every one of those gates is open, and a
+green CI run here is not evidence for any of them: the catalogue and the graded
+records they need are private and are not in this repository. See
 [Relevance holdouts and the JEV handoff](docs/relevance-holdouts.md), which
-names every outstanding gate and where its evidence comes from.
+names every outstanding gate and the owner its evidence has to come from.
 
 Human grades also feed future prompts through immutable feedback snapshots.
 Offline replay can compare candidate models and prompts without changing live
