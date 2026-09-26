@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Read and follow [AGENTS.md](AGENTS.md) for current work scope and Git workflow.
+
 ## Tooling — uv
 
 This project uses [uv](https://docs.astral.sh/uv/) for package management, virtual environments, and running scripts. Do not use `pip`, `pip-tools`, `poetry`, or `conda`.

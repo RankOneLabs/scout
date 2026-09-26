@@ -37,7 +37,7 @@ round tested the labels, and what it found shaped the next one.
 | 2 | Content level | 37/51 | 73% |
 | 2 | Content level, where exclusion held | 37/42 | 88% |
 | 2 | Reply decision, graded directly (retired) | 47/79 | 59% |
-| 3 | Complete decision (my bar: 72/79) | 64/79 | 81% |
+| 3 | Complete decision | 64/79 | 81% |
 | 3 | Counting close calls as matches | 70/79 | 89% |
 | 3 | Exclusion category | 71/79 | 90% |
 | 3 | Substance (not excluded) | 44/51 | 86% |

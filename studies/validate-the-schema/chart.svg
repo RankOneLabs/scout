@@ -12,22 +12,19 @@
   .base { stroke: #b5b4ae; stroke-width: 1; }
   .planned { fill: #2a78d6; }
   .retired { fill: #b5b4ae; }
-  .mark { stroke: #0b0b0b; stroke-width: 2; }
-  .markl { font: 600 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #0b0b0b; }
   @media (prefers-color-scheme: dark) {
-    .t, .g, .l, .v, .markl { fill: #ffffff; }
+    .t, .g, .l, .v { fill: #ffffff; }
     .s, .tag, .ax { fill: #c3c2b7; }
     .bg { fill: #0d1117; }
     .grid { stroke: #383835; }
     .base { stroke: #6b6a66; }
     .planned { fill: #3987e5; }
     .retired { fill: #6b6a66; }
-    .mark { stroke: #ffffff; }
   }
 </style>
 <rect class="bg" width="820" height="752" rx="6"/>
 <text class="t" x="16" y="28">How often my labels matched</text>
-<text class="s" x="16" y="48">Grey = a label I replaced or retired. Tick = my 72/79 bar.</text>
+<text class="s" x="16" y="48">Grey = a label I replaced or retired.</text>
 <line class="base" x1="335.0" x2="335.0" y1="64" y2="712"/>
 <text class="ax" x="335.0" y="730" text-anchor="middle">0%</text>
 <line class="grid" x1="427.5" x2="427.5" y1="64" y2="712"/>
@@ -67,13 +64,9 @@
 <text class="l" x="16" y="519.0">Complete decision matched</text>
 <path class="planned" d="M335.0,505.0 H630.7 Q634.7,505.0 634.7,509.0 V519.0 Q634.7,523.0 630.7,523.0 H335.0 Z"><title>Complete decision matched: 64/79 (81%)</title></path>
 <text class="v" x="804" y="519.0" text-anchor="end">64/79 · 81%</text>
-<line class="mark" x1="672.2" x2="672.2" y1="500.0" y2="528.0"/>
-<text class="markl" x="677.2" y="504.0">my bar</text>
 <text class="l" x="16" y="563.0">Counting close calls as matches</text>
 <path class="planned" d="M335.0,549.0 H658.8 Q662.8,549.0 662.8,553.0 V563.0 Q662.8,567.0 658.8,567.0 H335.0 Z"><title>Counting close calls as matches: 70/79 (89%)</title></path>
 <text class="v" x="804" y="563.0" text-anchor="end">70/79 · 89%</text>
-<line class="mark" x1="672.2" x2="672.2" y1="544.0" y2="572.0"/>
-<text class="markl" x="677.2" y="548.0">my bar</text>
 <text class="l" x="16" y="607.0">Exclusion category matched</text>
 <path class="planned" d="M335.0,593.0 H663.5 Q667.5,593.0 667.5,597.0 V607.0 Q667.5,611.0 663.5,611.0 H335.0 Z"><title>Exclusion category matched: 71/79 (90%)</title></path>
 <text class="v" x="804" y="607.0" text-anchor="end">71/79 · 90%</text>
