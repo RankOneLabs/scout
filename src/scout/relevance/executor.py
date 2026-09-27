@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections.abc import Sequence
 from typing import Any, Protocol
 
 from jig import AgentConfig, AgentResult, Span, SpanKind, Usage
+from jig.core.runner import (
+    ROOT_OUTPUT_BYTE_LENGTH_KEY,
+    ROOT_OUTPUT_COMPLETE_KEY,
+    ROOT_OUTPUT_KIND_KEY,
+    ROOT_OUTPUT_SHA256_KEY,
+)
 from jig.jev import JevClient, JevError, NoulAnswer, NoulQuestion
 from jig.jev.tracing import to_jig_usage
 
@@ -73,6 +81,29 @@ def _redact_api_key(value: str | None) -> str | None:
     return value.replace(api_key, "[REDACTED]")
 
 
+def _structured_output_envelope(
+    output: JevRelevanceOutput,
+) -> tuple[str, dict[str, Any]]:
+    """Build the complete structured-output evidence emitted by Jig."""
+    rendered = output.model_dump_json()
+    complete = output.model_dump(mode="json")
+    canonical = json.dumps(
+        complete,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return rendered, {
+        "output": rendered[:200],
+        "scores": None,
+        ROOT_OUTPUT_KIND_KEY: "structured",
+        ROOT_OUTPUT_COMPLETE_KEY: complete,
+        ROOT_OUTPUT_SHA256_KEY: hashlib.sha256(canonical).hexdigest(),
+        ROOT_OUTPUT_BYTE_LENGTH_KEY: len(canonical),
+    }
+
+
 async def run_jev_relevance(
     config: AgentConfig[JevRelevanceOutput],
     input_text: str,
@@ -137,7 +168,9 @@ async def run_jev_relevance(
                 )
             answers[answer.question_id] = answer.noul
         decision = route(answers)
-        relevant = decision.action in ("respond", "review")
+        # A review decision is deliberately withheld from automatic drafting.
+        # The action and project stay on the candidate for later inspection.
+        relevant = decision.action == "respond"
         output = JevRelevanceOutput(
             relevant=relevant,
             score=1.0,
@@ -149,11 +182,11 @@ async def run_jev_relevance(
             margin=decision.margin,
             exclusion=decision.exclusion,
         )
-        serialized = output.model_dump(mode="json")
-        tracer.end_span(root.id, output=serialized)
+        rendered, trace_output = _structured_output_envelope(output)
+        tracer.end_span(root.id, output=trace_output)
         await tracer.flush()
         return AgentResult(
-            output=output.model_dump_json(),
+            output=rendered,
             trace_id=root.trace_id,
             usage={
                 "total_input_tokens": result.usage.input_tokens,
@@ -186,10 +219,11 @@ async def run_jev_relevance(
             detail=error_detail,
         ) from None
     except BaseException as exc:
+        error_detail = _redact_api_key(f"{type(exc).__name__}: {exc}") or ""
         if child.ended_at is None:
-            tracer.end_span(child.id, error=f"{type(exc).__name__}: {exc}")
+            tracer.end_span(child.id, error=error_detail)
         if root.ended_at is None:
-            tracer.end_span(root.id, error=f"{type(exc).__name__}: {exc}")
+            tracer.end_span(root.id, error=error_detail)
         await tracer.flush()
         raise
 

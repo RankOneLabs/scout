@@ -28,7 +28,7 @@ from scout.config import Account, Message
 from scout.relevance.executor import run_jev_relevance
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
 from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
-from scout.replay.experiments import resolve_baseline
+from scout.replay.experiments import build_domain_diff, resolve_baseline
 from scout.result import Ok
 from scout.scanning.pipeline import _run_phase
 from scout.storage.state import StateManager
@@ -65,6 +65,17 @@ class _BlockingJevStub:
         self.started.set()
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
+
+
+class _FailingJevStub:
+    model = "jev-latest"
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+
+    async def evaluate(self, state: Any, questions: Any) -> JevResult:
+        del state, questions
+        raise RuntimeError(self.detail)
 
 
 def _catalogue() -> RelevanceCatalogue:
@@ -195,6 +206,10 @@ async def test_jev_executor_writes_prescribed_trace_without_api_key(
         "latency_ms": 12.5,
         "attempts": 1,
     }
+    domain_diff = build_domain_diff(roots[0], roots[0])
+    assert domain_diff["baseline"] == domain_diff["candidate"]
+    assert domain_diff["baseline"]["complete"] is True
+    assert domain_diff["baseline"]["value"] == result.parsed.model_dump(mode="json")
     serialized = json.dumps(
         [
             {
@@ -211,6 +226,39 @@ async def test_jev_executor_writes_prescribed_trace_without_api_key(
     assert result.parsed is not None
     assert result.parsed.action == "respond"
     assert result.parsed.score == 1.0
+    await tracer.close()
+
+
+@pytest.mark.asyncio
+async def test_generic_executor_failure_redacts_api_key_from_trace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
+    secret = "typesafe-secret-in-runtime-error"
+    monkeypatch.setattr(scout_config, "TYPESAFE_API_KEY", secret)
+    catalogue = _catalogue()
+
+    with pytest.raises(RuntimeError, match="provider runtime failed"):
+        await run_jev_relevance(
+            _config(tracer),
+            "formatted post",
+            client=cast(Any, _FailingJevStub(f"provider runtime failed: {secret}")),
+            catalogue=catalogue,
+            questions=catalogue.questions,
+            jev_state={"post": {"text": "agent retries"}},
+            project_key="agent-ops",
+            message_id="post-1",
+        )
+
+    roots = await tracer.list_traces(name="scout_relevance_jev")
+    assert len(roots) == 1
+    spans = await tracer.get_trace(roots[0].trace_id)
+    serialized = json.dumps(
+        [{"metadata": span.metadata, "error": span.error} for span in spans],
+        default=str,
+    )
+    assert secret not in serialized
+    assert "provider runtime failed: [REDACTED]" in serialized
     await tracer.close()
 
 

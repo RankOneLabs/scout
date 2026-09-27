@@ -130,12 +130,12 @@ def _catalogue() -> RelevanceCatalogue:
     return load_catalogue_bytes(yaml.safe_dump(document, sort_keys=False).encode())
 
 
-def _jev_drop_result() -> JevResult:
+def _jev_review_result() -> JevResult:
     values = {
-        "excl_noise": 0.9,
-        "needs_thread": 0.0,
-        "answerable_from_post": 0.0,
-        "about_agent_work": 0.0,
+        "excl_noise": 0.0,
+        "needs_thread": 0.9,
+        "answerable_from_post": 0.9,
+        "about_agent_work": 0.9,
         "points_somewhere": 0.0,
     }
     return JevResult(
@@ -283,7 +283,7 @@ async def test_jev_dispatch_projects_state_and_returns_real_candidate(
     )
     target = ProjectTarget("agent-ops", "Agent Ops", "Agent operations", "")
     catalogue = _catalogue()
-    client = _CapturingJevClient(_jev_drop_result())
+    client = _CapturingJevClient(_jev_review_result())
     jev_context = JevScanContext(
         catalogue=catalogue,
         questions=catalogue.questions,
@@ -315,9 +315,11 @@ async def test_jev_dispatch_projects_state_and_returns_real_candidate(
     assert result.value.relevance_output.answers == {
         key: answer.noul for key, answer in client.result.answers.items()
     }
-    assert result.value.relevance_action == "drop"
+    assert result.value.relevant is False
+    assert result.value.relevance_action == "review"
     assert result.value.relevance_classifier == "jev:jev-latest"
     assert result.value.score == 1.0
+    assert result.value.structured_draft is None
     assert client.state == {
         "post": {
             "platform": "bluesky",
