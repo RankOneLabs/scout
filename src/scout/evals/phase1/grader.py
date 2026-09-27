@@ -33,7 +33,7 @@ def _zero_scores() -> list[Score]:
     return [Score(dimension=d, value=0.0, source=ScoreSource.GROUND_TRUTH) for d in _DIMENSIONS]
 
 
-class ScoutPhase1Grader(Grader[Phase1RunOutput]):  # type: ignore[misc]
+class ScoutPhase1Grader(Grader[Phase1RunOutput]):
     def __init__(self, registry: Phase1Registry, dossier_provider: DossierProvider) -> None:
         self._registry = registry
         self._dossier_provider = dossier_provider

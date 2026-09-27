@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from jig import FeedbackLoop, TracingLogger
+
 import scout.config as _config
 from scout.config import GradeRecord
 from scout.dossiers.resolver import get_pinned_dossier_revision
@@ -51,8 +53,8 @@ class NegativeCasePromotionResult:
 async def promote_negative_case(
     *,
     state: StateManager,
-    tracer: object,
-    feedback: object,
+    tracer: TracingLogger,
+    feedback: FeedbackLoop,
     source_evaluation_id: int,
     grade: GradeRecord,
 ) -> NegativeCasePromotionResult:
