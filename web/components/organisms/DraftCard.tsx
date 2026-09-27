@@ -58,7 +58,7 @@ export function DraftCard({ draft, onGradeUpdate }: DraftCardProps) {
         </div>
         {draft.score !== null && (
           <div className="shrink-0">
-            <ScoreBar score={draft.score} />
+            <ScoreBar score={draft.score} relevancePresentation={draft.relevance_presentation} />
           </div>
         )}
       </button>

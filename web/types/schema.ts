@@ -168,6 +168,21 @@ export interface Evaluation {
   posture?: string | null;
   dossier_revision?: string | null;
   dossier_summary_id?: string | null;
+  relevance_presentation?: RelevancePresentation | null;
+}
+
+export interface JevRouteEvidence {
+  action: RouteAction;
+  line: string;
+  exclusion: string | null;
+  margin_features: string[];
+  feature_probabilities: Record<string, number>;
+}
+
+export interface RelevancePresentation {
+  classifier: "llm" | "jev" | "unknown";
+  model: string;
+  jev: JevRouteEvidence | null;
 }
 
 /** Latest schema-v47 shadow relevance run projected for review. */
@@ -268,6 +283,7 @@ export interface PostWithEvaluation extends Post {
   relevant_to: string[];
   keyword_route_id: number | null;
   matched_route: MatchedRoute | null;
+  relevance_presentation?: RelevancePresentation | null;
 }
 
 export interface DraftWithContext {
@@ -294,6 +310,7 @@ export interface DraftWithContext {
   surface_status?: string | null;
   posture?: string | null;
   dossier_revision?: string | null;
+  relevance_presentation?: RelevancePresentation | null;
 }
 
 export interface ScanStats {
@@ -394,11 +411,14 @@ export interface Paginated<T> {
 
 // Filter types
 
+export type RouteAction = "respond" | "review" | "drop";
+
 export interface PostFilters {
   platform?: string;
   relevant?: boolean;
   score_min?: number;
   score_max?: number;
+  action?: RouteAction[];
   scan_id?: number;
   limit?: number;
   before_id?: number;

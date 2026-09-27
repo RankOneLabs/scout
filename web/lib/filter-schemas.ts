@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+export const ROUTE_ACTIONS = ["respond", "review", "drop"] as const;
+export const routeActionSchema = z.enum(ROUTE_ACTIONS);
+
+// PROPOSED — UNCONFIRMED: `action` is repeatable. Query semantics currently
+// narrow Jev rows only; every LLM row passes through unchanged. For mixed
+// lists, score_min/score_max apply only to LLM rows and action only to Jev.
+// Operator confirmation is required before treating this as a settled API.
+const repeatableActionSchema = z.preprocess(
+  (value) =>
+    value === undefined ? undefined : Array.isArray(value) ? value : [value],
+  z.array(routeActionSchema).min(1).optional()
+);
+
 export const postFiltersSchema = z.object({
   platform: z.enum(["discord", "farcaster", "bluesky"]).optional(),
   relevant: z
@@ -8,6 +21,7 @@ export const postFiltersSchema = z.object({
     .transform((v) => (v === undefined ? undefined : v === "true")),
   score_min: z.coerce.number().min(0).max(1).optional(),
   score_max: z.coerce.number().min(0).max(1).optional(),
+  action: repeatableActionSchema,
   scan_id: z.coerce.number().int().positive().optional(),
   before_id: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
@@ -49,11 +63,19 @@ export function parseSearchParams<T>(
   searchParams: URLSearchParams,
   schema: z.ZodType<T>
 ): ParseResult<T> {
-  const obj: Record<string, string> = {};
+  const obj: Record<string, string | string[]> = {};
   // Treat empty query values (e.g. "?score_min=") as absent. z.coerce.number()
   // would otherwise turn "" into 0, silently applying an unintended filter.
   searchParams.forEach((v, k) => {
-    if (v !== "") obj[k] = v;
+    if (v === "") return;
+    const existing = obj[k];
+    if (existing === undefined) {
+      obj[k] = v;
+    } else if (Array.isArray(existing)) {
+      existing.push(v);
+    } else {
+      obj[k] = [existing, v];
+    }
   });
   const result = schema.safeParse(obj);
   if (result.success) return { ok: true, data: result.data };
