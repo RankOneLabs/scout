@@ -513,6 +513,17 @@ async def release_holdout_batch(
     if not holdouts:
         raise HoldoutReleaseError(f"batch {batch_id!r} not found")
     by_evaluation = {row.evaluation_id: row for row in holdouts}
+    seen_evaluations: set[int] = set()
+    duplicate_evaluations: set[int] = set()
+    for answer in answers:
+        if answer.evaluation_id in seen_evaluations:
+            duplicate_evaluations.add(answer.evaluation_id)
+        seen_evaluations.add(answer.evaluation_id)
+    if duplicate_evaluations:
+        raise HoldoutReleaseError(
+            "answer key repeats batch evaluations: "
+            f"{sorted(duplicate_evaluations)}"
+        )
     answer_by_evaluation = {answer.evaluation_id: answer for answer in answers}
     outside = sorted(set(answer_by_evaluation) - set(by_evaluation))
     if outside:

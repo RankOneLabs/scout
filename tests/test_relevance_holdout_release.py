@@ -128,6 +128,24 @@ async def test_out_of_batch_answer_refuses_every_release() -> None:
 
 
 @pytest.mark.asyncio
+async def test_duplicate_answer_refuses_every_release() -> None:
+    with StateManager(db_path=":memory:") as state:
+        _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="respond")
+        batch_id = _batch(state, 11)
+        with pytest.raises(HoldoutReleaseError, match=r"repeats.*\[11\]"):
+            await release_holdout_batch(
+                state=state,
+                tracer=Mock(),
+                feedback=Mock(),
+                batch_id=batch_id,
+                answers=(_answer(11, "respond"), _answer(11, "drop")),
+            )
+        row = state.relevance_holdouts.get_for_evaluation(11)
+        assert row is not None and row.status == "pending"
+        assert row.target_evaluation_id is None
+
+
+@pytest.mark.asyncio
 async def test_drop_persists_without_drafting_and_records_deltas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
