@@ -53,17 +53,23 @@ beforeAll(() => {
     INSERT INTO posts (id, platform, platform_msg_id, author_name, content, scan_id)
       VALUES (1, 'discord', 'llm-low', 'Ada', 'LLM 0.8', 7),
              (2, 'discord', 'jev-review', 'Bea', 'Jev review', 7),
-             (3, 'discord', 'llm-high', 'Cy', 'LLM 0.95', 7);
+             (3, 'discord', 'llm-high', 'Cy', 'LLM 0.95', 7),
+             (4, 'discord', 'jev-bad-evidence', 'Dee', 'Jev bad evidence', 8),
+             (5, 'discord', 'unknown-classifier', 'Eli', 'Unknown classifier', 8);
     INSERT INTO evaluations
       (id, post_id, relevant, score, reason, relevant_to, scan_id, surface_status)
       VALUES (11, 1, 1, .8, 'llm low', '[]', 7, 'surfaced'),
              (12, 2, 0, 1, 'needs_thread', '[]', 7, 'not_relevant'),
-             (13, 3, 1, .95, 'llm high', '[]', 7, 'surfaced');
+             (13, 3, 1, .95, 'llm high', '[]', 7, 'surfaced'),
+             (14, 4, 0, 1, 'bad evidence', '[]', 8, 'not_relevant'),
+             (15, 5, 1, .99, 'unknown classifier', '[]', 8, 'surfaced');
     INSERT INTO evaluation_phase_runs
       (id, evaluation_id, phase, trace_id, model, status, created_at)
       VALUES (21, 11, 'relevance', 'trace-llm-low', 'openrouter/acme/model', 'complete', '2026-09-01T00:00:00Z'),
              (22, 12, 'relevance', 'trace-jev', 'jev:jev-latest', 'complete', '2026-09-01T00:00:01Z'),
-             (23, 13, 'relevance', 'trace-llm-high', 'openrouter/acme/model', 'complete', '2026-09-01T00:00:02Z');
+             (23, 13, 'relevance', 'trace-llm-high', 'openrouter/acme/model', 'complete', '2026-09-01T00:00:02Z'),
+             (24, 14, 'relevance', 'trace-jev-bad-answers', 'jev:jev-latest', 'complete', '2026-09-01T00:00:03Z'),
+             (25, 15, 'relevance', 'trace-unknown', 'mystery', 'complete', '2026-09-01T00:00:04Z');
   `);
   db.close();
 
@@ -89,6 +95,18 @@ beforeAll(() => {
         line: "needs_thread",
         margin: ["about_agent_work"],
         exclusion: null,
+      },
+    })
+  );
+  traces.prepare("INSERT INTO spans VALUES (?, NULL, ?)").run(
+    "trace-jev-bad-answers",
+    JSON.stringify({
+      output_complete: {
+        action: "drop",
+        line: "excluded",
+        margin: [],
+        exclusion: "hype",
+        answers: [],
       },
     })
   );
@@ -123,6 +141,10 @@ describe("mixed Jev and LLM query presentation", () => {
       score: 0.8,
       relevancePresentation: { classifier: "llm", model: "openrouter/acme/model", jev: null },
     })).toEqual({ kind: "score", score: 0.8 });
+    expect(selectScoreBar({
+      score: 0.99,
+      relevancePresentation: { classifier: "unknown", model: "mystery", jev: null },
+    })).toEqual({ kind: "unknown", model: "mystery" });
     expect(selectScoreBar({ value: 2, max: 8, label: "distance" })).toEqual({
       kind: "distance", value: 2, max: 8, label: "distance",
     });
@@ -154,24 +176,47 @@ describe("mixed Jev and LLM query presentation", () => {
     });
   });
 
+  it("rejects array-shaped Jev answers and preserves unknown classifier identities", async () => {
+    const { getRelevancePresentations } = await import("@/lib/queries");
+
+    expect(getRelevancePresentations([14]).get(14)).toEqual({
+      classifier: "jev",
+      model: "jev:jev-latest",
+      jev: null,
+    });
+    expect(getRelevancePresentations([15]).get(15)).toEqual({
+      classifier: "unknown",
+      model: "mystery",
+      jev: null,
+    });
+  });
+
   it("applies score_min and score_max only to LLM rows", async () => {
     const { getPosts } = await import("@/lib/queries");
 
-    expect(getPosts({ score_min: 0.9 }).data.map((post) => post.id)).toEqual([3, 2]);
-    expect(getPosts({ score_max: 0.85 }).data.map((post) => post.id)).toEqual([2, 1]);
+    expect(getPosts({ scan_id: 7, score_min: 0.9 }).data.map((post) => post.id)).toEqual([3, 2]);
+    expect(getPosts({ scan_id: 7, score_max: 0.85 }).data.map((post) => post.id)).toEqual([2, 1]);
   });
 
   it("applies repeated actions only to Jev rows", async () => {
     const { getPosts } = await import("@/lib/queries");
 
-    expect(getPosts({ action: ["respond", "drop"] }).data.map((post) => post.id)).toEqual([3, 1]);
-    expect(getPosts({ action: ["review"] }).data.map((post) => post.id)).toEqual([3, 2, 1]);
+    expect(getPosts({ scan_id: 7, action: ["respond", "drop"] }).data.map((post) => post.id)).toEqual([3, 1]);
+    expect(getPosts({ scan_id: 7, action: ["review"] }).data.map((post) => post.id)).toEqual([3, 2, 1]);
+  });
+
+  it("does not apply classifier-specific filters or score ordering to unknown identities", async () => {
+    const { getEvaluationsByScan, getPosts } = await import("@/lib/queries");
+
+    expect(getPosts({ scan_id: 8, score_min: 1 }).data.map((post) => post.id)).toEqual([5, 4]);
+    expect(getPosts({ scan_id: 8, action: ["respond"] }).data.map((post) => post.id)).toEqual([5]);
+    expect(getEvaluationsByScan(8).map((evaluation) => evaluation.id)).toEqual([14, 15]);
   });
 
   it("continues through bounded batches until a filtered page has a lookahead row", async () => {
     const { getPosts } = await import("@/lib/queries");
 
-    expect(getPosts({ action: ["respond"], limit: 1 })).toMatchObject({
+    expect(getPosts({ scan_id: 7, action: ["respond"], limit: 1 })).toMatchObject({
       data: [{ id: 3 }],
       has_more: true,
     });

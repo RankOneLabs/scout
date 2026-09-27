@@ -11,6 +11,7 @@ type ScoreBarProps =
 export type ScoreBarSelection =
   | { kind: "action"; action: RouteAction | null }
   | { kind: "score"; score: number }
+  | { kind: "unknown"; model: string }
   | { kind: "distance"; value: number; max: number; label: string };
 
 /** The one badge-versus-score selector used by every ScoreBar render site. */
@@ -18,6 +19,9 @@ export function selectScoreBar(props: ScoreBarProps): ScoreBarSelection {
   if ("value" in props) return { kind: "distance", ...props };
   if (props.relevancePresentation?.classifier === "jev") {
     return { kind: "action", action: props.relevancePresentation.jev?.action ?? null };
+  }
+  if (props.relevancePresentation?.classifier === "unknown") {
+    return { kind: "unknown", model: props.relevancePresentation.model };
   }
   return { kind: "score", score: props.score };
 }
@@ -43,6 +47,9 @@ export function ScoreBar(props: ScoreBarProps) {
   if (selected.kind === "score") {
     const tier = classifyScore(selected.score);
     return <div className="flex items-center gap-2"><div className="h-1.5 w-16 rounded-full bg-gray-200 dark:bg-gray-800"><div className={`h-full rounded-full ${SCORE_COLORS[tier]}`} style={{ width: `${Math.round(selected.score * 100)}%` }} /></div><span className="text-xs text-gray-600 dark:text-gray-400">{Math.round(selected.score * 100)}%</span></div>;
+  }
+  if (selected.kind === "unknown") {
+    return <span aria-label={`Unknown relevance classifier: ${selected.model}`} className="inline-flex rounded-full border border-gray-300 bg-gray-100 px-2 py-0.5 text-xs font-medium uppercase text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">classifier unknown</span>;
   }
   const safeMax = Number.isFinite(selected.max) && selected.max > 0 ? selected.max : 1;
   const width = Math.max(0, Math.min(100, (Number.isFinite(selected.value) ? selected.value : 0) / safeMax * 100));

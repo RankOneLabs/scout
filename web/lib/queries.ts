@@ -73,7 +73,8 @@ function parseJevEvidence(raw: string | null): RelevancePresentation["jev"] {
       !Array.isArray(record.margin) ||
       !record.margin.every((item) => typeof item === "string") ||
       typeof record.answers !== "object" ||
-      record.answers === null
+      record.answers === null ||
+      Array.isArray(record.answers)
     ) {
       return null;
     }
@@ -95,6 +96,25 @@ function parseJevEvidence(raw: string | null): RelevancePresentation["jev"] {
   } catch {
     return null;
   }
+}
+
+function relevanceClassifier(model: string): RelevancePresentation["classifier"] {
+  if (/^jev:[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(model)) return "jev";
+  if (
+    /^(?:(?:dispatch|ollama)\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*|openrouter\/[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9][a-zA-Z0-9._:-]*)$/.test(model)
+  ) {
+    return "llm";
+  }
+  if (!/^[a-z0-9][a-z0-9._:-]*$/.test(model)) return "unknown";
+  if (
+    /^claude-.+$/.test(model) ||
+    /^(?:gpt|chatgpt)-.+$/.test(model) ||
+    /^o[134](?:-.+)?$/.test(model) ||
+    /^gemini-.+$/.test(model)
+  ) {
+    return "llm";
+  }
+  return "unknown";
 }
 
 /**
@@ -120,20 +140,23 @@ export function getRelevancePresentations(
                 PARTITION BY evaluation_id ORDER BY created_at DESC, id DESC
               ) AS recency
        FROM evaluation_phase_runs
-       WHERE phase = 'relevance' AND status = 'complete'
+       WHERE phase = 'relevance'
+         AND status = 'complete'
+         AND evaluation_id IN (
+           SELECT CAST(value AS INTEGER) FROM json_each(?)
+         )
      )
      SELECT e.id AS evaluation_id, relevance.model, relevance.trace_id
      FROM evaluations e
      JOIN ranked_relevance_runs relevance
-       ON relevance.evaluation_id = e.id AND relevance.recency = 1
-     WHERE e.id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`
+       ON relevance.evaluation_id = e.id AND relevance.recency = 1`
   ).all(JSON.stringify(evaluationIds)) as Array<{
     evaluation_id: number;
     model: string;
     trace_id: string;
   }>;
 
-  const jevRows = rows.filter((row) => row.model.startsWith("jev:"));
+  const jevRows = rows.filter((row) => relevanceClassifier(row.model) === "jev");
   const traceOutputs = new Map<string, string | null>();
   if (jevRows.length > 0) {
     try {
@@ -154,7 +177,7 @@ export function getRelevancePresentations(
   }
 
   for (const row of rows) {
-    const classifier = row.model.startsWith("jev:") ? "jev" : "llm";
+    const classifier = relevanceClassifier(row.model);
     presentations.set(row.evaluation_id, {
       classifier,
       model: row.model,
@@ -176,6 +199,7 @@ function matchesPostRelevanceFilters(
       (presentation.jev !== null && filters.action.includes(presentation.jev.action))
     );
   }
+  if (presentation?.classifier === "unknown") return true;
   if (row.score === null) return filters?.score_min === undefined && filters?.score_max === undefined;
   return (
     (filters?.score_min === undefined || row.score >= filters.score_min) &&
@@ -1554,10 +1578,15 @@ export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
     orderBy: "e.id DESC",
   });
   return evaluations.sort((left, right) => {
-    const leftIsJev = left.relevance_presentation?.classifier === "jev";
-    const rightIsJev = right.relevance_presentation?.classifier === "jev";
-    if (leftIsJev !== rightIsJev) return leftIsJev ? 1 : -1;
-    if (leftIsJev) return right.id - left.id;
+    const rank = (evaluation: ReviewEvaluation): number => {
+      if (evaluation.relevance_presentation?.classifier === "jev") return 1;
+      if (evaluation.relevance_presentation?.classifier === "unknown") return 2;
+      return 0;
+    };
+    const leftRank = rank(left);
+    const rightRank = rank(right);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    if (leftRank !== 0) return right.id - left.id;
     return right.score - left.score || right.id - left.id;
   });
 }

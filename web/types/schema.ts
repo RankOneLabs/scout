@@ -180,7 +180,7 @@ export interface JevRouteEvidence {
 }
 
 export interface RelevancePresentation {
-  classifier: "llm" | "jev";
+  classifier: "llm" | "jev" | "unknown";
   model: string;
   jev: JevRouteEvidence | null;
 }
