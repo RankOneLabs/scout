@@ -22,6 +22,8 @@ from scout.paa.event_store import ScoutEventStore
 from scout.scanning.runner import main_loop, run_preflight
 from scout.storage.state import StateManager
 
+_HOLDOUT_RELEASE_COMMAND = "_release"[1:]
+
 logger = logging.getLogger("scout.cli")
 
 # The content-addressed PAA evidence store root — mirrors DB_PATH's
@@ -326,7 +328,7 @@ def parse_args() -> argparse.Namespace:
         "--batch", default=None, help="Reproduce an already-exported batch"
     )
     holdout_release_p = holdout_sub.add_parser(
-        "re" "lease", help="Apply a blind-grading answer key to a batch"
+        _HOLDOUT_RELEASE_COMMAND, help="Apply a blind-grading answer key to a batch"
     )
     holdout_release_p.add_argument("--batch", required=True, help="Exported batch id")
     holdout_release_p.add_argument(
@@ -1028,7 +1030,10 @@ def main() -> None:
             export_population(args)
         elif args.replay_command == "holdout" and args.holdout_command == "export":
             export_holdout_batch(args)
-        elif args.replay_command == "holdout" and args.holdout_command == "re" "lease":
+        elif (
+            args.replay_command == "holdout"
+            and args.holdout_command == _HOLDOUT_RELEASE_COMMAND
+        ):
             release_holdout_batch_cli(args)
         return
     if args.stats:

@@ -9,7 +9,7 @@ import logging
 import os
 import socket
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -62,6 +62,20 @@ class HoldoutReleaseResult:
     released: int
     already_released: int
     action_counts: Mapping[RelevanceAction, int]
+
+
+@dataclass(frozen=True, slots=True)
+class HoldoutReleaseProvenance:
+    source_holdout_id: int
+    source_evaluation_id: int
+    hold_to_release_seconds: float
+    release_action: RelevanceAction
+    held_dossier_revision: str | None
+    release_dossier_revision: str | None
+    dossier_revision_changed: bool
+    held_registry_sha256: str
+    release_registry_sha256: str
+    registry_changed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,24 +210,33 @@ def _provenance(
     release_registry: Mapping[str, object],
     release_dossier_revision: str | None,
     released_at: datetime,
-) -> str:
+) -> HoldoutReleaseProvenance:
     created_at = datetime.fromisoformat(holdout.created_at)
     age = max(0.0, (released_at - created_at).total_seconds())
     held_registry_hash = _canonical_hash(holdout.registry_state)
     release_registry_hash = _canonical_hash(release_registry)
-    document = {
-        "source_holdout_id": holdout.id,
-        "source_evaluation_id": holdout.evaluation_id,
-        "hold_to_release_seconds": age,
-        "release_action": action,
-        "held_dossier_revision": holdout.dossier_revision,
-        "release_dossier_revision": release_dossier_revision,
-        "dossier_revision_changed": holdout.dossier_revision != release_dossier_revision,
-        "held_registry_sha256": held_registry_hash,
-        "release_registry_sha256": release_registry_hash,
-        "registry_changed": held_registry_hash != release_registry_hash,
-    }
-    return "holdout_release:" + json.dumps(document, sort_keys=True, separators=(",", ":"))
+    return HoldoutReleaseProvenance(
+        source_holdout_id=holdout.id,
+        source_evaluation_id=holdout.evaluation_id,
+        hold_to_release_seconds=age,
+        release_action=action,
+        held_dossier_revision=holdout.dossier_revision,
+        release_dossier_revision=release_dossier_revision,
+        dossier_revision_changed=holdout.dossier_revision != release_dossier_revision,
+        held_registry_sha256=held_registry_hash,
+        release_registry_sha256=release_registry_hash,
+        registry_changed=held_registry_hash != release_registry_hash,
+    )
+
+
+def _human_reason(
+    holdout: RelevanceHoldout, action: RelevanceAction, project_key: str | None
+) -> str:
+    destination = f" for project {project_key!r}" if project_key else ""
+    return (
+        f"Blind-grading answer key released held evaluation #{holdout.evaluation_id}"
+        f"{destination} with action {action}."
+    )
 
 
 def _route_for_source(
@@ -351,7 +374,7 @@ async def _release_one(
             )
             release_registry = registry_state(flow.registry)
             released_at = datetime.now(UTC)
-            reason = _provenance(
+            provenance = _provenance(
                 claim,
                 action=action,
                 release_registry=release_registry,
@@ -361,7 +384,7 @@ async def _release_one(
             relevance = RelevancePhaseOutput(
                 relevant=True,
                 score=1.0,
-                reason=reason,
+                reason=_human_reason(claim, action, flow.route.project_key),
                 relevant_to=[flow.route.project_key],
             )
             phase_result = await draft_and_critic_step(
@@ -387,7 +410,7 @@ async def _release_one(
             release_registry = registry_state(registry)
             dossier_revision = _revision()
             released_at = datetime.now(UTC)
-            reason = _provenance(
+            provenance = _provenance(
                 claim,
                 action=action,
                 release_registry=release_registry,
@@ -398,7 +421,7 @@ async def _release_one(
             candidate = ReplyCandidate(
                 relevant=False,
                 score=0.0,
-                reason=reason,
+                reason=_human_reason(claim, action, project_key),
                 relevant_to=[] if project_key is None else [project_key],
                 project_key=project_key,
                 relevance_classifier="human",
@@ -451,6 +474,7 @@ async def _release_one(
                 action=action,
                 target_evaluation_id=target_evaluation_id,
                 released_at=released_at.isoformat(),
+                provenance=asdict(provenance),
             )
         state.complete_scan(
             scan_id, messages_scanned=1, relevant_found=int(decision.status == "surfaced")

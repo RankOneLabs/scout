@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -39,6 +40,7 @@ class RelevanceHoldout:
     attempts: int
     last_error: str | None
     created_at: str
+    release_provenance: dict[str, object] | None = None
 
 
 def registry_state(registry: RuntimeRegistry) -> dict[str, object]:
@@ -52,7 +54,12 @@ def registry_state(registry: RuntimeRegistry) -> dict[str, object]:
 def _row(row: sqlite3.Row) -> RelevanceHoldout:
     data = dict(row)
     data["held"] = bool(data["held"])
-    data["registry_state"] = json.loads(data["registry_state"])
+    registry_document = json.loads(data["registry_state"])
+    release_provenance = registry_document.pop("_holdout_release_provenance", None)
+    data["registry_state"] = registry_document
+    data["release_provenance"] = (
+        release_provenance if isinstance(release_provenance, dict) else None
+    )
     return RelevanceHoldout(**data)
 
 
@@ -253,15 +260,33 @@ class RelevanceHoldoutStore:
         action: RelevanceAction,
         target_evaluation_id: int,
         released_at: str,
+        provenance: Mapping[str, object],
     ) -> None:
         """Fence completion to the current claim for atomic outcome composition."""
         with self._uow.begin_immediate():
+            existing = self._uow.conn.execute(
+                "SELECT registry_state FROM relevance_holdouts WHERE id = ? "
+                "AND status = 'claimed' AND claim_token = ?",
+                (holdout_id, claim_token),
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError(f"holdout {holdout_id} lost its release claim")
+            registry_document = json.loads(existing["registry_state"])
+            registry_document["_holdout_release_provenance"] = dict(provenance)
             cursor = self._uow.conn.execute(
                 "UPDATE relevance_holdouts SET status = 'released', release_action = ?, "
                 "target_evaluation_id = ?, released_at = ?, claim_token = NULL, "
-                "claim_owner = NULL, claim_expires_at = NULL, last_error = NULL "
+                "claim_owner = NULL, claim_expires_at = NULL, last_error = NULL, "
+                "registry_state = ? "
                 "WHERE id = ? AND status = 'claimed' AND claim_token = ?",
-                (action, target_evaluation_id, released_at, holdout_id, claim_token),
+                (
+                    action,
+                    target_evaluation_id,
+                    released_at,
+                    json.dumps(registry_document, sort_keys=True, separators=(",", ":")),
+                    holdout_id,
+                    claim_token,
+                ),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError(f"holdout {holdout_id} lost its release claim")

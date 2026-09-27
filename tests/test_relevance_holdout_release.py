@@ -153,7 +153,12 @@ async def test_drop_persists_without_drafting_and_records_deltas(
         assert stored.release_action == "drop"
         target = state.get_evaluation(stored.target_evaluation_id or -1)
         assert target is not None
-        provenance = json.loads(str(target["reason"]).removeprefix("holdout_release:"))
+        assert target["reason"] == (
+            "Blind-grading answer key released held evaluation #11 "
+            "for project 'agent-ops' with action drop."
+        )
+        provenance = stored.release_provenance
+        assert provenance is not None
         assert provenance["hold_to_release_seconds"] > 0
         assert provenance["dossier_revision_changed"] is True
         assert provenance["registry_changed"] is True
@@ -185,6 +190,11 @@ async def test_positive_release_runs_draft_classify_and_persist(
 
     async def draft(context):
         relevance = context["relevance_output"]
+        assert relevance.reason == (
+            f"Blind-grading answer key released held evaluation #11 "
+            f"for project 'agent-ops' with action {release_action}."
+        )
+        assert "sha256" not in relevance.reason
         return Ok(
             ReplyCandidate(
                 relevant=False,
@@ -231,11 +241,73 @@ async def test_positive_release_runs_draft_classify_and_persist(
         assert stored.release_action == release_action
         target = state.get_evaluation(stored.target_evaluation_id or -1)
         assert target is not None
-        assert "hold_to_release_seconds" in str(target["reason"])
+        assert target["reason"] == (
+            f"Blind-grading answer key released held evaluation #11 "
+            f"for project 'agent-ops' with action {release_action}."
+        )
+        assert stored.release_provenance is not None
+        assert stored.release_provenance["hold_to_release_seconds"] > 0
 
     draft_mock.assert_awaited_once()
     classify_mock.assert_called_once()
     persist_mock.assert_called_once()
+
+
+def test_prepare_response_flow_resolves_live_io_and_phase_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs = SimpleNamespace(name="release-configs")
+    dossier = Mock(name="agent-ops-dossier")
+    dossier_loader = Mock(return_value=({"agent-ops": dossier}, []))
+    config_builder = Mock(return_value=configs)
+    monkeypatch.setattr(release, "load_project_dossiers", dossier_loader)
+    monkeypatch.setattr(release, "build_scout_phase_configs", config_builder)
+    monkeypatch.setattr(release, "_revision", lambda: "release-revision")
+    monkeypatch.setattr(release._config, "FEEDBACK_PROMPT_ENABLED", True)
+
+    with StateManager(db_path=":memory:") as state:
+        _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="drop")
+        state.upsert_project(
+            "agent-ops", "Agent Ops", "Operations", "https://example.test"
+        )
+        state.upsert_keyword("agent-ops", "text")
+        source_row = state.get_evaluation(11)
+        message = state.load_post(11)
+        assert source_row is not None and message is not None
+        scan_id = state.start_scan(environment="test", run_kind="holdout_release")
+        record_snapshot = Mock(wraps=state.record_feedback_snapshot)
+        load_bundle = Mock(wraps=state.load_committed_feedback_bundle)
+        monkeypatch.setattr(state, "record_feedback_snapshot", record_snapshot)
+        monkeypatch.setattr(state, "load_committed_feedback_bundle", load_bundle)
+
+        flow = release._prepare_response_flow(
+            state=state,
+            tracer=Mock(),
+            feedback=Mock(),
+            source=dict(source_row),
+            message=message,
+            scan_id=scan_id,
+        )
+
+        phase_rows = state.conn.execute(
+            "SELECT phase, id FROM feedback_snapshot_phases "
+            "WHERE snapshot_id = (SELECT id FROM feedback_snapshots WHERE scan_id = ?)",
+            (scan_id,),
+        ).fetchall()
+        expected_phase_ids = {row["phase"]: row["id"] for row in phase_rows}
+
+    assert flow.route.project_key == "agent-ops"
+    assert flow.route.keyword == "text"
+    assert flow.dossiers == {"agent-ops": dossier}
+    assert flow.dossier_revision == "release-revision"
+    assert flow.phase_configs is configs
+    assert flow.execution.relevance.snapshot_phase_id == expected_phase_ids["relevance"]
+    assert flow.execution.reply_draft.snapshot_phase_id == expected_phase_ids["reply_draft"]
+    assert flow.execution.critic.snapshot_phase_id == expected_phase_ids["critic"]
+    record_snapshot.assert_called_once_with(scan_id, mode="active")
+    load_bundle.assert_called_once()
+    dossier_loader.assert_called_once()
+    config_builder.assert_called_once()
 
 
 @pytest.mark.asyncio
