@@ -94,7 +94,7 @@ from scout.storage.state import StateManager
 # ---------------------------------------------------------------------------
 
 
-class InMemoryTracer(TracingLogger):  # type: ignore[misc]
+class InMemoryTracer(TracingLogger):
     """Minimal span bookkeeping with no I/O — safe for hermetic tests and
     concurrent sweeps alike."""
 
@@ -310,7 +310,7 @@ def _build_message(case: Phase1Case) -> Message:
 
 
 @dataclass
-class ScoutPipelineAdapter(LLMClient):  # type: ignore[misc]
+class ScoutPipelineAdapter(LLMClient):
     registry: Phase1Registry
     dossier_provider: DossierProvider
     phase_config_builder: Callable[[Phase1Case], PhaseConfigBundle]
@@ -436,7 +436,7 @@ class ScoutPipelineAdapter(LLMClient):  # type: ignore[misc]
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedLLMClient(LLMClient):  # type: ignore[misc]
+class _ScriptedLLMClient(LLMClient):
     """Returns one pre-computed ``submit_output`` tool call, unconditionally."""
 
     def __init__(self, output: RelevancePhaseOutput | StructuredDraftOutput | CritiquePhaseOutput):

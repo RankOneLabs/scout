@@ -65,7 +65,7 @@ def normalized_edit_distance(output_text: str | None, correction_text: str) -> f
     return distance / denominator
 
 
-class ReplyCorrectionGrader(Grader[StructuredDraftOutput]):  # type: ignore[misc]
+class ReplyCorrectionGrader(Grader[StructuredDraftOutput]):
     """Live jig.Grader scoring a candidate reply_draft replay's
     StructuredDraftOutput against one pinned human correction.
 
