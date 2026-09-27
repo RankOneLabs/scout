@@ -25,7 +25,7 @@ from jig.jev import JevResult, JevUsage, NoulAnswer
 from scout.config import Account, Message
 from scout.relevance.executor import run_jev_relevance
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
-from scout.relevance.models import JevRelevanceOutput
+from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
 from scout.replay.experiments import resolve_baseline
 from scout.result import Ok
 from scout.scanning.pipeline import _run_phase
@@ -234,6 +234,10 @@ async def test_jev_phase_resolves_as_replay_baseline(tmp_path) -> None:
     baseline = await resolve_baseline(state, tracer, phase.value.phase_run_id)
     assert baseline.baseline_model == "jev:jev-latest"
     assert baseline.recorded_input == "formatted post"
+    phase_run_count = state.conn.execute(
+        "SELECT COUNT(*) FROM evaluation_phase_runs WHERE post_id = ?", (post_id,)
+    ).fetchone()[0]
+    assert phase_run_count == 1
     await tracer.close()
     state.close()
 
@@ -269,5 +273,39 @@ async def test_cancelled_jev_phase_uses_phase_cleanup_path(tmp_path) -> None:
         "SELECT status FROM evaluation_phase_runs WHERE post_id = ?", (post_id,)
     ).fetchall()
     assert [row["status"] for row in rows] == ["cancelled"]
+    await tracer.close()
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_jev_error_is_returned_with_retryable_scoring_fields(tmp_path) -> None:
+    tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
+    state = StateManager(db_path=str(tmp_path / "state.db"))
+    scan_id, post_id, snapshot_phase_id = _seed(state)
+
+    async def failed_executor(config, input_text):
+        del config, input_text
+        raise JevRelevanceError(
+            operation="jev.evaluate",
+            message_id="post-1",
+            detail="provider unavailable",
+        )
+
+    result = await _run_phase(
+        phase="relevance",
+        config=_config(tracer),
+        input_text="formatted post",
+        message_id="post-1",
+        state=state,
+        scan_id=scan_id,
+        post_id=post_id,
+        snapshot_phase_id=snapshot_phase_id,
+        model="jev:jev-latest",
+        executor=failed_executor,
+    )
+
+    assert not isinstance(result, Ok)
+    assert result.error.operation == "jev.evaluate"
+    assert result.error.detail == "provider unavailable"
     await tracer.close()
     state.close()

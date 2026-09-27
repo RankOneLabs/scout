@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from jig import (
     AgentConfig,
@@ -20,10 +20,17 @@ from jig import (
     run_agent,
 )
 
+import scout.config as _config
 from scout.dossiers.resolver import DossierSummary
 from scout.errors import LLMError, ParseError
-from scout.relevance.executor import PhaseTracer
-from scout.relevance.models import JevRelevanceError
+from scout.relevance.executor import PhaseTracer, run_jev_relevance
+from scout.relevance.models import (
+    JEV_PROJECT_KEYS,
+    JevRelevanceError,
+    JevRelevanceOutput,
+    RelevanceAction,
+)
+from scout.relevance.setup import JevScanContext
 from scout.result import Err, Ok, Result
 from scout.scanning.agent import (
     ScoutExecutionContext,
@@ -41,6 +48,7 @@ from scout.scanning.schemas import (
     StructuredDraftOutput,
 )
 from scout.storage.state import StateManager
+from scout.typesafe.state import build_state
 
 logger = logging.getLogger("scout.scanning.pipeline")
 
@@ -200,6 +208,55 @@ async def score_and_draft_step(
         formatted_input = format_message_input(msg)
         project_key = None
 
+    use_jev = _config.RELEVANCE_CLASSIFIER == "jev" and project_key in JEV_PROJECT_KEYS
+    executor: Callable[
+        [AgentConfig[RelevancePhaseOutput], str],
+        Awaitable[AgentResult[RelevancePhaseOutput]],
+    ] = run_agent
+    if use_jev:
+        jev_context: JevScanContext | None = ctx.get("jev_context")
+        target = (
+            jev_context.projects.get(project_key)
+            if jev_context is not None and project_key is not None
+            else None
+        )
+        if jev_context is None or target is None or project_key is None:
+            return Err(
+                LLMError(
+                    operation="relevance",
+                    message_id=msg.platform_id,
+                    detail=f"Jev relevance context is missing project {project_key!r}",
+                )
+            )
+        source: dict[str, object] = {
+            "platform": msg.platform,
+            "channel_name": msg.channel_name,
+            "url": msg.url,
+            "content": msg.content,
+            "parent_author_name": msg.parent.author.name if msg.parent else None,
+            "parent_text": msg.parent.text if msg.parent else None,
+            "author_name": msg.author.name,
+            "author_handle": msg.author.handle,
+        }
+        jev_state = build_state(source, target, jev_context.catalogue)
+
+        async def _execute_jev(
+            config: AgentConfig[RelevancePhaseOutput], text: str
+        ) -> AgentResult[RelevancePhaseOutput]:
+            result = await run_jev_relevance(
+                cast(AgentConfig[JevRelevanceOutput], config),
+                text,
+                client=jev_context.client,
+                catalogue=jev_context.catalogue,
+                questions=jev_context.questions,
+                jev_state=jev_state,
+                project_key=project_key,
+                message_id=msg.platform_id,
+            )
+            return cast(AgentResult[RelevancePhaseOutput], result)
+
+        executor = _execute_jev
+
     relevance: Result[PhaseExecution[RelevancePhaseOutput], LLMError | ParseError] = (
         await _run_phase(
             phase="relevance",
@@ -211,12 +268,24 @@ async def score_and_draft_step(
             post_id=execution.post_id,
             snapshot_phase_id=execution.relevance.snapshot_phase_id,
             model=execution.relevance.model,
+            executor=executor,
         )
     )
     if isinstance(relevance, Err):
         return relevance
     relevance_output = relevance.value.parsed
     contributor_ids = [relevance.value.phase_run_id]
+    relevance_classifier = relevance.value.model
+    relevance_action: RelevanceAction = (
+        relevance_output.action
+        if isinstance(relevance_output, JevRelevanceOutput)
+        else (
+            "respond"
+            if relevance_output.relevant
+            and relevance_output.score >= _config.RELEVANCE_THRESHOLD
+            else "drop"
+        )
+    )
 
     if not relevance_output.relevant:
         return Ok(
@@ -226,6 +295,9 @@ async def score_and_draft_step(
                 reason=relevance_output.reason,
                 relevant_to=relevance_output.relevant_to,
                 project_key=project_key,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )
@@ -238,6 +310,8 @@ async def score_and_draft_step(
         dossier_summaries=dossier_summaries,
         execution=execution,
         relevance_output=relevance_output,
+        relevance_classifier=relevance_classifier,
+        relevance_action=relevance_action,
         contributor_ids=contributor_ids,
     )
 
@@ -278,6 +352,8 @@ async def draft_and_critic_step(
         dossier_summaries=dossier_summaries,
         execution=execution,
         relevance_output=relevance_output,
+        relevance_classifier="human",
+        relevance_action="respond",
         contributor_ids=[],
     )
 
@@ -291,6 +367,8 @@ async def _draft_and_critic(
     dossier_summaries: Mapping[str, DossierSummary],
     execution: ScoutExecutionContext,
     relevance_output: RelevancePhaseOutput,
+    relevance_classifier: str,
+    relevance_action: RelevanceAction,
     contributor_ids: list[int],
 ) -> Result[ReplyCandidate, LLMError | ParseError]:
     """Shared reply-draft and critic implementation for model and human relevance."""
@@ -332,6 +410,9 @@ async def _draft_and_critic(
                 relevant_to=relevance_output.relevant_to,
                 project_key=project_key,
                 structured_draft=draft_output,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )
@@ -374,6 +455,9 @@ async def _draft_and_critic(
                 critique_verdict=critique_output.verdict,
                 critique_feedback=critique_output.feedback,
                 structured_draft=draft_output,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )
@@ -405,6 +489,9 @@ async def _draft_and_critic(
             critique_verdict=critique_output.verdict,
             critique_feedback=critique_output.feedback,
             structured_draft=final_draft,
+            relevance_output=relevance_output,
+            relevance_classifier=relevance_classifier,
+            relevance_action=relevance_action,
             contributor_phase_run_ids=tuple(contributor_ids),
         )
     )

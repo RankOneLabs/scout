@@ -71,6 +71,7 @@ from scout.grading.correction import (
     normalized_edit_distance,
 )
 from scout.reasoning_control import ReasoningControlClient
+from scout.relevance.models import JEV_PROJECT_KEYS
 from scout.replay.pricing import (
     PriceEstimate,
     PricingCatalog,
@@ -148,6 +149,15 @@ SUPPORTED_BATCH_CANDIDATE_CONFIG_VERSIONS = (
 BATCH_CASE_EVIDENCE_VERSION = 1
 
 DEFAULT_BATCH_VARIANT_NAME = "default"
+
+
+def draw_relevance_holdout(*, project_key: str, rate: float, value: float) -> bool:
+    """Apply a pre-drawn holdout value only to catalogue-covered projects."""
+    if not 0.0 <= rate <= 1.0:
+        raise ValueError("holdout rate must be between 0 and 1")
+    if not 0.0 <= value < 1.0:
+        raise ValueError("holdout draw must be between 0 inclusive and 1 exclusive")
+    return project_key in JEV_PROJECT_KEYS and value < rate
 
 
 class ReplayError(Exception):
@@ -2803,6 +2813,7 @@ __all__ = [
     "build_batch_case_evidence",
     "build_candidate_plan",
     "build_domain_diff",
+    "draw_relevance_holdout",
     "CorrectionGrade",
     "build_score_evidence",
     "grade_baseline_draft",
