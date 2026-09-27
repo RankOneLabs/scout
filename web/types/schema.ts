@@ -168,6 +168,21 @@ export interface Evaluation {
   posture?: string | null;
   dossier_revision?: string | null;
   dossier_summary_id?: string | null;
+  relevance_presentation?: RelevancePresentation | null;
+}
+
+export interface JevRouteEvidence {
+  action: RouteAction;
+  line: string;
+  exclusion: string | null;
+  margin_features: string[];
+  feature_probabilities: Record<string, number>;
+}
+
+export interface RelevancePresentation {
+  classifier: "llm" | "jev";
+  model: string;
+  jev: JevRouteEvidence | null;
 }
 
 /** Latest schema-v47 shadow relevance run projected for review. */
@@ -294,6 +309,7 @@ export interface DraftWithContext {
   surface_status?: string | null;
   posture?: string | null;
   dossier_revision?: string | null;
+  relevance_presentation?: RelevancePresentation | null;
 }
 
 export interface ScanStats {

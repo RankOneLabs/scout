@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { getTracesDb } from "./traces-db";
 import {
   type AuthorClass,
   type ScanDetail,
@@ -26,6 +27,8 @@ import {
   type RecoveryOperation,
   type SourceProbeRun,
   type ShadowRelevanceRunRow,
+  type RelevancePresentation,
+  type RouteAction,
 } from "@/types/schema";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
 
@@ -51,6 +54,133 @@ function parseStringList(raw: string | null): string[] {
       .map((entry) => entry.trim())
       .filter(Boolean);
   }
+}
+
+const ROUTE_ACTIONS = new Set<RouteAction>(["respond", "review", "drop"]);
+
+function parseJevEvidence(raw: string | null): RelevancePresentation["jev"] {
+  if (raw === null) return null;
+  try {
+    const envelope: unknown = JSON.parse(raw);
+    if (typeof envelope !== "object" || envelope === null) return null;
+    const output = (envelope as Record<string, unknown>).output_complete;
+    if (typeof output !== "object" || output === null) return null;
+    const record = output as Record<string, unknown>;
+    if (
+      typeof record.action !== "string" ||
+      !ROUTE_ACTIONS.has(record.action as RouteAction) ||
+      typeof record.line !== "string" ||
+      !Array.isArray(record.margin) ||
+      !record.margin.every((item) => typeof item === "string") ||
+      typeof record.answers !== "object" ||
+      record.answers === null
+    ) {
+      return null;
+    }
+    const probabilities = Object.entries(record.answers).reduce<Record<string, number>>(
+      (result, [name, value]) => {
+        if (typeof value === "number" && Number.isFinite(value)) result[name] = value;
+        return result;
+      },
+      {}
+    );
+    if (Object.keys(probabilities).length !== Object.keys(record.answers).length) return null;
+    return {
+      action: record.action as RouteAction,
+      line: record.line,
+      exclusion: typeof record.exclusion === "string" ? record.exclusion : null,
+      margin_features: record.margin as string[],
+      feature_probabilities: probabilities,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The only query that resolves an evaluation's relevance classifier. The
+ * phase-run join is kept here so every row surface uses the same latest
+ * complete relevance-run rule.
+ */
+export function getRelevancePresentations(
+  evaluationIds: readonly number[]
+): Map<number, RelevancePresentation> {
+  const presentations = new Map<number, RelevancePresentation>();
+  if (evaluationIds.length === 0) return presentations;
+  const db = getDb();
+  const hasPhaseRuns = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evaluation_phase_runs'")
+    .get();
+  if (!hasPhaseRuns) return presentations;
+
+  const rows = db.prepare(
+    `WITH ranked_relevance_runs AS (
+       SELECT evaluation_id, model, trace_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY evaluation_id ORDER BY created_at DESC, id DESC
+              ) AS recency
+       FROM evaluation_phase_runs
+       WHERE phase = 'relevance' AND status = 'complete'
+     )
+     SELECT e.id AS evaluation_id, relevance.model, relevance.trace_id
+     FROM evaluations e
+     JOIN ranked_relevance_runs relevance
+       ON relevance.evaluation_id = e.id AND relevance.recency = 1
+     WHERE e.id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`
+  ).all(JSON.stringify(evaluationIds)) as Array<{
+    evaluation_id: number;
+    model: string;
+    trace_id: string;
+  }>;
+
+  const jevRows = rows.filter((row) => row.model.startsWith("jev:"));
+  const traceOutputs = new Map<string, string | null>();
+  if (jevRows.length > 0) {
+    try {
+      const traces = getTracesDb().prepare(
+        `SELECT trace_id, output
+         FROM spans
+         WHERE parent_id IS NULL
+           AND trace_id IN (SELECT value FROM json_each(?))`
+      ).all(JSON.stringify(jevRows.map((row) => row.trace_id))) as Array<{
+        trace_id: string;
+        output: string | null;
+      }>;
+      for (const trace of traces) traceOutputs.set(trace.trace_id, trace.output);
+    } catch {
+      // The classifier identity still renders honestly when a historical or
+      // unavailable trace database cannot supply the detailed Jev evidence.
+    }
+  }
+
+  for (const row of rows) {
+    const classifier = row.model.startsWith("jev:") ? "jev" : "llm";
+    presentations.set(row.evaluation_id, {
+      classifier,
+      model: row.model,
+      jev: classifier === "jev" ? parseJevEvidence(traceOutputs.get(row.trace_id) ?? null) : null,
+    });
+  }
+  return presentations;
+}
+
+function matchesPostRelevanceFilters(
+  row: { eval_id: number | null; score: number | null },
+  filters: PostFilters | undefined,
+  presentations: ReadonlyMap<number, RelevancePresentation>
+): boolean {
+  const presentation = row.eval_id === null ? undefined : presentations.get(row.eval_id);
+  if (presentation?.classifier === "jev") {
+    return (
+      filters?.action === undefined ||
+      (presentation.jev !== null && filters.action.includes(presentation.jev.action))
+    );
+  }
+  if (row.score === null) return filters?.score_min === undefined && filters?.score_max === undefined;
+  return (
+    (filters?.score_min === undefined || row.score >= filters.score_min) &&
+    (filters?.score_max === undefined || row.score <= filters.score_max)
+  );
 }
 
 const MATCH_TYPES: readonly MatchedRoute["match_type"][] = [
@@ -427,14 +557,6 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     conditions.push("e.relevant = ?");
     params.push(filters.relevant ? 1 : 0);
   }
-  if (filters?.score_min !== undefined) {
-    conditions.push("e.score >= ?");
-    params.push(filters.score_min);
-  }
-  if (filters?.score_max !== undefined) {
-    conditions.push("e.score <= ?");
-    params.push(filters.score_max);
-  }
   if (filters?.scan_id !== undefined) {
     conditions.push("p.scan_id = ?");
     params.push(filters.scan_id);
@@ -446,6 +568,12 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
 
   const limit = filters?.limit ?? DEFAULT_PAGE_SIZE;
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const relevanceFiltering =
+    filters?.score_min !== undefined ||
+    filters?.score_max !== undefined ||
+    filters?.action !== undefined;
+  const limitClause = relevanceFiltering ? "" : "LIMIT ?";
+  const queryParams = relevanceFiltering ? params : [...params, limit + 1];
 
   interface PostEvalRow {
     id: number;
@@ -517,12 +645,18 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
       LEFT JOIN prompt_templates pc ON pc.name = pk.critique_prompt AND pc.active = 1
       ${where}
       ORDER BY p.id DESC
-      LIMIT ?`
+      ${limitClause}`
     )
-    .all(...params, limit + 1) as PostEvalRow[];
+    .all(...queryParams) as PostEvalRow[];
 
-  const has_more = rows.length > limit;
-  const data = (has_more ? rows.slice(0, limit) : rows).map((row) => {
+  const presentations = getRelevancePresentations(
+    rows.flatMap((row) => (row.eval_id === null ? [] : [row.eval_id]))
+  );
+  const matchingRows = relevanceFiltering
+    ? rows.filter((row) => matchesPostRelevanceFilters(row, filters, presentations))
+    : rows;
+  const has_more = matchingRows.length > limit;
+  const data = (has_more ? matchingRows.slice(0, limit) : matchingRows).map((row) => {
     const parentCtx = toSourceParent(row);
     return {
       id: row.id,
@@ -545,6 +679,8 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
       relevant_to: parseRelevantTo(row.relevant_to as unknown as string | null),
       keyword_route_id: row.keyword_route_id,
       matched_route: toMatchedRoute(row),
+      relevance_presentation:
+        row.eval_id === null ? null : presentations.get(row.eval_id) ?? null,
     };
   });
 
@@ -675,7 +811,9 @@ export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
     .all(...params, limit + 1) as DraftRow[];
 
   const has_more = rows.length > limit;
-  const data = (has_more ? rows.slice(0, limit) : rows).map((row) => {
+  const sliced = has_more ? rows.slice(0, limit) : rows;
+  const presentations = getRelevancePresentations(sliced.map((row) => row.evaluation_id));
+  const data = sliced.map((row) => {
     const parentCtx = toSourceParent(row);
     return {
       draft_id: row.draft_id,
@@ -701,6 +839,7 @@ export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
       posture: row.posture ?? null,
       dossier_revision: row.dossier_revision ?? null,
       relevant: toBool(row.relevant),
+      relevance_presentation: presentations.get(row.evaluation_id) ?? null,
     };
   });
   return { data, has_more };
@@ -995,6 +1134,7 @@ export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWith
   const revisionMeta = getGradeRevisionMetaBatch(
     sliced.filter((row) => row.grade_id !== null).map((row) => row.grade_id!)
   );
+  const presentations = getRelevancePresentations(sliced.map((row) => row.evaluation_id));
 
   const data = sliced.map((row) => {
     const parentCtx = toSourceParent(row);
@@ -1022,6 +1162,7 @@ export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWith
       posture: row.posture ?? null,
       dossier_revision: row.dossier_revision ?? null,
       relevant: toBool(row.relevant),
+      relevance_presentation: presentations.get(row.evaluation_id) ?? null,
       grade: row.grade_id
         ? {
             id: row.grade_id,
@@ -1261,6 +1402,7 @@ function getReviewEvaluations({
   if (rows.length === 0) return [];
 
   const evaluationIds = JSON.stringify(rows.map((row) => row.id));
+  const presentations = getRelevancePresentations(rows.map((row) => row.id));
 
   const violations = tableNames.has("gate_blocks") ? db.prepare(
     `SELECT id, reason_code, offending_text, segment_index, project_key,
@@ -1380,15 +1522,23 @@ function getReviewEvaluations({
       gate_violations: violationsByEvaluation.get(row.id) ?? [],
       grade: gradesByEvaluation.get(row.id) ?? null,
       ...(hasShadowRelevance ? { shadow_relevance: shadowRelevance } : {}),
+      relevance_presentation: presentations.get(row.id) ?? null,
     };
   });
 }
 
 export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
-  return getReviewEvaluations({
+  const evaluations = getReviewEvaluations({
     whereClause: "e.scan_id = ?",
     params: [scanId],
-    orderBy: "e.score DESC",
+    orderBy: "e.id DESC",
+  });
+  return evaluations.sort((left, right) => {
+    const leftIsJev = left.relevance_presentation?.classifier === "jev";
+    const rightIsJev = right.relevance_presentation?.classifier === "jev";
+    if (leftIsJev !== rightIsJev) return leftIsJev ? 1 : -1;
+    if (leftIsJev) return right.id - left.id;
+    return right.score - left.score || right.id - left.id;
   });
 }
 
