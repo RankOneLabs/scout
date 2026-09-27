@@ -14,6 +14,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from scout.config import Account, Message, SourceParent
+from scout.relevance.binding import RelevancePostStateSource
 from scout.scanning.author_class import handle_from_post_url
 from scout.storage.unit_of_work import UnitOfWork
 
@@ -185,6 +186,22 @@ class PostStore:
         """Load one persisted post as the pipeline's Message value."""
         row = self._conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
         return self._row_to_message(row) if row is not None else None
+
+    def load_relevance_state_source(self, post_id: int) -> RelevancePostStateSource | None:
+        """Load the nullable stored fields used by the declared relevance projection."""
+        row = self._conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+        if row is None:
+            return None
+        return RelevancePostStateSource(
+            platform=row["platform"],
+            channel_name=row["channel_name"],
+            url=row["url"],
+            content=row["content"],
+            parent_author_name=row["parent_author_name"],
+            parent_text=row["parent_text"],
+            author_name=row["author_name"],
+            author_handle=handle_from_post_url(row["platform"], row["url"]),
+        )
 
     def load_unevaluated_posts(self, scan_id: int | None = None) -> list[Message]:
         """Load posts that have no evaluation yet (e.g. from a failed scan).
