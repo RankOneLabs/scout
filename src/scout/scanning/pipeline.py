@@ -58,7 +58,7 @@ class _TraceEvidenceError(RuntimeError):
     only for evidence-persistence itself failing after a real attempt."""
 
 
-class _TraceIdCapturingTracer(TracingLogger):  # type: ignore[misc]
+class _TraceIdCapturingTracer(TracingLogger):
     """Narrowly-scoped, single-call wrapper around a real TracingLogger.
 
     Captures the trace id Jig's run_agent assigns synchronously inside

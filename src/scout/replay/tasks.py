@@ -51,7 +51,7 @@ class ReplayWorkerConfiguration:
     reasoning: bool | None = None
 
 
-class RelevanceGrader(Grader[RelevancePhaseOutput]):  # type: ignore[misc]
+class RelevanceGrader(Grader[RelevancePhaseOutput]):
     def __init__(self, target: RelevanceTarget) -> None:
         self.target = target
 

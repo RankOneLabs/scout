@@ -3,7 +3,7 @@
   "grader_version": "normalized_edit_distance/v1",
   "include_feedback_in_prompt": false,
   "include_memory_in_prompt": false,
-  "jig_revision": "55081e81cee5c6faf0c2d376ab4691f69e111b3d",
+  "jig_revision": "5fa9c01",
   "max_llm_calls": 4,
   "max_output_tokens": 4096,
   "max_parse_retries": 2,

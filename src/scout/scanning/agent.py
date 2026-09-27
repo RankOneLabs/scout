@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypedDict
 
 from jig import AgentConfig, FeedbackLoop, ToolRegistry, TracingLogger, from_model
 
@@ -97,6 +98,17 @@ class ScoutExecutionContext:
     relevance: PhaseRunIdentity
     reply_draft: PhaseRunIdentity
     critic: PhaseRunIdentity
+
+
+class _CommonAgentConfig(TypedDict):
+    feedback: FeedbackLoop
+    tracer: TracingLogger
+    tools: ToolRegistry
+    max_tool_calls: int
+    max_llm_calls: int
+    max_parse_retries: int
+    include_memory_in_prompt: bool
+    include_feedback_in_prompt: bool
 
 
 def format_projects(projects: Mapping[str, ProjectTarget]) -> str:
@@ -426,7 +438,7 @@ def build_scout_phase_configs(
     reply_draft, and critic never see each other's feedback entry, by
     construction of the bundle's three named fields.
     """
-    common = {
+    common: _CommonAgentConfig = {
         "feedback": feedback,
         "tracer": tracer,
         "tools": _empty_tools(),

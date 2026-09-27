@@ -43,7 +43,7 @@ from scout.evals.phase1.export_adapter import (
 from scout.storage.state import StateManager
 
 EmbeddingProvider = Callable[[str], Awaitable[np.ndarray]]
-FeedbackLoopFactory = Callable[[str], FeedbackLoop]
+FeedbackLoopFactory = Callable[[str], SQLiteFeedbackLoop]
 
 # Fixed, content-free string embedded once during preflight — its only
 # purpose is proving the configured provider is reachable and returns a
@@ -83,7 +83,7 @@ async def _default_embedding_provider(text: str) -> np.ndarray:
     return vector
 
 
-def _default_feedback_loop_factory(db_path: str) -> FeedbackLoop:
+def _default_feedback_loop_factory(db_path: str) -> SQLiteFeedbackLoop:
     return SQLiteFeedbackLoop(db_path=db_path)
 
 

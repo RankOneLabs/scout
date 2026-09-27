@@ -10,7 +10,7 @@ from jig import CompletionParams, LLMClient, LLMResponse
 EXPERIMENT_MAX_OUTPUT_TOKENS = 4096
 
 
-class BoundedCompletionClient(LLMClient):  # type: ignore[misc]
+class BoundedCompletionClient(LLMClient):
     """Preserve Jig's client/trace identity while bounding provider output requests.
 
     This is an output-token limit, not a monetary budget. Production clients
