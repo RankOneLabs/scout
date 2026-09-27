@@ -37,6 +37,7 @@ from scout.grading.feedback import (
     resolve_feedback_policy_config,
     select_phase_examples,
 )
+from scout.relevance.classifier_identity import ClassifierIdentity
 from scout.storage.experiment_plan import expected_experiment_pairs
 from scout.storage.unit_of_work import UnitOfWork
 from scout.verifier import GateViolation
@@ -145,7 +146,7 @@ class PhaseRun:
     snapshot_phase_id: int
     phase: str
     trace_id: str
-    model: str
+    model: ClassifierIdentity
     status: str
     created_at: str
 
@@ -245,7 +246,7 @@ def _row_to_phase_run(row: sqlite3.Row) -> PhaseRun:
         snapshot_phase_id=row["snapshot_phase_id"],
         phase=row["phase"],
         trace_id=row["trace_id"],
-        model=row["model"],
+        model=ClassifierIdentity(row["model"]),
         status=row["status"],
         created_at=row["created_at"],
     )

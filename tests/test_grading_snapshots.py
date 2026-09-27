@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import MISSING, field, fields, make_dataclass
@@ -97,6 +98,33 @@ def capture(state: StateManager) -> FrozenGradePopulation:
 def test_old_grade_is_not_excluded_by_prompt_lookback(state: StateManager) -> None:
     snapshot = select_corpus(capture(state), CorpusSelection(project_key="synthetic"))
     assert len(snapshot.members) == 1
+
+
+def test_jev_phase_run_is_excluded_when_new_corpus_is_selected(state: StateManager) -> None:
+    scan_id = state.start_scan()
+    snapshot = state.record_feedback_snapshot(scan_id, mode="shadow")
+    relevance_phase = next(phase for phase in snapshot.phases if phase.phase == "relevance")
+    phase_run_id = state.insert_phase_run(
+        scan_id=scan_id,
+        post_id=1,
+        snapshot_phase_id=relevance_phase.snapshot_phase_id,
+        phase="relevance",
+        trace_id="jev-trace",
+        model="jev:jev-latest",
+        status="complete",
+    )
+    with state.db.transaction():
+        state.conn.execute(
+            "UPDATE evaluation_phase_runs SET evaluation_id = 1 WHERE id = ?", (phase_run_id,)
+        )
+
+    population = capture(state)
+    selected = select_corpus(population, CorpusSelection(project_key="synthetic"))
+
+    assert selected.members == ()
+    assert [(item.grade_id, item.reason) for item in selected.exclusions] == [
+        (population.items[0].grade.grade_id, "unsupported_relevance_classifier")
+    ]
 
 
 @pytest.mark.parametrize("original_decision", [0, 1])
@@ -299,6 +327,13 @@ def test_retained_v1_fixture_is_byte_compatible_and_replays() -> None:
     original = contents[bundle.lineages[0].inputs[0]]
     population = FrozenGradePopulation.model_validate_json(original)
     assert encode_wire_v1(population, POPULATION_WIRE_V1) == original
+    snapshot = next(
+        artifact.content
+        for artifact in bundle.artifacts
+        if artifact.digest == bundle.lineages[0].outputs[0]
+    )
+    recorded_digest = json.loads(snapshot)["members"][0]["input_digest"]
+    assert recorded_digest == "16fb058107aa7b628aba22a71f731f844918a828111b9398b7e740cc211cfffa"
     assert verify_snapshot_replay(bundle) == Ok(1)
     with StateManager(":memory:") as restored:
         assert restored.artifacts.import_bundle(bundle) == Ok(None)
