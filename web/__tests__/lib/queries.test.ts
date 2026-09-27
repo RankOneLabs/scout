@@ -168,6 +168,15 @@ describe("mixed Jev and LLM query presentation", () => {
     expect(getPosts({ action: ["review"] }).data.map((post) => post.id)).toEqual([3, 2, 1]);
   });
 
+  it("continues through bounded batches until a filtered page has a lookahead row", async () => {
+    const { getPosts } = await import("@/lib/queries");
+
+    expect(getPosts({ action: ["respond"], limit: 1 })).toMatchObject({
+      data: [{ id: 3 }],
+      has_more: true,
+    });
+  });
+
   it("orders LLM rows by score without using Jev's constant score", async () => {
     const { getEvaluationsByScan } = await import("@/lib/queries");
 

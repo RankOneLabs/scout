@@ -49,6 +49,39 @@ function makeEvaluation(overrides: Partial<ReviewEvaluation> = {}): ReviewEvalua
 }
 
 describe("EvaluationCard", () => {
+  it("renders Jev exclusion detail and the empty-margin fallback", () => {
+    const evaluation = makeEvaluation({
+      relevance_presentation: {
+        classifier: "jev",
+        model: "jev:jev-latest",
+        jev: {
+          action: "drop",
+          line: "exclusion",
+          exclusion: "hype",
+          margin_features: [],
+          feature_probabilities: {
+            excl_hype: 0.91,
+            needs_thread: 0.12,
+          },
+        },
+      },
+    });
+    const { getByRole, getByText, queryByText } = render(
+      React.createElement(EvaluationCard, { evaluation })
+    );
+
+    expect(getByRole("button", { name: /Jev action: drop/i })).toBeTruthy();
+    expect(queryByText("80%")).toBeNull();
+    fireEvent.click(getByRole("button", { name: /re: alice/i }));
+
+    expect(getByText("Jev route detail")).toBeTruthy();
+    expect(getByText("exclusion", { selector: "dd" })).toBeTruthy();
+    expect(getByText("hype")).toBeTruthy();
+    expect(getByText("None")).toBeTruthy();
+    expect(getByText("excl_hype")).toBeTruthy();
+    expect(getByText("0.910")).toBeTruthy();
+  });
+
   it("passes the evaluation's predicted relevance through to GradeControls so a false negative can be graded", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

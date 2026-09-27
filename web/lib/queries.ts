@@ -561,19 +561,11 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     conditions.push("p.scan_id = ?");
     params.push(filters.scan_id);
   }
-  if (filters?.before_id !== undefined) {
-    conditions.push("p.id < ?");
-    params.push(filters.before_id);
-  }
-
   const limit = filters?.limit ?? DEFAULT_PAGE_SIZE;
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const relevanceFiltering =
     filters?.score_min !== undefined ||
     filters?.score_max !== undefined ||
     filters?.action !== undefined;
-  const limitClause = relevanceFiltering ? "" : "LIMIT ?";
-  const queryParams = relevanceFiltering ? params : [...params, limit + 1];
 
   interface PostEvalRow {
     id: number;
@@ -614,47 +606,75 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     resolved_critique_prompt: string | null;
   }
 
-  const rows = db
-    .prepare(
-      `SELECT
-        p.*,
-        e.id AS eval_id,
-        e.relevant,
-        e.score,
-        e.reason,
-        e.relevant_to,
-        e.keyword_route_id,
-        pk.id AS matched_route_id,
-        pk.project_key AS matched_project_key,
-        pk.keyword AS matched_keyword,
-        pk.match_type AS matched_match_type,
-        pk.intent AS matched_intent,
-        pk.positive_context AS matched_positive_context,
-        pk.negative_context AS matched_negative_context,
-        pk.evaluate_prompt AS matched_evaluate_prompt,
-        pk.respond_prompt AS matched_respond_prompt,
-        pk.critique_prompt AS matched_critique_prompt,
-        pe.body AS resolved_evaluate_prompt,
-        pr.body AS resolved_respond_prompt,
-        pc.body AS resolved_critique_prompt
-      FROM posts p
-      LEFT JOIN evaluations e ON e.post_id = p.id
-      LEFT JOIN project_keywords pk ON pk.id = e.keyword_route_id
-      LEFT JOIN prompt_templates pe ON pe.name = pk.evaluate_prompt AND pe.active = 1
-      LEFT JOIN prompt_templates pr ON pr.name = pk.respond_prompt AND pr.active = 1
-      LEFT JOIN prompt_templates pc ON pc.name = pk.critique_prompt AND pc.active = 1
-      ${where}
-      ORDER BY p.id DESC
-      ${limitClause}`
-    )
-    .all(...queryParams) as PostEvalRow[];
+  const fetchRows = (beforeId: number | undefined): PostEvalRow[] => {
+    const batchConditions = [...conditions];
+    const batchParams = [...params];
+    if (beforeId !== undefined) {
+      batchConditions.push("p.id < ?");
+      batchParams.push(beforeId);
+    }
+    const where =
+      batchConditions.length > 0 ? `WHERE ${batchConditions.join(" AND ")}` : "";
+    return db
+      .prepare(
+        `SELECT
+          p.*,
+          e.id AS eval_id,
+          e.relevant,
+          e.score,
+          e.reason,
+          e.relevant_to,
+          e.keyword_route_id,
+          pk.id AS matched_route_id,
+          pk.project_key AS matched_project_key,
+          pk.keyword AS matched_keyword,
+          pk.match_type AS matched_match_type,
+          pk.intent AS matched_intent,
+          pk.positive_context AS matched_positive_context,
+          pk.negative_context AS matched_negative_context,
+          pk.evaluate_prompt AS matched_evaluate_prompt,
+          pk.respond_prompt AS matched_respond_prompt,
+          pk.critique_prompt AS matched_critique_prompt,
+          pe.body AS resolved_evaluate_prompt,
+          pr.body AS resolved_respond_prompt,
+          pc.body AS resolved_critique_prompt
+        FROM posts p
+        LEFT JOIN evaluations e ON e.post_id = p.id
+        LEFT JOIN project_keywords pk ON pk.id = e.keyword_route_id
+        LEFT JOIN prompt_templates pe ON pe.name = pk.evaluate_prompt AND pe.active = 1
+        LEFT JOIN prompt_templates pr ON pr.name = pk.respond_prompt AND pr.active = 1
+        LEFT JOIN prompt_templates pc ON pc.name = pk.critique_prompt AND pc.active = 1
+        ${where}
+        ORDER BY p.id DESC
+        LIMIT ?`
+      )
+      .all(...batchParams, limit + 1) as PostEvalRow[];
+  };
 
-  const presentations = getRelevancePresentations(
-    rows.flatMap((row) => (row.eval_id === null ? [] : [row.eval_id]))
-  );
-  const matchingRows = relevanceFiltering
-    ? rows.filter((row) => matchesPostRelevanceFilters(row, filters, presentations))
-    : rows;
+  const matchingRows: PostEvalRow[] = [];
+  const presentations = new Map<number, RelevancePresentation>();
+  let cursor = filters?.before_id;
+  while (matchingRows.length <= limit) {
+    const batch = fetchRows(cursor);
+    const batchPresentations = getRelevancePresentations(
+      batch.flatMap((row) => (row.eval_id === null ? [] : [row.eval_id]))
+    );
+    const matches = relevanceFiltering
+      ? batch.filter((row) => matchesPostRelevanceFilters(row, filters, batchPresentations))
+      : batch;
+    for (const row of matches) {
+      if (row.eval_id === null) continue;
+      const presentation = batchPresentations.get(row.eval_id);
+      if (presentation) presentations.set(row.eval_id, presentation);
+    }
+    matchingRows.push(...matches);
+
+    if (!relevanceFiltering || matchingRows.length > limit || batch.length < limit + 1) break;
+    const nextCursor = batch.at(-1)?.id;
+    if (nextCursor === undefined || (cursor !== undefined && nextCursor >= cursor)) break;
+    cursor = nextCursor;
+  }
+
   const has_more = matchingRows.length > limit;
   const data = (has_more ? matchingRows.slice(0, limit) : matchingRows).map((row) => {
     const parentCtx = toSourceParent(row);

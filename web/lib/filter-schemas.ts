@@ -3,6 +3,10 @@ import { z } from "zod";
 export const ROUTE_ACTIONS = ["respond", "review", "drop"] as const;
 export const routeActionSchema = z.enum(ROUTE_ACTIONS);
 
+// PROPOSED — UNCONFIRMED: `action` is repeatable. Query semantics currently
+// narrow Jev rows only; every LLM row passes through unchanged. For mixed
+// lists, score_min/score_max apply only to LLM rows and action only to Jev.
+// Operator confirmation is required before treating this as a settled API.
 const repeatableActionSchema = z.preprocess(
   (value) =>
     value === undefined ? undefined : Array.isArray(value) ? value : [value],
