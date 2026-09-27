@@ -102,6 +102,32 @@ afterAll(() => {
 });
 
 describe("mixed Jev and LLM query presentation", () => {
+  it("selects an action badge only for Jev relevance scores", async () => {
+    const { selectScoreBar } = await import("@/components/atoms/ScoreBar");
+
+    expect(selectScoreBar({
+      score: 1,
+      relevancePresentation: {
+        classifier: "jev",
+        model: "jev:jev-latest",
+        jev: {
+          action: "review",
+          line: "needs_thread",
+          exclusion: null,
+          margin_features: [],
+          feature_probabilities: {},
+        },
+      },
+    })).toEqual({ kind: "action", action: "review" });
+    expect(selectScoreBar({
+      score: 0.8,
+      relevancePresentation: { classifier: "llm", model: "openrouter/acme/model", jev: null },
+    })).toEqual({ kind: "score", score: 0.8 });
+    expect(selectScoreBar({ value: 2, max: 8, label: "distance" })).toEqual({
+      kind: "distance", value: 2, max: 8, label: "distance",
+    });
+  });
+
   it("reads classifier and complete Jev routing evidence through the shared helper", async () => {
     const { getRelevancePresentations } = await import("@/lib/queries");
 

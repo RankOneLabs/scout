@@ -46,7 +46,7 @@ export function PostPreview({ post }: PostPreviewProps) {
           )}
         </div>
         <div className="flex items-center gap-3">
-          {post.score !== null && <ScoreBar score={post.score} />}
+          {post.score !== null && <ScoreBar score={post.score} relevancePresentation={post.relevance_presentation} />}
           {post.url && <ExternalLink href={post.url}>View</ExternalLink>}
         </div>
       </div>

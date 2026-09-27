@@ -283,6 +283,7 @@ export interface PostWithEvaluation extends Post {
   relevant_to: string[];
   keyword_route_id: number | null;
   matched_route: MatchedRoute | null;
+  relevance_presentation?: RelevancePresentation | null;
 }
 
 export interface DraftWithContext {
