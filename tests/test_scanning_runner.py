@@ -16,6 +16,7 @@ from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
 from scout.relevance.setup import setup_jev_scan
 from scout.result import Err, Ok
 from scout.scanning.prefilter import RoutedMessage
+from scout.scanning.schemas import ReplyCandidate
 from scout.storage.state import StateManager
 
 
@@ -68,6 +69,26 @@ def _main_loop_shell(
     monkeypatch.setattr(runner, "_acquire_scan_lease", Mock(return_value=lease))
     monkeypatch.setattr(runner._config, "RELEVANCE_CLASSIFIER", "jev")
     return state, lease
+
+
+def test_held_candidate_wins_over_conflicting_terminal_fields() -> None:
+    candidate = ReplyCandidate(
+        relevant=False,
+        score=0.0,
+        reason="classifier exclusion",
+        relevant_to=["agent-ops"],
+        project_key="agent-ops",
+        critique_verdict="reject",
+        critique_feedback="would otherwise win",
+        relevance_action="drop",
+        held=True,
+    )
+
+    decision = runner.classify_outcome(candidate, _message("held-conflict"), {})
+
+    assert decision.held is True
+    assert decision.status == "not_relevant"
+    assert decision.terminal_reason is None
 
 
 @pytest.mark.asyncio

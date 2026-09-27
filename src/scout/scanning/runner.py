@@ -10,6 +10,7 @@ import heapq
 import json
 import logging
 import os
+import random
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -88,6 +89,7 @@ from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
 from scout.relevance.classifier_identity import jev_classifier
+from scout.relevance.holdout import RandomSource, draw_relevance_holdout
 from scout.relevance.models import JEV_PROJECT_KEYS
 from scout.relevance.setup import JevScanContext, setup_jev_scan
 from scout.result import Err, Ok
@@ -585,6 +587,7 @@ class OutcomeDecision:
     relevance_action: Literal["respond", "review", "drop"] | None
     critique: CritiqueResult | None
     contributor_phase_run_ids: tuple[int, ...]
+    held: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -602,6 +605,7 @@ class PersistenceContext:
     dossier_summary_id: str | None
     surfaced_at: str | None
     allow_response_only_phase_runs: bool = False
+    registry: RuntimeRegistry | None = None
 
 
 def _resolve_project_key(candidate: ReplyCandidate) -> str | None:
@@ -659,7 +663,14 @@ def classify_outcome(
             relevance_action=candidate.relevance_action,
             critique=critique,
             contributor_phase_run_ids=candidate.contributor_phase_run_ids,
+            held=candidate.held,
         )
+
+    # A hold is terminal at the relevance boundary. Keep the classifier's
+    # actual relevant/score/action values on the evaluation, while the joined
+    # relevance_holdouts row records why no surface decision or draft exists.
+    if candidate.held:
+        return _decision("not_relevant", project_key=_resolve_project_key(candidate))
 
     # 1. Critic reject is an intentional terminal decision — it must not be
     # hidden behind relevance or an empty draft's segment count.
@@ -770,6 +781,25 @@ def persist_outcome(
     Invariant violations on a surfaced decision raise as programming errors
     — they are not converted to a retryable scoring failure.
     """
+    if decision.held:
+        if decision.relevance_action is None:
+            raise ValueError("held outcome requires its production relevance action")
+        if context.registry is None:
+            raise ValueError("held outcome requires the classification-time registry")
+        evaluation_id, _holdout = state.relevance_holdouts.persist_held_evaluation(
+            decision.evaluation,
+            context.post_id,
+            context.scan_id,
+            production_action=decision.relevance_action,
+            registry=context.registry,
+            contributor_phase_run_ids=decision.contributor_phase_run_ids,
+            keyword_route_id=context.keyword_route_id,
+            project_key=decision.project_key,
+            dossier_revision=context.dossier_revision,
+            dossier_summary_id=context.dossier_summary_id,
+        )
+        return evaluation_id
+
     critique_pair = (
         (decision.critique.verdict, decision.critique.feedback)
         if decision.critique is not None
@@ -869,6 +899,8 @@ async def score_messages(
     dossier_revision: str | None = None,
     lease_check: Callable[[], None] | None = None,
     jev_context: JevScanContext | None = None,
+    runtime_registry: RuntimeRegistry | None = None,
+    holdout_rng: RandomSource | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
     """Score messages via Scout's phase pipeline, write digest incrementally.
 
@@ -1022,6 +1054,7 @@ async def score_messages(
     relevant_count = 0
 
     _dossiers: dict[str, DossierSummary] = dossier_summaries or {}
+    rng = random if holdout_rng is None else holdout_rng
 
     for i, routed in enumerate(routed_candidates):
         if lease_check is not None:
@@ -1137,6 +1170,15 @@ async def score_messages(
                     "dossier_summaries": _dossiers,
                     "execution_context": execution_context,
                     "jev_context": jev_context,
+                    "holdout_draw": lambda classifier, project_key, action: (
+                        draw_relevance_holdout(
+                            classifier=classifier,
+                            project_key=project_key,
+                            production_action=action,
+                            rate=_config.RELEVANCE_HOLDOUT_RATE,
+                            rng=rng,
+                        )
+                    ),
                 },
             )
         except asyncio.CancelledError:
@@ -1235,12 +1277,14 @@ async def score_messages(
             dossier_revision=dossier_revision,
             dossier_summary_id=dossier_summary_id,
             surfaced_at=msg.created_at.isoformat(),
+            registry=runtime_registry,
         )
 
         logger.info(
-            "  → score=%.2f relevant=%s surface_status=%s reason=%s",
+            "  → score=%.2f relevant=%s held=%s surface_status=%s reason=%s",
             decision.evaluation.score,
             decision.evaluation.relevant,
+            decision.held,
             decision.status,
             decision.evaluation.reason,
         )
@@ -1971,6 +2015,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 dossier_revision=_dossier_revision,
                                 lease_check=lease_handle.check,
                                 jev_context=jev_context,
+                                runtime_registry=registry,
                             )
 
                             for failure in processing_failures:

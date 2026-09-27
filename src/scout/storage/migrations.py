@@ -3196,6 +3196,14 @@ def _migrate_to_47(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_48(conn: sqlite3.Connection) -> None:
+    """Held relevance decisions and their export/release lifecycle (v48)."""
+    from scout.storage.schema import RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS
+
+    for statement in RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3243,4 +3251,5 @@ MIGRATIONS: dict[int, Migration] = {
     45: _migrate_to_45,
     46: _migrate_to_46,
     47: _migrate_to_47,
+    48: _migrate_to_48,
 }
