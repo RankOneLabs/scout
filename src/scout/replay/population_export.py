@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -35,6 +36,32 @@ class PopulationExportRecord(BaseModel):
     human_label: bool | None
     production_score: float
     production_decision: bool
+    production_action: str | None = None
+
+
+def record_from_held_row(row: Mapping[str, Any]) -> PopulationExportRecord:
+    """Project one ungraded held evaluation without weakening the graded path."""
+    decision = row["production_decision"]
+    if decision not in (0, 1):
+        raise ValueError(
+            f"population export evaluation {row['evaluation_id']} decision must be boolean"
+        )
+    return PopulationExportRecord(
+        evaluation_id=row["evaluation_id"],
+        platform=row["platform"],
+        channel=row["channel"],
+        url=row["url"],
+        text=row["text"],
+        parent_author_name=row["parent_author_name"],
+        parent_text=row["parent_text"],
+        author_name=row["author_name"],
+        author_handle=handle_from_post_url(row["platform"], row["url"]),
+        snapshot_id=None,
+        human_label=None,
+        production_score=row["production_score"],
+        production_decision=bool(decision),
+        production_action=row["production_action"],
+    )
 
 
 def record_from_frozen_input(item: FrozenGradeInput) -> PopulationExportRecord:
@@ -137,6 +164,7 @@ __all__ = [
     "PopulationExportRecord",
     "load_live_population",
     "record_from_frozen_input",
+    "record_from_held_row",
     "records_from_frozen_inputs",
     "render_population_jsonl",
 ]
