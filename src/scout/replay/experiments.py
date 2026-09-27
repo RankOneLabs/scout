@@ -71,6 +71,7 @@ from scout.grading.correction import (
     normalized_edit_distance,
 )
 from scout.reasoning_control import ReasoningControlClient
+from scout.relevance.classifier_identity import classifier_of
 from scout.replay.pricing import (
     PriceEstimate,
     PricingCatalog,
@@ -91,7 +92,7 @@ from scout.replay.tasks import (
     relevance_score,
 )
 from scout.resources import runtime_resource
-from scout.result import Err
+from scout.result import Err, Ok
 from scout.scanning.schemas import CritiquePhaseOutput, RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.evaluations import Experiment
 from scout.storage.experiment_plan import expected_experiment_pairs
@@ -452,6 +453,15 @@ async def resolve_baseline(
                 f"evaluation_phase_runs {phase_run_id} has status "
                 f"{phase_run['status']!r}, not 'complete'"
             )
+        classifier = classifier_of(phase_run["model"])
+        if isinstance(classifier, Ok) and classifier.value == "jev":
+            raise BaselineResolutionError(
+                f"evaluation_phase_runs {phase_run_id} was produced by Jev and cannot be "
+                "replayed as an LLM baseline"
+            )
+        # Historical opaque LLM fixture/alias names remain readable here: the
+        # trace's recorded model is independently checked below.  They are not
+        # admitted to newly selected relevance corpora, where no trace is read.
         phase = phase_run["phase"]
         if phase not in PHASE_REPLAY_CONFIGS:
             raise BaselineResolutionError(f"unknown replayable phase: {phase!r}")

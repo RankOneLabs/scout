@@ -44,6 +44,7 @@ from scout.grading.relevance_targets import (
     project_relevance_target_source,
 )
 from scout.grading.wire import ArrayWire, encode_wire_v1, record_wire
+from scout.relevance.classifier_identity import classifier_of
 from scout.result import Err, Ok, Result
 from scout.storage.evaluations import PhaseRun
 from scout.storage.grades import GradeRevision
@@ -217,6 +218,7 @@ type CorpusExclusionReason = (
         "outside_project",
         "unavailable_pinned_context",
         "missing_post_text",
+        "unsupported_relevance_classifier",
     ]
 )
 
@@ -488,6 +490,12 @@ def _input_exclusion(
     # current grade.
     recorded = GradeRevisionPayload.model_validate_json(item.revision.payload)
     row = dataclasses.replace(item.grade, edited_text=recorded.edited_text)
+    for phase_run in item.phase_runs:
+        if phase_run.phase != "relevance":
+            continue
+        classifier = classifier_of(phase_run.model)
+        if isinstance(classifier, Err) or classifier.value != "llm":
+            return "unsupported_relevance_classifier"
     if item.post is None:
         return "missing_post"
     if reason := grade_exclusion_reason(row):

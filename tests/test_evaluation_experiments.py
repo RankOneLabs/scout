@@ -37,11 +37,19 @@ from scout.dossiers.resolver import (
     DossierSummary,
     ResolutionMetadata,
 )
+from scout.grading.artifacts import ArtifactError
+from scout.grading.assistance_scope import read_assistance_bundle
+from scout.grading.assistance_store import load_corpus_snapshot
 from scout.grading.correction import ReplyCorrectionGrader, normalized_edit_distance
-from scout.grading.snapshots import CorpusSelection, build_snapshot_bundle, read_grade_population
+from scout.grading.snapshots import (
+    CorpusSelection,
+    FrozenGradeInput,
+    build_snapshot_bundle,
+    read_grade_population,
+)
 from scout.replay.reporting import ReportError, build_batch_report, render_markdown
 from scout.replay.tasks import RelevanceTask, load_relevance_population
-from scout.result import Ok
+from scout.result import Err, Ok
 from scout.scanning.schemas import RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.state import StateManager
 from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
@@ -438,7 +446,108 @@ def _freeze_relevance_task(state, tmp_path) -> RelevanceTask:
     return RelevanceTask(snapshot_digest=snapshot.value.lineages[0].outputs[0])
 
 
+def _rewrite_frozen_relevance_model(
+    state: StateManager,
+    task: RelevanceTask,
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+) -> tuple[RelevanceTask, int]:
+    """Build a focused frozen-loader fixture with one rewritten phase model.
+
+    Selection correctly prevents creating this state today. The loader still
+    has to handle snapshots frozen before that selection guard existed, so the
+    test replaces only the verified snapshot transform result while retaining
+    content-addressed source and snapshot payloads in the real artifact store.
+    """
+    with state.db.read_transaction():
+        retained = read_assistance_bundle(state.conn, (task.snapshot_digest,))
+    assert isinstance(retained, Ok)
+    snapshot_result = load_corpus_snapshot(retained.value, task.snapshot_digest)
+    assert isinstance(snapshot_result, Ok)
+    snapshot = snapshot_result.value
+    member = snapshot.members[0]
+    contents = {artifact.digest: artifact.content for artifact in retained.value.artifacts}
+    source = FrozenGradeInput.model_validate_json(contents[member.input_digest])
+    rewritten_source = source.model_copy(
+        update={
+            "phase_runs": tuple(
+                dataclasses.replace(phase, model=model)
+                if phase.phase == "relevance" and phase.status == "complete"
+                else phase
+                for phase in source.phase_runs
+            )
+        }
+    )
+    source_digest = state.artifacts.put(rewritten_source.model_dump_json().encode())
+    assert isinstance(source_digest, Ok)
+    rewritten_snapshot = snapshot.model_copy(
+        update={
+            "members": (
+                member.model_copy(update={"input_digest": source_digest.value}),
+                *snapshot.members[1:],
+            )
+        }
+    )
+    snapshot_digest = state.artifacts.put(rewritten_snapshot.model_dump_json().encode())
+    assert isinstance(snapshot_digest, Ok)
+    monkeypatch.setattr(
+        "scout.replay.tasks.load_corpus_snapshot",
+        lambda _bundle, digest: (
+            Ok(rewritten_snapshot)
+            if digest == snapshot_digest.value
+            else load_corpus_snapshot(_bundle, digest)
+        ),
+    )
+    return RelevanceTask(snapshot_digest=snapshot_digest.value), member.evaluation_id
+
+
 class TestRelevanceBatch:
+    async def test_loader_excludes_frozen_jev_phase(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        rewritten, evaluation_id = _rewrite_frozen_relevance_model(
+            state, task, monkeypatch, "jev:jev-latest"
+        )
+
+        loaded = load_relevance_population(state, rewritten)
+
+        assert isinstance(loaded, Ok)
+        assert tuple(item.model_dump() for item in loaded.value.exclusions) == (
+            {
+                "evaluation_id": evaluation_id,
+                "reason": "unsupported_relevance_classifier",
+            },
+        )
+        assert len(loaded.value.cases) == 1
+
+    async def test_loader_refuses_unknown_frozen_relevance_model(
+        self,
+        state,
+        tracer,
+        feedback,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
+        rewritten, _evaluation_id = _rewrite_frozen_relevance_model(
+            state, task, monkeypatch, "opaque-historical-alias"
+        )
+
+        loaded = load_relevance_population(state, rewritten)
+
+        assert isinstance(loaded, Err)
+        assert isinstance(loaded.error, ArtifactError)
+        assert loaded.error.operation == "relevance_population"
+        assert loaded.error.detail == (
+            "Unknown relevance classifier identity 'opaque-historical-alias' in frozen phase"
+        )
+
     async def test_verified_critic_rejection_preserves_human_target_and_phase_baseline(
         self, state, tracer, feedback, monkeypatch, tmp_path,
     ) -> None:
