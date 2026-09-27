@@ -19,6 +19,7 @@ from jig.jev import JevClient, JevError, NoulAnswer, NoulQuestion
 from jig.jev.tracing import to_jig_usage
 
 import scout.config as _config
+from scout.relevance.classifier_identity import jev_classifier
 from scout.relevance.loader import RelevanceCatalogue
 from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
 from scout.typesafe.routes import route
@@ -65,7 +66,7 @@ def _config_snapshot(catalogue: RelevanceCatalogue, model: str) -> dict[str, Any
         "system_prompt_is_callable": False,
         "output_schema": "scout.relevance.models:JevRelevanceOutput",
         "structured_output_mode": "native",
-        "model_id": f"jev:{model}",
+        "model_id": jev_classifier(model),
     }
 
 

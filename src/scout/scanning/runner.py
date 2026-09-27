@@ -88,6 +88,7 @@ from scout.platforms.discord import DiscordScanner
 from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
+from scout.relevance.classifier_identity import jev_classifier
 from scout.relevance.holdout import RandomSource, draw_relevance_holdout
 from scout.relevance.models import JEV_PROJECT_KEYS
 from scout.relevance.setup import JevScanContext, setup_jev_scan
@@ -1129,7 +1130,7 @@ async def score_messages(
             relevance=PhaseRunIdentity(
                 snapshot_phase_id=phase_run_identity["relevance"].snapshot_phase_id,
                 model=(
-                    f"jev:{jev_context.client.model}"
+                    jev_classifier(jev_context.client.model)
                     if _config.RELEVANCE_CLASSIFIER == "jev"
                     and routed.keyword_route is not None
                     and routed.keyword_route.project_key in JEV_PROJECT_KEYS

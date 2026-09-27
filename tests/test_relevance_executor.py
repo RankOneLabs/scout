@@ -28,7 +28,7 @@ from scout.config import Account, Message
 from scout.relevance.executor import run_jev_relevance
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
 from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
-from scout.replay.experiments import build_domain_diff, resolve_baseline
+from scout.replay.experiments import BaselineResolutionError, build_domain_diff, resolve_baseline
 from scout.result import Ok
 from scout.scanning.pipeline import _run_phase
 from scout.storage.state import StateManager
@@ -263,7 +263,7 @@ async def test_generic_executor_failure_redacts_api_key_from_trace(
 
 
 @pytest.mark.asyncio
-async def test_jev_phase_resolves_as_replay_baseline(tmp_path) -> None:
+async def test_jev_phase_is_refused_as_replay_baseline(tmp_path) -> None:
     tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
     state = StateManager(db_path=str(tmp_path / "state.db"))
     scan_id, post_id, snapshot_phase_id = _seed(state)
@@ -284,9 +284,8 @@ async def test_jev_phase_resolves_as_replay_baseline(tmp_path) -> None:
 
     assert isinstance(phase, Ok)
     assert isinstance(phase.value.parsed, JevRelevanceOutput)
-    baseline = await resolve_baseline(state, tracer, phase.value.phase_run_id)
-    assert baseline.baseline_model == "jev:jev-latest"
-    assert baseline.recorded_input == "formatted post"
+    with pytest.raises(BaselineResolutionError, match="produced by Jev"):
+        await resolve_baseline(state, tracer, phase.value.phase_run_id)
     phase_run_count = state.conn.execute(
         "SELECT COUNT(*) FROM evaluation_phase_runs WHERE post_id = ?", (post_id,)
     ).fetchone()[0]
