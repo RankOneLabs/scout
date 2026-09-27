@@ -10,10 +10,10 @@ from typing import Literal
 
 from scout.config import RelevanceResult
 from scout.registry import RuntimeRegistry
+from scout.relevance.models import RelevanceAction
 from scout.storage.evaluations import EvaluationStore
 from scout.storage.unit_of_work import UnitOfWork
 
-RelevanceAction = Literal["respond", "review", "drop"]
 HoldoutStatus = Literal["pending", "claimed", "released", "failed"]
 
 
@@ -53,6 +53,16 @@ def _row(row: sqlite3.Row) -> RelevanceHoldout:
     data["held"] = bool(data["held"])
     data["registry_state"] = json.loads(data["registry_state"])
     return RelevanceHoldout(**data)
+
+
+def load_held_evaluation_ids(conn: sqlite3.Connection) -> frozenset[int]:
+    """Read held evaluation identities for consumers with a pinned connection."""
+    return frozenset(
+        int(row["evaluation_id"])
+        for row in conn.execute(
+            "SELECT evaluation_id FROM relevance_holdouts WHERE held = 1"
+        ).fetchall()
+    )
 
 
 class RelevanceHoldoutStore:
@@ -144,4 +154,5 @@ __all__ = [
     "RelevanceAction",
     "RelevanceHoldout",
     "RelevanceHoldoutStore",
+    "load_held_evaluation_ids",
 ]

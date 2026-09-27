@@ -26,7 +26,7 @@ sm = pytest.fixture(_sm)
 
 
 class TestSchemaVersion:
-    def test_latest_schema_version_is_47(self) -> None:
+    def test_latest_schema_version_is_48(self) -> None:
         assert LATEST_SCHEMA_VERSION == 48
 
     def test_fresh_db_stamped_at_latest_version(self, sm: StateManager) -> None:
