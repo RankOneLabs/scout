@@ -5,14 +5,25 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from jig import AgentConfig, PipelineConfig, Span, SpanKind, Step, TracingLogger, run_agent
+from jig import (
+    AgentConfig,
+    AgentResult,
+    PipelineConfig,
+    Span,
+    SpanKind,
+    Step,
+    TracingLogger,
+    run_agent,
+)
 
 from scout.dossiers.resolver import DossierSummary
 from scout.errors import LLMError, ParseError
+from scout.relevance.executor import PhaseTracer
+from scout.relevance.models import JevRelevanceError
 from scout.result import Err, Ok, Result
 from scout.scanning.agent import (
     ScoutExecutionContext,
@@ -132,7 +143,7 @@ def _verify_agent_run_root(spans: list[Span], trace_id: str) -> None:
 
 
 async def _finalize_and_persist_phase_run(
-    tracer: _TraceIdCapturingTracer,
+    tracer: PhaseTracer,
     trace_id: str,
     *,
     state: StateManager,
@@ -410,12 +421,13 @@ async def _run_phase[T](
     post_id: int,
     snapshot_phase_id: int,
     model: str,
+    executor: Callable[[AgentConfig[T], str], Awaitable[AgentResult[T]]] = run_agent,
 ) -> Result[PhaseExecution[T], LLMError | ParseError]:
     capturing = _TraceIdCapturingTracer(config.tracer)
     phase_config = config.with_(tracer=capturing)
 
     try:
-        agent_result = await run_agent(phase_config, input_text)
+        agent_result = await executor(phase_config, input_text)
     except asyncio.CancelledError:
         trace_id = capturing.captured_trace_id
         if trace_id is not None:
@@ -431,6 +443,25 @@ async def _run_phase[T](
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(_cleanup()), timeout=5.0)
         raise
+    except JevRelevanceError as e:
+        logger.error(
+            "%s phase failed for message %s: %s", phase, message_id, e.detail
+        )
+        trace_id = capturing.captured_trace_id
+        if trace_id is not None:
+            with contextlib.suppress(Exception):
+                await _finalize_and_persist_phase_run(
+                    capturing, trace_id, state=state, scan_id=scan_id, post_id=post_id,
+                    snapshot_phase_id=snapshot_phase_id, phase=phase, model=model,
+                    status="error",
+                )
+        return Err(
+            LLMError(
+                operation=e.operation,
+                message_id=e.message_id,
+                detail=e.detail,
+            )
+        )
     except Exception as e:
         logger.error(
             "%s phase raised for message %s: %s", phase, message_id, e, exc_info=True
