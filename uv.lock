@@ -499,7 +499,7 @@ wheels = [
 [[package]]
 name = "jig"
 version = "0.1.0"
-source = { git = "https://github.com/rankonelabs/jig.git?rev=55081e81cee5c6faf0c2d376ab4691f69e111b3d#55081e81cee5c6faf0c2d376ab4691f69e111b3d" }
+source = { git = "https://github.com/rankonelabs/jig.git?rev=5fa9c01#5fa9c01968e3f2eb6c2221031cd743b9c0b9c99a" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "httpx" },
@@ -1517,7 +1517,7 @@ dev = [
 requires-dist = [
     { name = "discord-py", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "jig", extras = ["anthropic", "ollama", "openrouter"], git = "https://github.com/rankonelabs/jig.git?rev=55081e81cee5c6faf0c2d376ab4691f69e111b3d" },
+    { name = "jig", extras = ["anthropic", "ollama", "openrouter"], git = "https://github.com/rankonelabs/jig.git?rev=5fa9c01" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "numpy", specifier = ">=2.4.3" },
     { name = "paa-runtime", specifier = "==0.4.0" },

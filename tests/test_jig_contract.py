@@ -4,7 +4,7 @@ Brief b33507f1-ef1e-4f87-adc3-73825c4d67e8 pins Scout to a reviewed Jig
 revision whose ``TraceDiff`` compares *complete* canonical ``submit_output``
 payloads rather than the 200-character root-span output preview. Scout's
 pin (``pyproject.toml`` / ``uv.lock``) now points at
-``55081e81cee5c6faf0c2d376ab4691f69e111b3d`` (jig main at the merge of
+``5fa9c01`` (jig main at the merge of
 github.com/RankOneLabs/jig/pull/89, which adds reasoning control on top of
 pull/76's complete-output comparison), which lands this on
 ``jig.replay.diff.TraceDiff``:

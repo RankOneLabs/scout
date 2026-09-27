@@ -103,7 +103,7 @@ from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
 # trace_comparisons row so stored comparison evidence identifies the exact
 # upstream semantics that produced it without a runtime git checkout.
 # tests/test_jig_contract.py contract-tests this constant against the pin.
-JIG_REVISION = "55081e81cee5c6faf0c2d376ab4691f69e111b3d"
+JIG_REVISION = "5fa9c01"
 
 # v2: candidate-only (experiment_runs.candidate_config). Per-baseline
 # provenance moved out to baseline_evidence — see BASELINE_EVIDENCE_VERSION.
