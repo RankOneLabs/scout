@@ -316,6 +316,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Project to export with --all-evaluations",
     )
+    holdout_p = replay_sub.add_parser("holdout", help="Export or release Jev holdouts")
+    holdout_sub = holdout_p.add_subparsers(dest="holdout_command", required=True)
+    holdout_export_p = holdout_sub.add_parser(
+        "export", help="Export held rows for blind grading"
+    )
+    holdout_export_p.add_argument("--out", required=True, help="Output directory")
+    holdout_export_p.add_argument(
+        "--batch", default=None, help="Reproduce an already-exported batch"
+    )
 
     feedback_parser = subparsers.add_parser(
         "feedback", help="Offline replay and comparison commands"
@@ -1002,10 +1011,12 @@ def main() -> None:
                 grid_expand_feedback(args)
         return
     if args.subcommand == "replay":
-        from scout.cli.replay import export_population
+        from scout.cli.replay import export_holdout_batch, export_population
 
         if args.replay_command == "export-population":
             export_population(args)
+        elif args.replay_command == "holdout" and args.holdout_command == "export":
+            export_holdout_batch(args)
         return
     if args.stats:
         show_stats()

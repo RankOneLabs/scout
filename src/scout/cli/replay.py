@@ -43,6 +43,26 @@ from scout.result import Err
 from scout.storage.state import StateManager
 
 
+def export_holdout_batch(args: argparse.Namespace) -> None:
+    """Write held relevance rows as one deterministic file per project."""
+    from scout.relevance.holdout_export import export_holdouts
+
+    try:
+        with StateManager(db_path=DB_PATH, allow_create=False) as state:
+            result = export_holdouts(
+                state,
+                Path(args.out),
+                batch_id=getattr(args, "batch", None),
+            )
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        print(f"error: could not export holdouts: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(
+        f"exported {result.row_count} holdouts in batch {result.batch_id} "
+        f"to {args.out}"
+    )
+
+
 def positive_int(value: str) -> int:
     """argparse type for --phase-run-id: a positive integer only."""
     try:
@@ -580,6 +600,7 @@ def grid_expand_feedback(args: argparse.Namespace) -> None:
 __all__ = [
     "batch_replay_feedback",
     "export_population",
+    "export_holdout_batch",
     "grid_expand_feedback",
     "batch_retry_feedback",
     "positive_int",

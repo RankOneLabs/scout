@@ -148,6 +148,41 @@ class RelevanceHoldoutStore:
         ).fetchone()
         return None if row is None else _row(row)
 
+    def rows_for_export(self, *, batch_id: str | None) -> list[sqlite3.Row]:
+        """Load held rows and their population fields under the caller's snapshot."""
+        predicate = "h.batch_id IS NULL" if batch_id is None else "h.batch_id = ?"
+        parameters: tuple[object, ...] = () if batch_id is None else (batch_id,)
+        return self._uow.conn.execute(
+            "SELECT h.id, h.evaluation_id, h.production_action, h.batch_id, "
+            "h.exported_at, e.project_key, e.score AS production_score, "
+            "e.relevant AS production_decision, p.platform, "
+            "p.channel_name AS channel, p.url, p.content AS text, "
+            "p.parent_author_name, p.parent_text, p.author_name "
+            "FROM relevance_holdouts h "
+            "JOIN evaluations e ON e.id = h.evaluation_id "
+            "JOIN posts p ON p.id = e.post_id "
+            f"WHERE h.held = 1 AND {predicate} ORDER BY e.project_key, e.id",
+            parameters,
+        ).fetchall()
+
+    def assign_export_batch(
+        self,
+        holdout_ids: tuple[int, ...],
+        *,
+        batch_id: str,
+        exported_at: str,
+    ) -> None:
+        if not holdout_ids:
+            raise ValueError("cannot assign an empty holdout batch")
+        placeholders = ",".join("?" for _ in holdout_ids)
+        cursor = self._uow.conn.execute(
+            f"UPDATE relevance_holdouts SET batch_id = ?, exported_at = ? "
+            f"WHERE id IN ({placeholders}) AND batch_id IS NULL AND held = 1",
+            (batch_id, exported_at, *holdout_ids),
+        )
+        if cursor.rowcount != len(holdout_ids):
+            raise RuntimeError("holdout export batch changed while it was being written")
+
 
 __all__ = [
     "HoldoutStatus",

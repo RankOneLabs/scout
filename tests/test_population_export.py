@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -14,8 +15,10 @@ from scout.grading.snapshots import (
     RecordedPost,
 )
 from scout.replay.population_export import (
+    PopulationExportRecord,
     load_live_population,
     record_from_frozen_input,
+    record_from_held_row,
     render_population_jsonl,
 )
 from scout.scanning.author_class import handle_from_post_url
@@ -160,10 +163,45 @@ def test_frozen_transform_has_exact_contract() -> None:
         "human_label",
         "production_score",
         "production_decision",
+        "production_action",
     ]
     assert record.author_handle == "alice.bsky.social"
     assert record.snapshot_id == 11
     assert record.human_label is True
+    assert record.production_action is None
+
+
+def test_optional_production_action_preserves_closed_legacy_contract() -> None:
+    payload = record_from_frozen_input(_frozen_input(20, author="alice.bsky.social")).model_dump()
+    payload.pop("production_action")
+    assert PopulationExportRecord.model_validate(payload).production_action is None
+    with pytest.raises(ValueError):
+        PopulationExportRecord.model_validate({**payload, "unknown": True})
+
+
+def test_held_constructor_does_not_relax_frozen_grade_validation() -> None:
+    item = _frozen_input(20, author="alice.bsky.social")
+    item = item.model_copy(
+        update={"grade": dataclasses.replace(item.grade, relevance_judgment=None)}
+    )
+    with pytest.raises(ValueError, match="no valid human label"):
+        record_from_frozen_input(item)
+    record = record_from_held_row(
+        {
+            "evaluation_id": 20,
+            "platform": "bluesky",
+            "channel": "research",
+            "url": "https://bsky.app/profile/alice.test/post/20",
+            "text": "held",
+            "parent_author_name": None,
+            "parent_text": None,
+            "author_name": "Alice",
+            "production_score": 0.7,
+            "production_decision": 1,
+            "production_action": "review",
+        }
+    )
+    assert (record.human_label, record.production_action) == (None, "review")
 
 
 def test_jsonl_is_stable_and_ordered_by_evaluation_id() -> None:
