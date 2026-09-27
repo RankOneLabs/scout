@@ -394,11 +394,14 @@ export interface Paginated<T> {
 
 // Filter types
 
+export type RouteAction = "respond" | "review" | "drop";
+
 export interface PostFilters {
   platform?: string;
   relevant?: boolean;
   score_min?: number;
   score_max?: number;
+  action?: RouteAction[];
   scan_id?: number;
   limit?: number;
   before_id?: number;
