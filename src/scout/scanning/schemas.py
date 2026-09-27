@@ -154,6 +154,7 @@ class ReplyCandidate(BaseModel):
     relevance_output: SerializeAsAny[RelevancePhaseOutput] | None = None
     relevance_classifier: str | None = None
     relevance_action: Literal["respond", "review", "drop"] | None = None
+    held: bool = False
 
     # Ordered, deduplicated evaluation_phase_runs ids of every phase this
     # pipeline run actually executed successfully before returning this

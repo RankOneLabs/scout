@@ -67,6 +67,7 @@ from scout.storage.migrations import (
 )
 from scout.storage.posts import PostStore
 from scout.storage.registry import RegistryStore
+from scout.storage.relevance_holdouts import RelevanceHoldoutStore
 from scout.storage.scans import CoverageFinalizationError as CoverageFinalizationError
 from scout.storage.scans import CoverageFinalizationResult as CoverageFinalizationResult
 from scout.storage.scans import CoverageOutcome as CoverageOutcome
@@ -193,6 +194,9 @@ class StateManager:
         self._artifacts = ArtifactStore(self._uow)
         self._accounts = AccountStore(self._uow)
         self._shadow_relevance = ShadowRelevanceStore(self._uow)
+        self._relevance_holdouts = RelevanceHoldoutStore(
+            self._uow, evaluations=self._evaluations
+        )
 
     @property
     def db(self) -> Db:
@@ -247,6 +251,11 @@ class StateManager:
     def shadow_relevance(self) -> ShadowRelevanceStore:
         """Non-gating typesafe shadow evaluation records."""
         return self._shadow_relevance
+
+    @property
+    def relevance_holdouts(self) -> RelevanceHoldoutStore:
+        """Held Jev decisions and their export/release lifecycle."""
+        return self._relevance_holdouts
 
     def record_account_snapshot(self, account: Account) -> bool:
         return self._accounts.record_account_snapshot(account)

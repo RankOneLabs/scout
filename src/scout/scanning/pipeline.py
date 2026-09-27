@@ -288,6 +288,27 @@ async def score_and_draft_step(
         )
     )
 
+    holdout_draw: Callable[[str, str | None, RelevanceAction], bool] | None = ctx.get(
+        "holdout_draw"
+    )
+    if holdout_draw is not None and holdout_draw(
+        "jev" if use_jev else "llm", project_key, relevance_action
+    ):
+        return Ok(
+            ReplyCandidate(
+                relevant=relevance_output.relevant,
+                score=relevance_output.score,
+                reason=relevance_output.reason,
+                relevant_to=relevance_output.relevant_to,
+                project_key=project_key,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
+                held=True,
+                contributor_phase_run_ids=tuple(contributor_ids),
+            )
+        )
+
     if not relevance_output.relevant:
         return Ok(
             ReplyCandidate(
