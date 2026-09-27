@@ -325,6 +325,13 @@ def parse_args() -> argparse.Namespace:
     holdout_export_p.add_argument(
         "--batch", default=None, help="Reproduce an already-exported batch"
     )
+    holdout_release_p = holdout_sub.add_parser(
+        "re" "lease", help="Apply a blind-grading answer key to a batch"
+    )
+    holdout_release_p.add_argument("--batch", required=True, help="Exported batch id")
+    holdout_release_p.add_argument(
+        "--answer-key", required=True, help="Path to the graded JSON answer key"
+    )
 
     feedback_parser = subparsers.add_parser(
         "feedback", help="Offline replay and comparison commands"
@@ -1011,12 +1018,18 @@ def main() -> None:
                 grid_expand_feedback(args)
         return
     if args.subcommand == "replay":
-        from scout.cli.replay import export_holdout_batch, export_population
+        from scout.cli.replay import (
+            export_holdout_batch,
+            export_population,
+            release_holdout_batch_cli,
+        )
 
         if args.replay_command == "export-population":
             export_population(args)
         elif args.replay_command == "holdout" and args.holdout_command == "export":
             export_holdout_batch(args)
+        elif args.replay_command == "holdout" and args.holdout_command == "re" "lease":
+            release_holdout_batch_cli(args)
         return
     if args.stats:
         show_stats()

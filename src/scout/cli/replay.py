@@ -63,6 +63,37 @@ def export_holdout_batch(args: argparse.Namespace) -> None:
     )
 
 
+def release_holdout_batch_cli(args: argparse.Namespace) -> None:
+    """Apply a complete blind-grading answer key to one exported batch."""
+    from scout.relevance.holdout_release import (
+        HoldoutReleaseError,
+        load_answer_key,
+        release_holdout_batch,
+    )
+
+    async def _run() -> None:
+        answers = load_answer_key(Path(args.answer_key))
+        async with replay_runtime(db_path=DB_PATH) as runtime:
+            result = await release_holdout_batch(
+                state=runtime.state,
+                tracer=runtime.tracer,
+                feedback=runtime.feedback,
+                batch_id=args.batch,
+                answers=answers,
+            )
+        print(
+            f"released {result.released} holdouts from batch {result.batch_id}; "
+            f"already released: {result.already_released}; "
+            f"actions: {dict(result.action_counts)}"
+        )
+
+    try:
+        asyncio.run(_run())
+    except (OSError, ValueError, HoldoutReleaseError) as exc:
+        print(f"error: could not release holdouts: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def positive_int(value: str) -> int:
     """argparse type for --phase-run-id: a positive integer only."""
     try:
@@ -604,6 +635,7 @@ __all__ = [
     "grid_expand_feedback",
     "batch_retry_feedback",
     "positive_int",
+    "release_holdout_batch_cli",
     "replay_feedback",
     "report_feedback",
 ]
