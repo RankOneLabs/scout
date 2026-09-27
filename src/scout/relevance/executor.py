@@ -10,6 +10,7 @@ from jig import AgentConfig, AgentResult, Span, SpanKind, Usage
 from jig.jev import JevClient, JevError, NoulAnswer, NoulQuestion
 from jig.jev.tracing import to_jig_usage
 
+import scout.config as _config
 from scout.relevance.loader import RelevanceCatalogue
 from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
 from scout.typesafe.routes import route
@@ -64,6 +65,14 @@ def _reason(line: str, exclusion: str | None) -> str:
     return f"{line}: {exclusion}" if line == "exclusion" and exclusion else line
 
 
+def _redact_api_key(value: str | None) -> str | None:
+    """Remove the configured provider credential from trace-facing strings."""
+    api_key = _config.TYPESAFE_API_KEY
+    if value is None or not api_key:
+        return value
+    return value.replace(api_key, "[REDACTED]")
+
+
 async def run_jev_relevance(
     config: AgentConfig[JevRelevanceOutput],
     input_text: str,
@@ -100,11 +109,14 @@ async def run_jev_relevance(
 
     try:
         result = await client.evaluate(jev_state, questions)
+        # Jig's SQLite and stdout tracers retain this mapping by reference and
+        # serialize it at flush. PhaseTracer deliberately requires that Jig
+        # behavior because its interface has no metadata-update operation.
         child_metadata.update(
             {
-                "call_id": result.call_id,
-                "provider_request_id": result.provider_request_id,
-                "model": result.model,
+                "call_id": _redact_api_key(result.call_id),
+                "provider_request_id": _redact_api_key(result.provider_request_id),
+                "model": _redact_api_key(result.model),
                 "latency_ms": result.latency_ms,
                 "attempts": result.attempts,
             }
@@ -155,22 +167,23 @@ async def run_jev_relevance(
             parsed=output,
         )
     except JevError as exc:
+        error_detail = _redact_api_key(str(exc)) or ""
         child_metadata.update(
             {
-                "call_id": exc.call_id,
-                "provider_request_id": exc.provider_request_id,
-                "model": client.model,
+                "call_id": _redact_api_key(exc.call_id),
+                "provider_request_id": _redact_api_key(exc.provider_request_id),
+                "model": _redact_api_key(client.model),
                 "latency_ms": exc.elapsed_ms,
                 "attempts": exc.attempts,
             }
         )
-        tracer.end_span(child.id, error=str(exc))
-        tracer.end_span(root.id, error=str(exc))
+        tracer.end_span(child.id, error=error_detail)
+        tracer.end_span(root.id, error=error_detail)
         await tracer.flush()
         raise JevRelevanceError(
             operation="relevance",
             message_id=message_id,
-            detail=str(exc),
+            detail=error_detail,
         ) from None
     except BaseException as exc:
         if child.ended_at is None:

@@ -23,6 +23,7 @@ from jig import (
 import scout.config as _config
 from scout.dossiers.resolver import DossierSummary
 from scout.errors import LLMError, ParseError
+from scout.relevance.binding import RelevancePostStateSource
 from scout.relevance.executor import PhaseTracer, run_jev_relevance
 from scout.relevance.models import (
     JEV_PROJECT_KEYS,
@@ -228,7 +229,7 @@ async def score_and_draft_step(
                     detail=f"Jev relevance context is missing project {project_key!r}",
                 )
             )
-        source: dict[str, object] = {
+        source: RelevancePostStateSource = {
             "platform": msg.platform,
             "channel_name": msg.channel_name,
             "url": msg.url,

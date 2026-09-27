@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -22,6 +23,7 @@ from jig import (
 from jig.feedback import NullFeedbackLoop
 from jig.jev import JevResult, JevUsage, NoulAnswer
 
+import scout.config as scout_config
 from scout.config import Account, Message
 from scout.relevance.executor import run_jev_relevance
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
@@ -158,10 +160,13 @@ def _executor(client: Any, catalogue: RelevanceCatalogue) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_jev_executor_writes_prescribed_trace_without_api_key(tmp_path) -> None:
+async def test_jev_executor_writes_prescribed_trace_without_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
     secret = "typesafe-secret-must-not-appear"
-    client = _JevStub(_result(), api_key=secret)
+    monkeypatch.setattr(scout_config, "TYPESAFE_API_KEY", secret)
+    client = _JevStub(replace(_result(), call_id=f"call-{secret}"), api_key=secret)
 
     result = await run_jev_relevance(
         _config(tracer),
@@ -184,7 +189,7 @@ async def test_jev_executor_writes_prescribed_trace_without_api_key(tmp_path) ->
         ("jev.call", SpanKind.PROVIDER_CALL)
     ]
     assert children[0].metadata == {
-        "call_id": "call-1",
+        "call_id": "call-[REDACTED]",
         "provider_request_id": "provider-1",
         "model": "jev-latest",
         "latency_ms": 12.5,
