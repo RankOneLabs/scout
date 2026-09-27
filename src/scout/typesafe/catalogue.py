@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
@@ -96,6 +96,9 @@ class Question(BaseModel):
 
 class CatalogueDocument(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+    format: Literal[
+        "scout.typesafe-catalogue/v1", "scout.typesafe-catalogue/v2"
+    ] = "scout.typesafe-catalogue/v1"
     id: str
     decide: str
     description: str
@@ -127,8 +130,12 @@ class Catalogue(BaseModel):
 
 
 def _canonical(document: CatalogueDocument) -> bytes:
+    if document.format == "scout.typesafe-catalogue/v1":
+        payload = document.model_dump(mode="json", exclude={"format"})
+    else:
+        payload = document.model_dump(mode="json")
     return json.dumps(
-        document.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
 
 
