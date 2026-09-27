@@ -87,6 +87,8 @@ from scout.platforms.discord import DiscordScanner
 from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
+from scout.relevance.models import JEV_PROJECT_KEYS
+from scout.relevance.setup import JevScanContext, setup_jev_scan
 from scout.result import Err, Ok
 from scout.scanning import coverage as coverage_lifecycle
 from scout.scanning import lease as lease_lifecycle
@@ -106,7 +108,12 @@ from scout.scanning.digest import (
 )
 from scout.scanning.pipeline import build_scout_pipeline
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
-from scout.scanning.schemas import ReplyCandidate, StructuredDraftOutput, unpack_candidate
+from scout.scanning.schemas import (
+    RelevancePhaseOutput,
+    ReplyCandidate,
+    StructuredDraftOutput,
+    unpack_candidate,
+)
 from scout.storage.state import (
     AUTHOR_RATE_EVALUATOR_VERSION,
     ScanStatus,
@@ -572,6 +579,9 @@ class OutcomeDecision:
     validated_text: str | None
     terminal_reason: str | None
     structured_draft: StructuredDraftOutput | None
+    relevance_output: RelevancePhaseOutput | None
+    relevance_classifier: str | None
+    relevance_action: Literal["respond", "review", "drop"] | None
     critique: CritiqueResult | None
     contributor_phase_run_ids: tuple[int, ...]
 
@@ -643,6 +653,9 @@ def classify_outcome(
             validated_text=validated_text,
             terminal_reason=terminal_reason,
             structured_draft=structured,
+            relevance_output=candidate.relevance_output,
+            relevance_classifier=candidate.relevance_classifier,
+            relevance_action=candidate.relevance_action,
             critique=critique,
             contributor_phase_run_ids=candidate.contributor_phase_run_ids,
         )
@@ -854,6 +867,7 @@ async def score_messages(
     dossier_summaries: dict[str, DossierSummary] | None = None,
     dossier_revision: str | None = None,
     lease_check: Callable[[], None] | None = None,
+    jev_context: JevScanContext | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
     """Score messages via Scout's phase pipeline, write digest incrementally.
 
@@ -1079,7 +1093,17 @@ async def score_messages(
             state=state,
             scan_id=scan_id,
             post_id=post_id,
-            relevance=phase_run_identity["relevance"],
+            relevance=PhaseRunIdentity(
+                snapshot_phase_id=phase_run_identity["relevance"].snapshot_phase_id,
+                model=(
+                    f"jev:{jev_context.client.model}"
+                    if _config.RELEVANCE_CLASSIFIER == "jev"
+                    and routed.keyword_route is not None
+                    and routed.keyword_route.project_key in JEV_PROJECT_KEYS
+                    and jev_context is not None
+                    else phase_run_identity["relevance"].model
+                ),
+            ),
             reply_draft=phase_run_identity["reply_draft"],
             critic=phase_run_identity["critic"],
         )
@@ -1111,6 +1135,7 @@ async def score_messages(
                     "phase_configs": phase_configs,
                     "dossier_summaries": _dossiers,
                     "execution_context": execution_context,
+                    "jev_context": jev_context,
                 },
             )
         except asyncio.CancelledError:
@@ -1248,6 +1273,9 @@ async def score_messages(
                 validated_text=None,
                 terminal_reason=None,
                 structured_draft=decision.structured_draft,
+                relevance_output=decision.relevance_output,
+                relevance_classifier=decision.relevance_classifier,
+                relevance_action=decision.relevance_action,
                 critique=decision.critique,
                 contributor_phase_run_ids=decision.contributor_phase_run_ids,
             )
@@ -1445,6 +1473,7 @@ async def main_loop(args: argparse.Namespace) -> None:
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
     feedback: SQLiteFeedbackLoop | None = None
+    jev_context: JevScanContext | None = None
     owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
         # Heartbeat renewals run on their own connection so they can never
@@ -1488,6 +1517,15 @@ async def main_loop(args: argparse.Namespace) -> None:
                 active_overflow = 0
                 try:
                     registry = state.load_runtime_registry()
+                    if _config.RELEVANCE_CLASSIFIER == "jev":
+                        setup_result = setup_jev_scan(registry)
+                        if isinstance(setup_result, Err):
+                            setup_error = setup_result.error
+                            raise RuntimeError(
+                                f"{setup_error.operation} failed for "
+                                f"{setup_error.entity!r}: {setup_error.detail}"
+                            )
+                        jev_context = setup_result.value
                     search_queries = build_search_queries(registry.keywords)
                     log_prompt_diagnostics(registry, mode_names)
 
@@ -1512,6 +1550,9 @@ async def main_loop(args: argparse.Namespace) -> None:
                             "Sleeping %d hours before retrying dossier readiness...",
                             SCAN_INTERVAL_HOURS,
                         )
+                        if jev_context is not None:
+                            await jev_context.client.aclose()
+                            jev_context = None
                         await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
                         continue
 
@@ -1928,6 +1969,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 dossier_summaries=_dossier_summaries,
                                 dossier_revision=_dossier_revision,
                                 lease_check=lease_handle.check,
+                                jev_context=jev_context,
                             )
 
                             for failure in processing_failures:
@@ -2048,10 +2090,16 @@ async def main_loop(args: argparse.Namespace) -> None:
                 if not args.continuous:
                     break
 
+                if jev_context is not None:
+                    await jev_context.client.aclose()
+                    jev_context = None
+
                 logger.info("Sleeping %d hours until next scan...", SCAN_INTERVAL_HOURS)
                 await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
 
         finally:
+            if jev_context is not None:
+                await jev_context.client.aclose()
             if feedback is not None:
                 await feedback.close()
             if tracer is not None:
