@@ -87,6 +87,7 @@ from scout.platforms.discord import DiscordScanner
 from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
+from scout.relevance.setup import JevScanContext, setup_jev_scan
 from scout.result import Err, Ok
 from scout.scanning import coverage as coverage_lifecycle
 from scout.scanning import lease as lease_lifecycle
@@ -1445,6 +1446,7 @@ async def main_loop(args: argparse.Namespace) -> None:
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
     feedback: SQLiteFeedbackLoop | None = None
+    jev_context: JevScanContext | None = None
     owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
         # Heartbeat renewals run on their own connection so they can never
@@ -1488,6 +1490,15 @@ async def main_loop(args: argparse.Namespace) -> None:
                 active_overflow = 0
                 try:
                     registry = state.load_runtime_registry()
+                    if _config.RELEVANCE_CLASSIFIER == "jev":
+                        setup_result = setup_jev_scan(registry)
+                        if isinstance(setup_result, Err):
+                            setup_error = setup_result.error
+                            raise RuntimeError(
+                                f"{setup_error.operation} failed for "
+                                f"{setup_error.entity!r}: {setup_error.detail}"
+                            )
+                        jev_context = setup_result.value
                     search_queries = build_search_queries(registry.keywords)
                     log_prompt_diagnostics(registry, mode_names)
 
@@ -2048,10 +2059,16 @@ async def main_loop(args: argparse.Namespace) -> None:
                 if not args.continuous:
                     break
 
+                if jev_context is not None:
+                    await jev_context.client.aclose()
+                    jev_context = None
+
                 logger.info("Sleeping %d hours until next scan...", SCAN_INTERVAL_HOURS)
                 await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
 
         finally:
+            if jev_context is not None:
+                await jev_context.client.aclose()
             if feedback is not None:
                 await feedback.close()
             if tracer is not None:
