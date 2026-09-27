@@ -19,7 +19,7 @@ ALLOWED_STATE_FIELDS = {
     "project": frozenset({"key", "name", "description", "link"}),
 }
 UNAVAILABLE_STATE_FIELDS = frozenset({"bio", "followers", "following", "posts"})
-REGISTERED_DECIDES = frozenset({"gate_v1", "account_annotation"})
+REGISTERED_DECIDES = frozenset({"gate_v1", "account_annotation", "agent_ops_route/v1"})
 
 
 class CatalogueError(ValueError):
