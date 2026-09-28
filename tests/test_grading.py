@@ -423,11 +423,12 @@ class TestGradeStorage:
     ) -> None:
         scan_id = in_memory_state.start_scan()
 
-        for i, (rel, action, dims, note) in enumerate([
-            ("correct", "accept", None, None),
-            ("correct", "accept", None, None),
-            ("correct", "fail", ["tone"], "bad tone"),
-            ("false_positive", "fail", ["contextual_understanding"], "missed ctx"),
+        for i, (rel, action, dims, note, classifier) in enumerate([
+            ("correct", "accept", None, None, "llm"),
+            ("correct", "accept", None, None, "llm"),
+            ("correct", "fail", ["tone"], "bad tone", "llm"),
+            ("false_positive", "fail", ["contextual_understanding"], "missed ctx", "llm"),
+            ("false_negative", "fail", ["usefulness"], "zero-shot should respond", "zeroshot"),
         ]):
             msg = Message(
                 platform="discord", platform_id=f"sig-{i}", channel_name="ch",
@@ -445,7 +446,8 @@ class TestGradeStorage:
                 reason="r", relevant_to=("a",),
             )
             eid = in_memory_state.save_evaluation(
-                result, pid, scan_id, relevance_classifier="llm", relevance_action=None
+                result, pid, scan_id, relevance_classifier=classifier,
+                relevance_action="review" if classifier == "zeroshot" else None,
             )
             in_memory_state.save_grade(GradeRecord(
                 post_id=pid, evaluation_id=eid, source="cli",
@@ -456,13 +458,59 @@ class TestGradeStorage:
                 context_missing_input="ctx" if "contextual_understanding" in (dims or []) else None,
             ))
 
-        in_memory_state.complete_scan(scan_id, 4, 3)
+        in_memory_state.complete_scan(scan_id, 5, 3)
         sig = in_memory_state.get_recent_grading_signals(limit_scans=1)
 
-        assert sig.total_graded == 4
+        assert sig.total_graded == 5
         assert sig.pass_count == 2
-        assert sig.fail_count == 2
+        assert sig.fail_count == 3
         assert sig.false_positive_count == 1
+        assert sig.false_negative_count == 0
+        assert ("usefulness", 1) in sig.dimension_counts
+        assert "zero-shot should respond" in sig.recent_causal_examples
+        rendered = format_grading_signals(sig)
+        assert "usefulness (1)" in rendered
+        assert "zero-shot should respond" in rendered
+
+    def test_zero_shot_only_signals_keep_failure_feedback(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        msg = Message(
+            platform="discord", platform_id="zero-only", channel_name="ch",
+            channel_id="c1", author=Account(
+                platform="discord", id="u1", name="a", handle=None,
+            ),
+            content="please respond", created_at=datetime.now(UTC),
+        )
+        post_id = in_memory_state.save_post(msg, scan_id)
+        evaluation_id = in_memory_state.save_evaluation(
+            RelevanceResult(
+                message=msg, relevant=False, score=0.0, reason="review",
+                relevant_to=(),
+            ),
+            post_id,
+            scan_id,
+            relevance_classifier="zeroshot",
+            relevance_action="review",
+        )
+        in_memory_state.save_grade(GradeRecord(
+            post_id=post_id, evaluation_id=evaluation_id, source="web",
+            graded_at=datetime.now(UTC), scan_id=scan_id,
+            relevance_judgment="false_negative", action_judgment="fail",
+            schema_version=3, needs_regrade=False, dimensions=["usefulness"],
+            failure_note="zero-shot should respond",
+        ))
+        in_memory_state.complete_scan(scan_id, 1, 0)
+
+        signal = in_memory_state.get_recent_grading_signals(limit_scans=1)
+        assert signal.total_graded == 1
+        assert signal.fail_count == 1
+        assert signal.false_negative_count == 0
+        assert format_grading_signals(signal) == (
+            "Recent reviews: 0 of 1 passed. Top failure dimensions: usefulness (1). "
+            "Recent failure notes: zero-shot should respond."
+        )
 
     def test_export_eval_cases_v2(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()

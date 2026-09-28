@@ -39,6 +39,23 @@ function makeDraft(overrides: Partial<DraftWithGrade> = {}): DraftWithGrade {
 }
 
 describe("DraftCard", () => {
+  it("renders the persisted zero-shot action badge", () => {
+    const { getByLabelText, queryByText } = render(
+      React.createElement(DraftCard, {
+        draft: makeDraft({
+          relevance_presentation: {
+            classifier: "zeroshot",
+            model: "zeroshot:jev-latest",
+            action: "review",
+            zeroshot: null,
+          },
+        }),
+      })
+    );
+    expect(getByLabelText("Zero-shot action: review")).toBeTruthy();
+    expect(queryByText("80%")).toBeNull();
+  });
+
   it("blocks the stable platform author identity", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true } as Response);
     vi.stubGlobal("fetch", fetchMock);

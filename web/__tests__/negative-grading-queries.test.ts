@@ -23,7 +23,8 @@ beforeAll(() => {
       id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL, relevant INTEGER NOT NULL,
       score REAL NOT NULL, reason TEXT, relevant_to TEXT, keyword_route_id INTEGER,
       scan_id INTEGER, surface_status TEXT, posture TEXT, project_key TEXT,
-      failure_reason TEXT, dossier_revision TEXT, dossier_summary_id TEXT
+      failure_reason TEXT, dossier_revision TEXT, dossier_summary_id TEXT,
+      relevance_classifier TEXT NOT NULL DEFAULT 'llm', relevance_action TEXT
     );
     CREATE TABLE draft_comments (
       id INTEGER PRIMARY KEY, post_id INTEGER, evaluation_id INTEGER, project_key TEXT,
@@ -59,6 +60,10 @@ beforeAll(() => {
       error_detail TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       completed_at TEXT
     );
+    CREATE TABLE relevance_holdouts (
+      id INTEGER PRIMARY KEY, evaluation_id INTEGER NOT NULL UNIQUE,
+      production_action TEXT NOT NULL, held INTEGER NOT NULL
+    );
     CREATE TABLE project_keywords (
       id INTEGER PRIMARY KEY, project_key TEXT NOT NULL, keyword TEXT NOT NULL,
       match_type TEXT, intent TEXT, positive_context TEXT, negative_context TEXT,
@@ -81,7 +86,7 @@ beforeAll(() => {
      VALUES (?, ?, ?, ?, ?, ?, 'not_relevant', 'agent-ops')`
   );
 
-  [1, 2, 3, 4, 5, 6, 7, 8].forEach((id) => {
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].forEach((id) => {
     insertPost.run(id, `message-${id}`, `author-${id}`, `post ${id}`, 100 + id);
   });
   insertEvaluation.run(1, 1, 0, 0.1, "skip one", 101); // queued
@@ -93,6 +98,29 @@ beforeAll(() => {
   insertEvaluation.run(7, 7, 0, 0.6, "skip seven", 107); // completed promotion: excluded
   insertEvaluation.run(8, 8, 0, 0.7, "critic rejected", 108); // not a relevance negative
   db.prepare("UPDATE evaluations SET surface_status = 'critic_rejected' WHERE id = 8").run();
+  insertEvaluation.run(9, 9, 0, 1, "review newest", 109);
+  insertEvaluation.run(10, 10, 0, 1, "review held", 110);
+  insertEvaluation.run(11, 11, 0, 1, "drop", 111);
+  insertEvaluation.run(12, 12, 0, 1, "human review", 112);
+  insertEvaluation.run(13, 13, 0, 1, "review graded", 113);
+  db.prepare(
+    "UPDATE evaluations SET relevance_classifier = ?, relevance_action = ? WHERE id = ?"
+  ).run("zeroshot", "review", 9);
+  db.prepare(
+    "UPDATE evaluations SET relevance_classifier = ?, relevance_action = ? WHERE id = ?"
+  ).run("zeroshot", "review", 10);
+  db.prepare(
+    "UPDATE evaluations SET relevance_classifier = ?, relevance_action = ? WHERE id = ?"
+  ).run("zeroshot", "drop", 11);
+  db.prepare(
+    "UPDATE evaluations SET relevance_classifier = ?, relevance_action = ? WHERE id = ?"
+  ).run("human", "review", 12);
+  db.prepare(
+    "UPDATE evaluations SET relevance_classifier = ?, relevance_action = ? WHERE id = ?"
+  ).run("zeroshot", "review", 13);
+  db.prepare(
+    "INSERT INTO relevance_holdouts VALUES (1, 10, 'review', 1)"
+  ).run();
 
   const insertGrade = db.prepare(
     `INSERT INTO grades
@@ -102,6 +130,8 @@ beforeAll(() => {
   );
   insertGrade.run(30, 3, 3, 103, 0);
   insertGrade.run(40, 4, 4, 104, 1);
+  insertGrade.run(130, 13, 13, 113, 0);
+  db.prepare("UPDATE grades SET schema_version = 3 WHERE id = 130").run();
   db.prepare(
     `INSERT INTO grades
        (id, evaluation_id, post_id, scan_id, source, graded_at, schema_version,
@@ -174,5 +204,41 @@ describe("GET /api/grading/negative-cases", () => {
       nextUrl: new URL("http://localhost/api/grading/negative-cases?before_id=0"),
     } as never);
     expect(invalid.status).toBe(400);
+  });
+});
+
+describe("zero-shot review grading queue", () => {
+  it("returns only ungraded, unheld review routes and paginates by evaluation id", async () => {
+    const { getZeroShotReviewCases } = await import("@/lib/queries");
+    expect(getZeroShotReviewCases({ limit: 1 })).toMatchObject({
+      data: [{ id: 9, held: false }],
+      has_more: false,
+    });
+    expect(getZeroShotReviewCases({ before_id: 9, limit: 2 }).data).toEqual([]);
+  });
+
+  it("exposes the queue through the grading route", async () => {
+    const { GET } = await import("@/app/api/grading/review-cases/route");
+    const response = await GET({
+      nextUrl: new URL("http://localhost/api/grading/review-cases?limit=10"),
+    } as never);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: [{ id: 9 }], has_more: false });
+  });
+
+  it("still reads review cases when the holdout table is absent", async () => {
+    const db = new Database(dbPath);
+    db.exec("DROP TABLE relevance_holdouts");
+    try {
+      const { getZeroShotReviewCases } = await import("@/lib/queries");
+      expect(getZeroShotReviewCases({ limit: 10 }).data.map((row) => row.id)).toEqual([10, 9]);
+    } finally {
+      db.exec(`CREATE TABLE relevance_holdouts (
+        id INTEGER PRIMARY KEY, evaluation_id INTEGER NOT NULL UNIQUE,
+        production_action TEXT NOT NULL, held INTEGER NOT NULL
+      )`);
+      db.prepare("INSERT INTO relevance_holdouts VALUES (1, 10, 'review', 1)").run();
+      db.close();
+    }
   });
 });

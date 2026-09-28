@@ -180,8 +180,9 @@ export interface ZeroShotRouteEvidence {
 }
 
 export interface RelevancePresentation {
-  classifier: "llm" | "zeroshot" | "unknown";
+  classifier: "llm" | "zeroshot" | "human";
   model: string;
+  action?: RouteAction | null;
   zeroshot: ZeroShotRouteEvidence | null;
 }
 
@@ -271,6 +272,7 @@ export interface ReviewEvaluation extends EvaluationWithRoute {
   critique: Critique | null;
   gate_violations: GateBlock[];
   grade: Grade | null;
+  held?: boolean;
   /** Omitted for pre-v47 databases; null when v47 exists but has no run. */
   shadow_relevance?: ShadowRelevanceRunRow | null;
 }

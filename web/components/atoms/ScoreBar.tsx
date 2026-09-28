@@ -9,19 +9,19 @@ type ScoreBarProps =
   | { value: number; max: number; label: string };
 
 export type ScoreBarSelection =
-  | { kind: "action"; action: RouteAction | null }
+  | { kind: "action"; action: RouteAction | null; classifier: "zeroshot" | "human" }
   | { kind: "score"; score: number }
-  | { kind: "unknown"; model: string }
   | { kind: "distance"; value: number; max: number; label: string };
 
 /** The one badge-versus-score selector used by every ScoreBar render site. */
 export function selectScoreBar(props: ScoreBarProps): ScoreBarSelection {
   if ("value" in props) return { kind: "distance", ...props };
-  if (props.relevancePresentation?.classifier === "zeroshot") {
-    return { kind: "action", action: props.relevancePresentation.zeroshot?.action ?? null };
-  }
-  if (props.relevancePresentation?.classifier === "unknown") {
-    return { kind: "unknown", model: props.relevancePresentation.model };
+  if (props.relevancePresentation?.classifier === "zeroshot" || props.relevancePresentation?.classifier === "human") {
+    return {
+      kind: "action",
+      action: props.relevancePresentation.action ?? props.relevancePresentation.zeroshot?.action ?? null,
+      classifier: props.relevancePresentation.classifier,
+    };
   }
   return { kind: "score", score: props.score };
 }
@@ -42,14 +42,12 @@ export function ScoreBar(props: ScoreBarProps) {
     const colors = selected.action
       ? ACTION_COLORS[selected.action]
       : "border-gray-300 bg-gray-100 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300";
-    return <span aria-label={`Zero-shot action: ${label}`} className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium uppercase ${colors}`}>{label}</span>;
+    const source = selected.classifier === "zeroshot" ? "Zero-shot" : "Human";
+    return <span aria-label={`${source} action: ${label}`} className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium uppercase ${colors}`}>{label}</span>;
   }
   if (selected.kind === "score") {
     const tier = classifyScore(selected.score);
     return <div className="flex items-center gap-2"><div className="h-1.5 w-16 rounded-full bg-gray-200 dark:bg-gray-800"><div className={`h-full rounded-full ${SCORE_COLORS[tier]}`} style={{ width: `${Math.round(selected.score * 100)}%` }} /></div><span className="text-xs text-gray-600 dark:text-gray-400">{Math.round(selected.score * 100)}%</span></div>;
-  }
-  if (selected.kind === "unknown") {
-    return <span aria-label={`Unknown relevance classifier: ${selected.model}`} className="inline-flex rounded-full border border-gray-300 bg-gray-100 px-2 py-0.5 text-xs font-medium uppercase text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">classifier unknown</span>;
   }
   const safeMax = Number.isFinite(selected.max) && selected.max > 0 ? selected.max : 1;
   const width = Math.max(0, Math.min(100, (Number.isFinite(selected.value) ? selected.value : 0) / safeMax * 100));

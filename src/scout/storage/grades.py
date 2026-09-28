@@ -1111,7 +1111,8 @@ class GradeStore:
         """Aggregate v2 grading signal from recent scans for prompt injection."""
         rows = self._conn.execute(
             "SELECT g.relevance_judgment, g.action_judgment, g.dimensions, "
-            "g.failure_note, g.factual_disposition, g.posture_should_have_been "
+            "g.failure_note, g.factual_disposition, g.posture_should_have_been, "
+            "e.relevance_classifier "
             "FROM grades g "
             "JOIN evaluations e ON e.id = g.evaluation_id "
             f"WHERE g.schema_version = {HUMAN_GRADE_SCHEMA_VERSION} AND g.needs_regrade = 0 "
@@ -1132,17 +1133,13 @@ class GradeStore:
         factual_contradicted = 0
         causal_examples: list[str] = []
 
+        relevance_rows = [r for r in rows if r["relevance_classifier"] == "llm"]
         for r in rows:
-            rel = r["relevance_judgment"]
             action = r["action_judgment"]
             if action == "accept":
                 pass_count += 1
             else:
                 fail_count += 1
-            if rel == "false_positive":
-                fp_count += 1
-            elif rel == "false_negative":
-                fn_count += 1
 
             if r["dimensions"]:
                 try:
@@ -1161,6 +1158,13 @@ class GradeStore:
 
             if r["failure_note"] and len(causal_examples) < 5:
                 causal_examples.append(str(r["failure_note"])[:120])
+
+        for r in relevance_rows:
+            rel = r["relevance_judgment"]
+            if rel == "false_positive":
+                fp_count += 1
+            elif rel == "false_negative":
+                fn_count += 1
 
         dim_sorted = tuple(
             sorted(dim_counts.items(), key=lambda x: x[1], reverse=True)

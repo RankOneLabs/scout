@@ -98,7 +98,7 @@ export function EvaluationCard({ evaluation, onGradeUpdate }: {
             {evaluation.grade.revision_count === 1 ? "revision" : "revisions"}
           </p>
         )}
-        <GradeControls postId={evaluation.post_id} scanId={evaluation.scan_id} evaluationId={evaluation.id} predictedRelevant={evaluation.relevant} existingGrade={evaluation.grade} draftComment={evaluation.draft?.comment_text} onGradeChange={(grade) => onGradeUpdate?.(evaluation.id, grade)} />
+        {!evaluation.held && <GradeControls postId={evaluation.post_id} scanId={evaluation.scan_id} evaluationId={evaluation.id} predictedRelevant={evaluation.relevant} existingGrade={evaluation.grade} draftComment={evaluation.draft?.comment_text} relevanceClassifier={evaluation.relevance_presentation?.classifier} relevanceAction={evaluation.relevance_presentation?.action} onGradeChange={(grade) => onGradeUpdate?.(evaluation.id, grade)} />}
       </div>}
     </div>}
   </div>;

@@ -9,6 +9,7 @@ import type {
   FailureDimension,
   Posture,
   RelevanceJudgment,
+  RouteAction,
 } from "@/types/schema";
 
 const DIMENSION_OPTIONS: { label: string; value: FailureDimension }[] = [
@@ -53,6 +54,8 @@ interface GradeControlsProps {
   onGradeChange?: (grade: Grade) => void;
   /** Queue review supplies an atomic grade/disposition writer; never promotes. */
   saveGrade?: (input: GradeInput) => Promise<Grade>;
+  relevanceClassifier?: "llm" | "zeroshot" | "human";
+  relevanceAction?: RouteAction | null;
 }
 
 function selectEditedText(
@@ -101,6 +104,8 @@ export function GradeControls({
   draftComment,
   onGradeChange,
   saveGrade,
+  relevanceClassifier,
+  relevanceAction,
 }: GradeControlsProps) {
   const correctedReplyId = useId();
   const [relevanceJudgment, setRelevanceJudgment] = useState<RelevanceJudgment | null>(
@@ -325,8 +330,11 @@ export function GradeControls({
     persistedEditedText: existingGrade?.edited_text,
     dimensions,
   });
+  const isZeroShotReview =
+    relevanceClassifier === "zeroshot" && relevanceAction === "review";
   const missingFailRequirements = [
     ...(dimensions.length === 0 ? ["select at least one issue"] : []),
+    ...(isZeroShotReview && !failureNote.trim() ? ["add a failure note"] : []),
     ...(!hasFailExplanation ? ["add a failure note, correct the reply, or add causal detail"] : []),
     ...(hasDim("contextual_understanding") && !contextMissingInput.trim()
       ? ["describe the missing context"]
@@ -358,7 +366,7 @@ export function GradeControls({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium uppercase text-gray-600 dark:text-gray-500">
-          Should this post have been surfaced?
+          {isZeroShotReview ? "Review routing decision" : "Should this post have been surfaced?"}
         </span>
         <div className="flex gap-2">
           <button
@@ -371,7 +379,7 @@ export function GradeControls({
                 : "border-gray-300 bg-white text-gray-600 hover:border-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:border-gray-600"
             }`}
           >
-            <Check className="h-3 w-3" /> Yes
+            <Check className="h-3 w-3" /> {isZeroShotReview ? "Respond" : "Yes"}
           </button>
           <button
             type="button"
@@ -383,7 +391,7 @@ export function GradeControls({
                 : "border-gray-300 bg-white text-gray-600 hover:border-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:border-gray-600"
             }`}
           >
-            <X className="h-3 w-3" /> No
+            <X className="h-3 w-3" /> {isZeroShotReview ? "Drop" : "No"}
           </button>
         </div>
         {saving && (

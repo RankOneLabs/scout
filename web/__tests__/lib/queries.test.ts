@@ -25,7 +25,8 @@ beforeAll(() => {
       id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL, relevant INTEGER NOT NULL,
       score REAL NOT NULL, reason TEXT, relevant_to TEXT, keyword_route_id INTEGER,
       scan_id INTEGER, surface_status TEXT, posture TEXT, project_key TEXT,
-      failure_reason TEXT, dossier_revision TEXT, dossier_summary_id TEXT
+      failure_reason TEXT, dossier_revision TEXT, dossier_summary_id TEXT,
+      relevance_classifier TEXT NOT NULL, relevance_action TEXT
     );
     CREATE TABLE evaluation_phase_runs (
       id INTEGER PRIMARY KEY, evaluation_id INTEGER, phase TEXT NOT NULL,
@@ -57,12 +58,13 @@ beforeAll(() => {
              (4, 'discord', 'zeroshot-bad-evidence', 'Dee', 'Zero-shot bad evidence', 8),
              (5, 'discord', 'unknown-classifier', 'Eli', 'Unknown classifier', 8);
     INSERT INTO evaluations
-      (id, post_id, relevant, score, reason, relevant_to, scan_id, surface_status)
-      VALUES (11, 1, 1, .8, 'llm low', '[]', 7, 'surfaced'),
-             (12, 2, 0, 1, 'needs_thread', '[]', 7, 'not_relevant'),
-             (13, 3, 1, .95, 'llm high', '[]', 7, 'surfaced'),
-             (14, 4, 0, 1, 'bad evidence', '[]', 8, 'not_relevant'),
-             (15, 5, 1, .99, 'unknown classifier', '[]', 8, 'surfaced');
+      (id, post_id, relevant, score, reason, relevant_to, scan_id, surface_status,
+       relevance_classifier, relevance_action)
+      VALUES (11, 1, 1, .8, 'llm low', '[]', 7, 'surfaced', 'llm', NULL),
+             (12, 2, 0, 1, 'needs_thread', '[]', 7, 'not_relevant', 'zeroshot', 'review'),
+             (13, 3, 1, .95, 'llm high', '[]', 7, 'surfaced', 'llm', NULL),
+             (14, 4, 0, 1, 'bad evidence', '[]', 8, 'not_relevant', 'zeroshot', 'drop'),
+             (15, 5, 1, .99, 'human classifier', '[]', 8, 'surfaced', 'human', 'respond');
     INSERT INTO evaluation_phase_runs
       (id, evaluation_id, phase, trace_id, model, status, created_at)
       VALUES (21, 11, 'relevance', 'trace-llm-low', 'openrouter/acme/model', 'complete', '2026-09-01T00:00:00Z'),
@@ -136,15 +138,15 @@ describe("mixed zero-shot and LLM query presentation", () => {
           feature_probabilities: {},
         },
       },
-    })).toEqual({ kind: "action", action: "review" });
+    })).toEqual({ kind: "action", action: "review", classifier: "zeroshot" });
     expect(selectScoreBar({
       score: 0.8,
       relevancePresentation: { classifier: "llm", model: "openrouter/acme/model", zeroshot: null },
     })).toEqual({ kind: "score", score: 0.8 });
     expect(selectScoreBar({
       score: 0.99,
-      relevancePresentation: { classifier: "unknown", model: "mystery", zeroshot: null },
-    })).toEqual({ kind: "unknown", model: "mystery" });
+      relevancePresentation: { classifier: "human", model: "human", action: "respond", zeroshot: null },
+    })).toEqual({ kind: "action", action: "respond", classifier: "human" });
     expect(selectScoreBar({ value: 2, max: 8, label: "distance" })).toEqual({
       kind: "distance", value: 2, max: 8, label: "distance",
     });
@@ -156,6 +158,7 @@ describe("mixed zero-shot and LLM query presentation", () => {
     expect(getRelevancePresentations([11, 12]).get(12)).toEqual({
       classifier: "zeroshot",
       model: "zeroshot:jev-latest",
+      action: "review",
       zeroshot: {
         action: "review",
         line: "needs_thread",
@@ -182,11 +185,13 @@ describe("mixed zero-shot and LLM query presentation", () => {
     expect(getRelevancePresentations([14]).get(14)).toEqual({
       classifier: "zeroshot",
       model: "zeroshot:jev-latest",
+      action: "drop",
       zeroshot: null,
     });
     expect(getRelevancePresentations([15]).get(15)).toEqual({
-      classifier: "unknown",
+      classifier: "human",
       model: "mystery",
+      action: "respond",
       zeroshot: null,
     });
   });
@@ -205,7 +210,7 @@ describe("mixed zero-shot and LLM query presentation", () => {
     expect(getPosts({ scan_id: 7, action: ["review"] }).data.map((post) => post.id)).toEqual([3, 2, 1]);
   });
 
-  it("does not apply classifier-specific filters or score ordering to unknown identities", async () => {
+  it("renders human actions and excludes them from LLM score filtering", async () => {
     const { getEvaluationsByScan, getPosts } = await import("@/lib/queries");
 
     expect(getPosts({ scan_id: 8, score_min: 1 }).data.map((post) => post.id)).toEqual([5, 4]);
@@ -213,7 +218,7 @@ describe("mixed zero-shot and LLM query presentation", () => {
     expect(getEvaluationsByScan(8).map((evaluation) => evaluation.id)).toEqual([14, 15]);
   });
 
-  it("continues through bounded batches until a filtered page has a lookahead row", async () => {
+  it("returns a filtered page and lookahead from one query", async () => {
     const { getPosts } = await import("@/lib/queries");
 
     expect(getPosts({ scan_id: 7, action: ["respond"], limit: 1 })).toMatchObject({
@@ -225,6 +230,6 @@ describe("mixed zero-shot and LLM query presentation", () => {
   it("orders LLM rows by score without using zero-shot's constant score", async () => {
     const { getEvaluationsByScan } = await import("@/lib/queries");
 
-    expect(getEvaluationsByScan(7).map((evaluation) => evaluation.id)).toEqual([13, 11, 12]);
+    expect(getEvaluationsByScan(7).map((evaluation) => evaluation.id)).toEqual([12, 13, 11]);
   });
 });
