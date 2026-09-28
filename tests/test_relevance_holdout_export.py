@@ -144,13 +144,14 @@ def test_failed_file_write_does_not_mark_rows_exported(tmp_path: Path) -> None:
         assert tuple(row) == (None, None)
 
 
-def test_failed_file_replace_leaves_the_previous_manifest_in_place(
+def test_failed_publish_restores_the_previous_batch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with StateManager(db_path=":memory:") as state:
         _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="respond")
         export_holdouts(state, tmp_path)
-        previous_manifest = (tmp_path / "batch.json").read_bytes()
+        previous = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+        _seed_holdout(state, evaluation_id=12, project_key="agent-ops", action="drop")
         _seed_holdout(state, evaluation_id=22, project_key="zeta-ops", action="drop")
 
         real_replace = holdout_export.os.replace
@@ -164,7 +165,7 @@ def test_failed_file_replace_leaves_the_previous_manifest_in_place(
         with pytest.raises(OSError, match="simulated replace failure"):
             export_holdouts(state, tmp_path)
 
-        assert (tmp_path / "batch.json").read_bytes() == previous_manifest
+        assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == previous
 
 
 def test_export_record_rebuilds_the_live_declared_state(tmp_path: Path) -> None:

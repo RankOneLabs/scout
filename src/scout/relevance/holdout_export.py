@@ -58,7 +58,7 @@ _MANIFEST_NAME = "batch.json"
 
 
 def _publication_order(name: str) -> tuple[bool, str]:
-    """Replace the manifest last, so it changes only after every file it lists has."""
+    """Replace the manifest last, so a reader never sees it before its files."""
     return (name == _MANIFEST_NAME, name)
 
 
@@ -75,12 +75,39 @@ def _write_files(output_dir: Path, payloads: dict[str, bytes]) -> tuple[Path, ..
                 handle.flush()
                 os.fsync(handle.fileno())
             staged.append((temporary_path, output_dir / name))
-        for temporary_path, destination in staged:
-            os.replace(temporary_path, destination)
+        _publish(staged)
         return tuple(destination for _, destination in staged)
     finally:
         for temporary_path, _ in staged:
             temporary_path.unlink(missing_ok=True)
+
+
+def _publish(staged: list[tuple[Path, Path]]) -> None:
+    """Replace every destination, or restore the ones already replaced.
+
+    Each existing destination is hard-linked aside before it is replaced, so a
+    failure part-way puts the previous batch's files back under its manifest.
+    """
+    published: list[tuple[Path, Path | None]] = []
+    try:
+        for temporary_path, destination in staged:
+            previous: Path | None = None
+            if destination.exists():
+                previous = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.previous")
+                os.link(destination, previous)
+            published.append((destination, previous))
+            os.replace(temporary_path, destination)
+    except BaseException:
+        for destination, previous in reversed(published):
+            if previous is None:
+                destination.unlink(missing_ok=True)
+            else:
+                os.replace(previous, destination)
+        raise
+    # Only a complete publish discards the backups; a failed restore leaves them.
+    for _, previous in published:
+        if previous is not None:
+            previous.unlink(missing_ok=True)
 
 
 def export_holdouts(
