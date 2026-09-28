@@ -6,6 +6,7 @@ import { useNegativeGradingCases } from "@/hooks/use-negative-grading-cases";
 import { useReviewGradingCases } from "@/hooks/use-review-grading-cases";
 import { DraftList } from "@/components/organisms/DraftList";
 import { NegativeCaseList } from "@/components/organisms/NegativeCaseList";
+import { EvaluationCard } from "@/components/organisms/EvaluationCard";
 import { overlayGradesByEvaluation } from "@/lib/grade-overlay";
 import type { DraftWithGrade, Grade } from "@/types/schema";
 
@@ -140,7 +141,17 @@ function ReviewCaseGradingSection() {
   }
   return <div className="space-y-6">
     {error && <div className="rounded-lg border border-red-300 bg-red-100 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">Failed to load review queue: {error}</div>}
-    <NegativeCaseList evaluations={visibleEvaluations} reviewedThisSession={reviewedIds.size} onGradeUpdate={handleGradeUpdate} hasMore={hasMore} onLoadMore={loadMore} isLoadingMore={isLoadingMore} variant="review" />
+    <div className="space-y-4">
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
+        <h2 className="text-sm font-medium text-gray-800 dark:text-gray-200">Zero-shot review queue</h2>
+        <p className="mt-1 text-xs text-gray-600 dark:text-gray-500">Recent review routes appear first. Drop confirms the route; Respond records a false negative and generates a response draft.</p>
+        {reviewedIds.size > 0 && <p className="mt-2 text-xs text-green-600 dark:text-green-400">Reviewed this session: {reviewedIds.size}</p>}
+      </div>
+      {visibleEvaluations.length === 0
+        ? <p className="py-8 text-center text-sm text-gray-600 dark:text-gray-500">No zero-shot review cases are waiting.</p>
+        : <div className="space-y-3">{visibleEvaluations.map((evaluation) => <EvaluationCard key={evaluation.id} evaluation={evaluation} onGradeUpdate={handleGradeUpdate} />)}</div>}
+      {hasMore && <button type="button" onClick={loadMore} disabled={isLoadingMore} className="w-full rounded-lg border border-gray-300 py-2 text-sm text-gray-600 transition-colors hover:border-gray-500 hover:text-gray-800 disabled:opacity-50 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200">{isLoadingMore ? "Loading..." : "Load more"}</button>}
+    </div>
   </div>;
 }
 
