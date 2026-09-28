@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import logging
+import signal
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -726,6 +727,47 @@ def paa_list(args: argparse.Namespace) -> None:
     _print_paa_json({"motions": [m.to_json_dict() for m in motions]})
 
 
+def run_scan_loop(args: argparse.Namespace) -> None:
+    """Run the scan loop so SIGTERM stops it through its cleanup.
+
+    `docker stop` sends SIGTERM. The worker runs as the container's PID 1, where
+    an unhandled SIGTERM is ignored until Docker SIGKILLs it, which skips
+    main_loop's `finally` and leaves the environment lease held for its TTL; the
+    next worker then exits on the held lease until it expires. Cancelling the
+    main task instead runs that `finally`, which releases the lease.
+    """
+    terminated = False
+
+    async def _run() -> None:
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("scan loop must run inside a task")
+        cancel_scan_loop = task.cancel
+
+        def _on_sigterm() -> None:
+            # Cancel once. A repeated SIGTERM would land a second cancellation
+            # on one of the cleanup's awaits and skip the lease release.
+            nonlocal terminated
+            if terminated:
+                return
+            terminated = True
+            cancel_scan_loop()
+
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+        try:
+            await main_loop(args)
+        finally:
+            loop.remove_signal_handler(signal.SIGTERM)
+
+    try:
+        asyncio.run(_run())
+    except asyncio.CancelledError:
+        if not terminated:
+            raise
+        logger.info("Scan loop stopped on SIGTERM")
+
+
 def main() -> None:
     args = parse_args()
     setup_logging(debug=args.debug)
@@ -1043,7 +1085,7 @@ def main() -> None:
     elif args.review is not None:
         review(args)
     else:
-        asyncio.run(main_loop(args))
+        run_scan_loop(args)
 
 
 if __name__ == "__main__":
