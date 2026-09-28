@@ -168,6 +168,30 @@ def test_failed_publish_restores_the_previous_batch(
         assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == previous
 
 
+def test_backup_cleanup_failure_still_marks_the_published_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with StateManager(db_path=":memory:") as state:
+        _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="respond")
+        export_holdouts(state, tmp_path)
+        _seed_holdout(state, evaluation_id=12, project_key="agent-ops", action="drop")
+
+        real_unlink = Path.unlink
+
+        def refuse_backups(path: Path, missing_ok: bool = False) -> None:
+            if path.name.endswith(".previous"):
+                raise OSError("simulated cleanup failure")
+            real_unlink(path, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", refuse_backups)
+        result = export_holdouts(state, tmp_path)
+
+        batch_id = state.conn.execute(
+            "SELECT batch_id FROM relevance_holdouts WHERE evaluation_id = 12"
+        ).fetchone()[0]
+        assert batch_id == result.batch_id
+
+
 def test_export_record_rebuilds_the_live_declared_state(tmp_path: Path) -> None:
     declared = {
         "post": ("platform", "channel", "url", "text"),

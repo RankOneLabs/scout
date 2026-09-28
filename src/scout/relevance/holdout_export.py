@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import tempfile
@@ -19,6 +20,8 @@ from scout.replay.population_export import (
     render_population_jsonl,
 )
 from scout.storage.state import StateManager
+
+logger = logging.getLogger(__name__)
 
 _SAFE_PROJECT_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -105,9 +108,15 @@ def _publish(staged: list[tuple[Path, Path]]) -> None:
                 os.replace(previous, destination)
         raise
     # Only a complete publish discards the backups; a failed restore leaves them.
+    # The batch is already published here, so a backup that will not delete is
+    # a stray hidden file to report, not an export failure.
     for _, previous in published:
-        if previous is not None:
+        if previous is None:
+            continue
+        try:
             previous.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("could not remove holdout export backup %s: %s", previous, exc)
 
 
 def export_holdouts(
