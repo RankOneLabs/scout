@@ -974,8 +974,9 @@ class EvaluationStore:
         failure_reason: str | None = None,
         dossier_revision: str | None = None,
         dossier_summary_id: str | None = None,
-        relevance_classifier: EvaluationClassifier = "llm",
-        relevance_action: EvaluationAction | None = None,
+        *,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         """Save a terminal relevance evaluation outside a surfaced unit."""
         if surface_status not in SURFACE_STATUSES:
@@ -1029,8 +1030,8 @@ class EvaluationStore:
         critique: tuple[str, str] | None = None,
         gate_violations: Iterable[object] | None = None,
         allow_response_only_phase_runs: bool = False,
-        relevance_classifier: EvaluationClassifier = "llm",
-        relevance_action: EvaluationAction | None = None,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         """Persist a no-draft terminal outcome and its durable evidence.
 
@@ -1058,7 +1059,8 @@ class EvaluationStore:
             evaluation_id = self.save_evaluation(
                 result, post_id, scan_id, keyword_route_id, project_key, posture,
                 surface_status, failure_reason, dossier_revision, dossier_summary_id,
-                relevance_classifier, relevance_action,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
             )
             self._link_phase_run_contributors(
                 evaluation_id=evaluation_id,
@@ -1097,8 +1099,8 @@ class EvaluationStore:
         surfaced_at: str | None = None,
         fail_at: str | None = None,
         allow_response_only_phase_runs: bool = False,
-        relevance_classifier: EvaluationClassifier = "llm",
-        relevance_action: EvaluationAction | None = None,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> tuple[int, int, int]:
         """Atomically write exactly one surfaced evaluation, draft, and event.
 
@@ -1145,7 +1147,8 @@ class EvaluationStore:
                 evaluation_id = self.save_evaluation(
                     result, post_id, scan_id, keyword_route_id, project_key, posture,
                     "gate_blocked", None, dossier_revision, dossier_summary_id,
-                    relevance_classifier, relevance_action,
+                    relevance_classifier=relevance_classifier,
+                    relevance_action=relevance_action,
                 )
                 self._link_phase_run_contributors(
                     evaluation_id=evaluation_id,
@@ -1174,7 +1177,8 @@ class EvaluationStore:
                 evaluation_id = self.save_evaluation(
                     result, post_id, scan_id, keyword_route_id, project_key, posture,
                     "surfaced", None, dossier_revision, dossier_summary_id,
-                    relevance_classifier, relevance_action,
+                    relevance_classifier=relevance_classifier,
+                    relevance_action=relevance_action,
                 )
                 self._link_phase_run_contributors(
                     evaluation_id=evaluation_id,

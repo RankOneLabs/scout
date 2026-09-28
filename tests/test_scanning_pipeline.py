@@ -32,7 +32,7 @@ from scout.result import Ok
 from scout.scanning.agent import PhaseRunIdentity, ScoutExecutionContext
 from scout.scanning.pipeline import PhaseExecution, score_and_draft_step
 from scout.scanning.prefilter import RoutedMessage
-from scout.scanning.runner import classify_outcome
+from scout.scanning.runner import PersistenceContext, classify_outcome, persist_outcome
 from scout.scanning.schemas import RelevancePhaseOutput
 from scout.storage.state import StateManager
 from scout.typesafe.routes import route
@@ -320,6 +320,25 @@ async def test_zeroshot_dispatch_projects_state_and_returns_real_candidate(
     assert result.value.relevance_classifier == "zeroshot"
     assert result.value.score == 1.0
     assert result.value.structured_draft is None
+    decision = classify_outcome(result.value, message, {})
+    evaluation_id = persist_outcome(
+        state,
+        decision,
+        PersistenceContext(
+            post_id=post_id,
+            scan_id=scan_id,
+            keyword_route_id=None,
+            dossier_revision=None,
+            dossier_summary_id=None,
+            surfaced_at=None,
+        ),
+    )
+    stored = state.get_evaluation(evaluation_id)
+    assert stored is not None
+    assert (stored["relevance_classifier"], stored["relevance_action"]) == (
+        "zeroshot",
+        "review",
+    )
     assert client.state == {
         "post": {
             "platform": "bluesky",

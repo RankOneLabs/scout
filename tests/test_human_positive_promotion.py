@@ -35,6 +35,9 @@ def _source(state: StateManager) -> tuple[int, int, int, Message]:
         ),
         post_id,
         scan_id,
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     return scan_id, post_id, source_id, message
 
@@ -83,6 +86,8 @@ def test_promotion_claim_is_durable_retryable_and_idempotent(tmp_path) -> None:
             target_scan_id,
             project_key="gateway",
             surface_status="surfaced",
+            relevance_classifier="human",
+            relevance_action="respond",
         )
         with state.db.begin_immediate():
             state.complete_human_positive_promotion(
@@ -95,6 +100,12 @@ def test_promotion_claim_is_durable_retryable_and_idempotent(tmp_path) -> None:
         assert completed["status"] == "completed"
         assert completed["target_evaluation_id"] == target_id
         assert completed["source_evaluation_id"] != completed["target_evaluation_id"]
+        target = state.get_evaluation(target_id)
+        assert target is not None
+        assert (target["relevance_classifier"], target["relevance_action"]) == (
+            "human",
+            "respond",
+        )
 
 
 def test_response_only_phase_sequence_can_own_promoted_draft(tmp_path) -> None:
@@ -139,6 +150,8 @@ def test_response_only_phase_sequence_can_own_promoted_draft(tmp_path) -> None:
             structured_output="{}",
             contributor_phase_run_ids=(reply_run_id, critic_run_id),
             allow_response_only_phase_runs=True,
+            relevance_classifier="human",
+            relevance_action="respond",
         )
 
         assert state.get_phase_run(reply_run_id)["evaluation_id"] == evaluation_id

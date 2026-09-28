@@ -272,6 +272,9 @@ async def _seed_reply_draft_correction(
         contributor_phase_run_ids=[phase_run_id],
         dossier_revision=dossier_revision, dossier_summary_id=dossier_summary_id,
         allow_response_only_phase_runs=True,
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     if link_reply_revision:
         assert correction_text is not None

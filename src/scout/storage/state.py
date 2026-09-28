@@ -863,13 +863,15 @@ class StateManager:
         failure_reason: str | None = None,
         dossier_revision: str | None = None,
         dossier_summary_id: str | None = None,
-        relevance_classifier: EvaluationClassifier = "llm",
-        relevance_action: EvaluationAction | None = None,
+        *,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         return self._evaluations.save_evaluation(
             result, post_id, scan_id, keyword_route_id, project_key, posture,
             surface_status, failure_reason, dossier_revision, dossier_summary_id,
-            relevance_classifier, relevance_action,
+            relevance_classifier=relevance_classifier,
+            relevance_action=relevance_action,
         )
 
     def persist_terminal_outcome(
@@ -889,8 +891,8 @@ class StateManager:
         critique: tuple[str, str] | None = None,
         gate_violations: Iterable[object] | None = None,
         allow_response_only_phase_runs: bool = False,
-        relevance_classifier: EvaluationClassifier = "llm",
-        relevance_action: EvaluationAction | None = None,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         return self._evaluations.persist_terminal_outcome(
             result,
@@ -931,8 +933,8 @@ class StateManager:
         surfaced_at: str | None = None,
         fail_at: str | None = None,
         allow_response_only_phase_runs: bool = False,
-        relevance_classifier: EvaluationClassifier = "llm",
-        relevance_action: EvaluationAction | None = None,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> tuple[int, int, int]:
         return self._evaluations.persist_surfaced_outcome(
             result,

@@ -174,7 +174,7 @@ class TestLoadUnevaluatedPosts:
             reason="not relevant",
             relevant_to=(),
         )
-        in_memory_state.save_evaluation(result, post_id, scan_id)
+        in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
 
         loaded = in_memory_state.load_unevaluated_posts(scan_id=scan_id)
         assert len(loaded) == 0
@@ -206,7 +206,7 @@ class TestLoadUnevaluatedPosts:
             reason="not relevant",
             relevant_to=(),
         )
-        in_memory_state.save_evaluation(result, post_id, recovery_scan_id)
+        in_memory_state.save_evaluation(result, post_id, recovery_scan_id, relevance_classifier="llm", relevance_action=None)
 
         loaded = in_memory_state.load_unevaluated_posts(scan_id=source_scan_id)
 
@@ -237,7 +237,7 @@ class TestLoadUnevaluatedPosts:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        in_memory_state.save_evaluation(result, post_id, scan_id)
+        in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
 
         unevaluated_msg = Message(
             platform="discord",
@@ -283,7 +283,7 @@ class TestLoadUnevaluatedPosts:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        in_memory_state.save_evaluation(result, post_id, scan1)
+        in_memory_state.save_evaluation(result, post_id, scan1, relevance_classifier="llm", relevance_action=None)
 
         scan2 = in_memory_state.start_scan()
         msg2 = Message(

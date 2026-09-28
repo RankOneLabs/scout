@@ -267,7 +267,7 @@ def _build_pre26_db_with_grades(db_path: str) -> tuple[int, int]:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         linked_id = state.save_grade(
             GradeRecord(
                 post_id=post_id,
@@ -378,7 +378,7 @@ class TestGradeUpsertConcurrency:
                 reason="relevant",
                 relevant_to=("gateway",),
             )
-            eval_id = seed.save_evaluation(result, post_id, scan_id)
+            eval_id = seed.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
             seed.commit()
         return scan_id, post_id, eval_id
 
@@ -746,7 +746,7 @@ class TestMigration26GradeRevisionsAndUsageOverrides:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         grade_id = in_memory_state.save_grade(
             GradeRecord(
                 post_id=post_id,
@@ -803,7 +803,7 @@ class TestGradeRevisionsWritePath:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         return scan_id, post_id, eval_id
 
     def test_save_grade_creates_revision_one(self, in_memory_state: StateManager) -> None:
@@ -1046,7 +1046,7 @@ class TestGradeRevisionsWritePath:
                 reason="relevant",
                 relevant_to=("gateway",),
             )
-            eval_id = seed.save_evaluation(result, post_id, scan_id)
+            eval_id = seed.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
             seed.commit()
 
         with StateManager(db_path=db_path) as state:
@@ -1117,7 +1117,7 @@ class TestGradeRevisionsWritePath:
                 reason="relevant",
                 relevant_to=("gateway",),
             )
-            eval_id = seed.save_evaluation(result, post_id, scan_id)
+            eval_id = seed.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
             seed.commit()
 
         errors: list[BaseException] = []
@@ -1193,7 +1193,7 @@ class TestGradeRevisionConvergenceRepair:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         return scan_id, post_id, eval_id
 
     def test_already_converged_grade_writes_nothing(self, in_memory_state: StateManager) -> None:
@@ -1433,7 +1433,7 @@ class TestGradeUsageOverrides:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         return state.save_grade(
             GradeRecord(
                 post_id=post_id,
@@ -1515,7 +1515,7 @@ class TestGradeUsageOverrides:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         assert in_memory_state.get_grade_id_for_evaluation(eval_id) is None
 
         grade_id = in_memory_state.save_grade(
@@ -1560,7 +1560,7 @@ class TestMigration34ReplyDraftRevisions:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         draft_id = state.save_draft(
             post_id=post_id,
             evaluation_id=eval_id,
@@ -1793,7 +1793,7 @@ class TestSaveGradeReplyRevisionLifecycle:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         draft_id = state.save_draft(
             post_id=post_id,
             evaluation_id=eval_id,
@@ -1982,7 +1982,7 @@ class TestSaveGradeReplyRevisionLifecycle:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
 
         with pytest.raises(GradeValidationError):
             in_memory_state.save_grade(
@@ -2132,7 +2132,7 @@ class TestEvaluationIdentityGating:
             reason="original scan",
             relevant_to=("gateway",),
         )
-        eval1_id = state.save_evaluation(result1, post_id, scan1)
+        eval1_id = state.save_evaluation(result1, post_id, scan1, relevance_classifier="llm", relevance_action=None)
         draft1_id = state.save_draft(post_id, eval1_id, "gateway", "Draft from scan1", scan1)
         state.complete_scan(scan1, 1, 1)
 
@@ -2144,7 +2144,7 @@ class TestEvaluationIdentityGating:
             reason="rescore",
             relevant_to=("gateway",),
         )
-        eval2_id = state.save_evaluation(result2, post_id, scan2)
+        eval2_id = state.save_evaluation(result2, post_id, scan2, relevance_classifier="llm", relevance_action=None)
         draft2_id = state.save_draft(post_id, eval2_id, "gateway", "Draft from scan2", scan2)
         state.complete_scan(scan2, 1, 1)
 

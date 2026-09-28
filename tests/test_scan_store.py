@@ -111,7 +111,7 @@ class TestScanStats:
             reason="test",
             relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
         in_memory_state.save_draft(
             post_id,
             eval_id,

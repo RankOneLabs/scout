@@ -2196,6 +2196,10 @@ def _assert_t001_surfaced_outcome(
     assert eval_row["project_key"] == _T001_PROJECT_KEY
     assert eval_row["dossier_revision"] == "rev-1"
     assert eval_row["dossier_summary_id"] == "gw-dossier"
+    assert (eval_row["relevance_classifier"], eval_row["relevance_action"]) == (
+        "llm",
+        None,
+    )
 
     draft_rows = state.conn.execute(
         "SELECT * FROM draft_comments WHERE evaluation_id = ?", (evaluation_id,)
@@ -2822,6 +2826,9 @@ def test_t001_surfaced_persist_rollback_matrix(
                 dossier_summary_id="gw-dossier",
                 surfaced_at=target_msg.created_at.isoformat(),
                 fail_at=fail_at,
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
 
         # The post itself survives — it is a retry candidate, never rolled
@@ -3136,6 +3143,9 @@ async def test_t002_v2_grading_signals_propagate_into_all_phase_prompts(
                 result, post_id, prior_scan_id,
                 project_key="gw", posture=posture,
                 surface_status="surfaced",
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
             state.save_grade(
                 GradeRecord(
@@ -3376,6 +3386,9 @@ def _seed_adversarial_fixture_grades(state: StateManager, *, scan_id: int) -> di
         evaluation_id = state.save_evaluation(
             result, post_id, scan_id, project_key=eval_project_key, posture="answer",
             surface_status="surfaced" if relevant else "not_relevant",
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
 
         if kind == "shared_contract_invalid":
