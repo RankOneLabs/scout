@@ -394,6 +394,7 @@ async def _release_one(
                     "dossier_summaries": flow.dossiers,
                     "execution_context": flow.execution,
                     "relevance_output": relevance,
+                    "relevance_action": action,
                 }
             )
             if isinstance(phase_result, Err):

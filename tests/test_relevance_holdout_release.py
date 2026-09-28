@@ -208,6 +208,7 @@ async def test_positive_release_runs_draft_classify_and_persist(
 
     async def draft(context):
         relevance = context["relevance_output"]
+        assert context["relevance_action"] == release_action
         assert relevance.reason == (
             f"Blind-grading answer key released held evaluation #11 "
             f"for project 'agent-ops' with action {release_action}."
@@ -221,7 +222,7 @@ async def test_positive_release_runs_draft_classify_and_persist(
                 relevant_to=["agent-ops"],
                 project_key="agent-ops",
                 relevance_classifier="human",
-                relevance_action="respond",
+                relevance_action=context["relevance_action"],
             )
         )
 
@@ -229,6 +230,7 @@ async def test_positive_release_runs_draft_classify_and_persist(
     classify_mock = Mock(wraps=release.classify_outcome)
 
     def persist(state, decision, context):
+        assert decision.relevance_action == release_action
         return state.save_evaluation(
             decision.evaluation,
             context.post_id,

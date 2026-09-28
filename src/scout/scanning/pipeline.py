@@ -355,6 +355,7 @@ async def draft_and_critic_step(
     dossier_summaries: Mapping[str, DossierSummary] = ctx.get("dossier_summaries", {})
     execution: ScoutExecutionContext = ctx["execution_context"]
     relevance_output: RelevancePhaseOutput = ctx["relevance_output"]
+    relevance_action = cast(RelevanceAction, ctx.get("relevance_action", "respond"))
     if not relevance_output.relevant:
         raise ValueError("draft_and_critic_step requires a relevant human override")
 
@@ -378,7 +379,7 @@ async def draft_and_critic_step(
         execution=execution,
         relevance_output=relevance_output,
         relevance_classifier="human",
-        relevance_action="respond",
+        relevance_action=relevance_action,
         contributor_ids=[],
     )
 
