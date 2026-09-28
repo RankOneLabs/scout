@@ -181,8 +181,9 @@ async def run_zeroshot_relevance(
                 )
             answers[answer.question_id] = answer.noul
         decision = route(answers)
-        # A review decision is deliberately withheld from automatic drafting.
-        # The action and project stay on the candidate for later inspection.
+        # Review means a human needs more context; drafting before that review would
+        # turn uncertainty into an automatic response. The action and project stay
+        # on the candidate for later inspection.
         relevant = decision.action == "respond"
         output = ZeroShotRelevanceOutput(
             relevant=relevant,
