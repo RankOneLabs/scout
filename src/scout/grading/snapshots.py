@@ -493,8 +493,7 @@ def _input_exclusion(
     for phase_run in item.phase_runs:
         if phase_run.phase != "relevance":
             continue
-        classifier = classifier_of(phase_run.model)
-        if isinstance(classifier, Err) or classifier.value != "llm":
+        if classifier_of(phase_run.model) != "llm":
             return "unsupported_relevance_classifier"
     if item.post is None:
         return "missing_post"

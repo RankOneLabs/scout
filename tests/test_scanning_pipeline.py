@@ -32,7 +32,7 @@ from scout.result import Ok
 from scout.scanning.agent import PhaseRunIdentity, ScoutExecutionContext
 from scout.scanning.pipeline import PhaseExecution, score_and_draft_step
 from scout.scanning.prefilter import RoutedMessage
-from scout.scanning.runner import classify_outcome
+from scout.scanning.runner import PersistenceContext, classify_outcome, persist_outcome
 from scout.scanning.schemas import RelevancePhaseOutput
 from scout.storage.state import StateManager
 from scout.typesafe.routes import route
@@ -221,7 +221,7 @@ async def test_agent_ops_dispatches_zeroshot_and_carries_whole_output(
     candidate = result.value
     assert seen_executor is not run_agent
     assert candidate.relevance_action == decision.action
-    assert candidate.relevance_classifier == "zeroshot:jev-latest"
+    assert candidate.relevance_classifier == "zeroshot"
     assert candidate.relevance_output is zeroshot_output
     assert candidate.model_dump()["relevance_output"]["answers"] == answers
     assert candidate.score == 1.0
@@ -259,7 +259,7 @@ async def test_unmeasured_project_uses_llm_when_classifier_is_zeroshot(
 
     assert isinstance(result, Ok)
     assert seen_executor is run_agent
-    assert result.value.relevance_classifier == "llm-model"
+    assert result.value.relevance_classifier == "llm"
     assert result.value.relevance_action == "drop"
     assert result.value.contributor_phase_run_ids == (9,)
 
@@ -317,9 +317,28 @@ async def test_zeroshot_dispatch_projects_state_and_returns_real_candidate(
     }
     assert result.value.relevant is False
     assert result.value.relevance_action == "review"
-    assert result.value.relevance_classifier == "zeroshot:jev-latest"
+    assert result.value.relevance_classifier == "zeroshot"
     assert result.value.score == 1.0
     assert result.value.structured_draft is None
+    decision = classify_outcome(result.value, message, {})
+    evaluation_id = persist_outcome(
+        state,
+        decision,
+        PersistenceContext(
+            post_id=post_id,
+            scan_id=scan_id,
+            keyword_route_id=None,
+            dossier_revision=None,
+            dossier_summary_id=None,
+            surfaced_at=None,
+        ),
+    )
+    stored = state.get_evaluation(evaluation_id)
+    assert stored is not None
+    assert (stored["relevance_classifier"], stored["relevance_action"]) == (
+        "zeroshot",
+        "review",
+    )
     assert client.state == {
         "post": {
             "platform": "bluesky",

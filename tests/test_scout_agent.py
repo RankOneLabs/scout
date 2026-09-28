@@ -923,6 +923,7 @@ async def test_human_positive_step_skips_relevance_and_runs_response_phases(
     assert len(draft_llm.calls) == 1
     assert len(critic_llm.calls) == 1
     assert result.value.relevance_action == "respond"
+    assert result.value.relevance_classifier == "human"
     assert len(result.value.contributor_phase_run_ids) == 2
     phases = [
         execution_context.state.get_phase_run(phase_run_id)["phase"]

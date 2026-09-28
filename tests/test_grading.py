@@ -147,7 +147,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         return scan_id, post_id, eval_id
 
     def _make_pass_grade(
@@ -388,8 +390,12 @@ class TestGradeStorage:
                              reason="r1", relevant_to=("a",))
         r2 = RelevanceResult(message=msg2, relevant=True, score=0.7,
                              reason="r2", relevant_to=("a",))
-        e1 = in_memory_state.save_evaluation(r1, p1, scan_id)
-        e2 = in_memory_state.save_evaluation(r2, p2, scan_id)
+        e1 = in_memory_state.save_evaluation(
+            r1, p1, scan_id, relevance_classifier="llm", relevance_action=None
+        )
+        e2 = in_memory_state.save_evaluation(
+            r2, p2, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         # Save v2 grade for p1 only
         in_memory_state.save_grade(self._make_pass_grade(p1, scan_id, e1))
@@ -438,7 +444,9 @@ class TestGradeStorage:
                 message=msg, relevant=True, score=0.8,
                 reason="r", relevant_to=("a",),
             )
-            eid = in_memory_state.save_evaluation(result, pid, scan_id)
+            eid = in_memory_state.save_evaluation(
+                result, pid, scan_id, relevance_classifier="llm", relevance_action=None
+            )
             in_memory_state.save_grade(GradeRecord(
                 post_id=pid, evaluation_id=eid, source="cli",
                 graded_at=datetime.now(UTC), scan_id=scan_id,
@@ -473,7 +481,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         in_memory_state.save_draft(post_id, eval_id, "gateway", "Great draft", scan_id)
         in_memory_state.save_grade(self._make_pass_grade(post_id, scan_id, eval_id))
 
@@ -503,7 +513,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         in_memory_state.save_draft(post_id, eval_id, "gateway", "Draft", scan_id)
         grade = replace(
             self._make_pass_grade(post_id, scan_id, eval_id),
@@ -536,7 +548,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.8,
             reason="r", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         # Save a v1 needs_regrade grade via the migration lane — a legacy
         # v1 row (schema_version=1, action_judgment=None) is exactly what
@@ -573,7 +587,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.85,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         in_memory_state.save_draft(post_id, eval_id, "gateway", "Draft text", scan_id)
 
         items = in_memory_state.get_gradeable_items(scan_id)
@@ -619,7 +635,14 @@ class TestSaveGradeValidationBoundary:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id, posture=posture)
+        eval_id = state.save_evaluation(
+            result,
+            post_id,
+            scan_id,
+            posture=posture,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
         return scan_id, post_id, eval_id
 
     def _grades_row_count(self, state: StateManager, post_id: int) -> int:
@@ -1005,7 +1028,9 @@ class TestReviewScan:
             message=msg, relevant=True, score=0.85,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         state.save_draft(post_id, eval_id, "gateway", "Draft comment", scan_id)
         return scan_id, post_id, eval_id
 
@@ -1073,7 +1098,9 @@ class TestReviewScan:
         post2_id = in_memory_state.save_post(msg2, scan_id)
         r2 = RelevanceResult(message=msg2, relevant=True, score=0.6,
                              reason="r2", relevant_to=("a",))
-        in_memory_state.save_evaluation(r2, post2_id, scan_id)
+        in_memory_state.save_evaluation(
+            r2, post2_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         inputs = iter(["q"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))  # type: ignore[attr-defined]
@@ -1179,7 +1206,9 @@ class TestEditedTextCLI:
             message=msg, relevant=True, score=0.85,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         if with_draft:
             state.save_draft(post_id, eval_id, "gateway", "Draft comment", scan_id)
         return scan_id, post_id, eval_id

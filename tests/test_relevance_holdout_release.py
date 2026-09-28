@@ -171,6 +171,10 @@ async def test_drop_persists_without_drafting_and_records_deltas(
         assert stored.release_action == "drop"
         target = state.get_evaluation(stored.target_evaluation_id or -1)
         assert target is not None
+        assert (target["relevance_classifier"], target["relevance_action"]) == (
+            "human",
+            "drop",
+        )
         assert target["reason"] == (
             "Blind-grading answer key released held evaluation #11 "
             "for project 'agent-ops' with action drop."
@@ -195,8 +199,29 @@ async def test_positive_release_runs_draft_classify_and_persist(
     )
     route = KeywordRoute(7, "agent-ops", "agent", None, None, None, 0)
     registry = RuntimeRegistry({"agent-ops": project}, (route,), {})
+    contributor_ids: tuple[int, ...] = ()
 
     def prepare(**kwargs):
+        nonlocal contributor_ids
+        state = kwargs["state"]
+        scan_id = kwargs["scan_id"]
+        post_id = int(kwargs["source"]["post_id"])
+        snapshot = state.record_feedback_snapshot(scan_id, mode="shadow")
+        phase_ids = {
+            phase.phase: phase.snapshot_phase_id for phase in snapshot.phases
+        }
+        contributor_ids = tuple(
+            state.insert_phase_run(
+                scan_id=scan_id,
+                post_id=post_id,
+                snapshot_phase_id=phase_ids[phase],
+                phase=phase,
+                trace_id=f"release-{phase}",
+                model="test-model",
+                status="complete",
+            )
+            for phase in ("reply_draft", "critic")
+        )
         return release._ResponseFlow(
             registry=registry,
             route=route,
@@ -223,31 +248,24 @@ async def test_positive_release_runs_draft_classify_and_persist(
                 project_key="agent-ops",
                 relevance_classifier="human",
                 relevance_action=context["relevance_action"],
+                contributor_phase_run_ids=contributor_ids,
             )
         )
 
     draft_mock = AsyncMock(side_effect=draft)
     classify_mock = Mock(wraps=release.classify_outcome)
-
-    def persist(state, decision, context):
-        assert decision.relevance_action == release_action
-        return state.save_evaluation(
-            decision.evaluation,
-            context.post_id,
-            context.scan_id,
-            project_key=decision.project_key,
-            surface_status=decision.status,
-            dossier_revision=context.dossier_revision,
-        )
-
-    persist_mock = Mock(side_effect=persist)
     monkeypatch.setattr(release, "_prepare_response_flow", prepare)
     monkeypatch.setattr(release, "draft_and_critic_step", draft_mock)
     monkeypatch.setattr(release, "classify_outcome", classify_mock)
-    monkeypatch.setattr(release, "persist_outcome", persist_mock)
 
     with StateManager(db_path=":memory:") as state:
         _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="drop")
+        state.upsert_project(
+            "agent-ops", "Agent Ops", "Operations", "https://example.test"
+        )
+        state.upsert_keyword("agent-ops", "agent")
+        registry = state.load_runtime_registry()
+        route = registry.keywords[0]
         batch_id = _batch(state, 11)
         await release_holdout_batch(
             state=state,
@@ -261,6 +279,10 @@ async def test_positive_release_runs_draft_classify_and_persist(
         assert stored.release_action == release_action
         target = state.get_evaluation(stored.target_evaluation_id or -1)
         assert target is not None
+        assert (target["relevance_classifier"], target["relevance_action"]) == (
+            "human",
+            release_action,
+        )
         assert target["reason"] == (
             f"Blind-grading answer key released held evaluation #11 "
             f"for project 'agent-ops' with action {release_action}."
@@ -270,7 +292,6 @@ async def test_positive_release_runs_draft_classify_and_persist(
 
     draft_mock.assert_awaited_once()
     classify_mock.assert_called_once()
-    persist_mock.assert_called_once()
 
 
 def test_prepare_response_flow_resolves_live_io_and_phase_identity(

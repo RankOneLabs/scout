@@ -217,7 +217,7 @@ def test_jsonl_is_stable_and_ordered_by_evaluation_id() -> None:
     assert [json.loads(line)["evaluation_id"] for line in first.splitlines()] == [10, 20]
 
 
-def test_live_population_includes_every_project_evaluation_and_only_finalized_labels() -> None:
+def test_live_population_filters_human_and_held_rows_and_exports_actions() -> None:
     with StateManager(db_path=":memory:") as state:
         state.conn.executemany(
             "INSERT INTO posts "
@@ -229,19 +229,27 @@ def test_live_population_includes_every_project_evaluation_and_only_finalized_la
                 (3, "cast-3", "Eve", "other", "https://warpcast.com/eve/0x3"),
                 (4, "cast-4", "Mallory", "fourth", "https://warpcast.com/mallory/0x4"),
                 (5, "cast-5", "Trent", "fifth", "https://warpcast.com/trent/0x5"),
+                (6, "cast-6", "Uma", "sixth", "https://warpcast.com/uma/0x6"),
             ],
         )
         state.conn.executemany(
             "INSERT INTO evaluations "
-            "(id, post_id, relevant, score, project_key, surface_status) "
-            "VALUES (?, ?, ?, ?, ?, 'surfaced')",
+            "(id, post_id, relevant, score, project_key, surface_status, "
+            "relevance_classifier, relevance_action) "
+            "VALUES (?, ?, ?, ?, ?, 'surfaced', ?, ?)",
             [
-                (20, 2, 0, 0.2, "agent-ops"),
-                (10, 1, 1, 0.9, "agent-ops"),
-                (30, 3, 1, 0.8, "other"),
-                (40, 4, 0, 0.1, "agent-ops"),
-                (50, 5, 1, 0.7, "agent-ops"),
+                (20, 2, 0, 0.2, "agent-ops", "zeroshot", "review"),
+                (10, 1, 1, 0.9, "agent-ops", "llm", None),
+                (30, 3, 1, 0.8, "other", "llm", None),
+                (40, 4, 0, 0.1, "agent-ops", "zeroshot", "drop"),
+                (50, 5, 1, 0.7, "agent-ops", "human", "respond"),
+                (60, 6, 0, 0.4, "agent-ops", "zeroshot", "review"),
             ],
+        )
+        state.conn.execute(
+            "INSERT INTO relevance_holdouts "
+            "(evaluation_id, production_action, held, registry_state, created_at) "
+            "VALUES (60, 'review', 1, '{}', '2026-09-01T00:00:00.000Z')"
         )
         state.conn.executemany(
             "INSERT INTO grades "
@@ -257,15 +265,31 @@ def test_live_population_includes_every_project_evaluation_and_only_finalized_la
 
         records = load_live_population(state.conn, "agent-ops")
 
-    assert [record.evaluation_id for record in records] == [10, 20, 40, 50]
-    assert [record.human_label for record in records] == [True, None, None, None]
+    assert [record.evaluation_id for record in records] == [10, 20, 40]
+    assert [record.human_label for record in records] == [True, None, None]
     assert [record.author_handle for record in records] == [
         "alice",
         "bob",
         "mallory",
-        "trent",
     ]
     assert all(record.snapshot_id is None for record in records)
+    lines = render_population_jsonl(records).splitlines()
+    assert lines[1] == (
+        b'{"evaluation_id":20,"platform":"farcaster","channel":"agent-ops",'
+        b'"url":"https://warpcast.com/bob/0x2","text":"second",'
+        b'"parent_author_name":null,"parent_text":null,"author_name":"Bob",'
+        b'"author_handle":"bob","snapshot_id":null,"human_label":null,'
+        b'"production_score":0.2,"production_decision":false,'
+        b'"production_action":"review"}'
+    )
+    assert lines[2] == (
+        b'{"evaluation_id":40,"platform":"farcaster","channel":"agent-ops",'
+        b'"url":"https://warpcast.com/mallory/0x4","text":"fourth",'
+        b'"parent_author_name":null,"parent_text":null,"author_name":"Mallory",'
+        b'"author_handle":"mallory","snapshot_id":null,"human_label":null,'
+        b'"production_score":0.1,"production_decision":false,'
+        b'"production_action":"drop"}'
+    )
 
 
 def test_live_population_rejects_invalid_production_decision() -> None:

@@ -20,7 +20,7 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from scout.config import CritiqueLesson, RelevanceResult
 from scout.grading.feedback import (
@@ -46,6 +46,18 @@ SURFACE_STATUSES: frozenset[str] = frozenset({
     "surfaced", "low_relevance", "abstained", "critic_rejected",
     "gate_blocked", "not_relevant", "drafting_failed",
 })
+
+EvaluationClassifier = Literal["llm", "zeroshot", "human"]
+EvaluationAction = Literal["respond", "review", "drop"]
+
+
+def _validate_relevance_identity(
+    classifier: EvaluationClassifier, action: EvaluationAction | None
+) -> None:
+    if classifier == "llm" and action is not None:
+        raise ValueError("llm evaluations require a null relevance_action")
+    if classifier != "llm" and action is None:
+        raise ValueError(f"{classifier} evaluations require a relevance_action")
 
 # Canonical phase execution order. Ordinary model-scored evaluations use a
 # prefix of the full sequence. Human-positive promotions intentionally skip
@@ -218,6 +230,8 @@ class EvaluationRow:
     failure_reason: str | None
     dossier_summary_id: str | None
     dossier_revision: str | None
+    relevance_classifier: EvaluationClassifier
+    relevance_action: EvaluationAction | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +302,8 @@ def _row_to_evaluation(row: sqlite3.Row) -> EvaluationRow:
         failure_reason=row["failure_reason"],
         dossier_summary_id=row["dossier_summary_id"],
         dossier_revision=row["dossier_revision"],
+        relevance_classifier=row["relevance_classifier"],
+        relevance_action=row["relevance_action"],
     )
 
 
@@ -958,18 +974,22 @@ class EvaluationStore:
         failure_reason: str | None = None,
         dossier_revision: str | None = None,
         dossier_summary_id: str | None = None,
+        *,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         """Save a terminal relevance evaluation outside a surfaced unit."""
         if surface_status not in SURFACE_STATUSES:
             raise ValueError(f"unknown surface status: {surface_status}")
+        _validate_relevance_identity(relevance_classifier, relevance_action)
         now = datetime.now(UTC).isoformat()
         with self._uow.begin():
             cursor = self._conn.execute(
                 "INSERT INTO evaluations "
                 "(post_id, relevant, score, reason, relevant_to, keyword_route_id, "
                 "scan_id, created_at, project_key, posture, surface_status, failure_reason, "
-                "dossier_revision, dossier_summary_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "dossier_revision, dossier_summary_id, relevance_classifier, "
+                "relevance_action) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     post_id,
                     int(result.relevant),
@@ -985,6 +1005,8 @@ class EvaluationStore:
                     failure_reason,
                     dossier_revision,
                     dossier_summary_id,
+                    relevance_classifier,
+                    relevance_action,
                 ),
             )
             evaluation_id = cursor.lastrowid
@@ -1008,6 +1030,8 @@ class EvaluationStore:
         critique: tuple[str, str] | None = None,
         gate_violations: Iterable[object] | None = None,
         allow_response_only_phase_runs: bool = False,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         """Persist a no-draft terminal outcome and its durable evidence.
 
@@ -1035,6 +1059,8 @@ class EvaluationStore:
             evaluation_id = self.save_evaluation(
                 result, post_id, scan_id, keyword_route_id, project_key, posture,
                 surface_status, failure_reason, dossier_revision, dossier_summary_id,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
             )
             self._link_phase_run_contributors(
                 evaluation_id=evaluation_id,
@@ -1073,6 +1099,8 @@ class EvaluationStore:
         surfaced_at: str | None = None,
         fail_at: str | None = None,
         allow_response_only_phase_runs: bool = False,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> tuple[int, int, int]:
         """Atomically write exactly one surfaced evaluation, draft, and event.
 
@@ -1119,6 +1147,8 @@ class EvaluationStore:
                 evaluation_id = self.save_evaluation(
                     result, post_id, scan_id, keyword_route_id, project_key, posture,
                     "gate_blocked", None, dossier_revision, dossier_summary_id,
+                    relevance_classifier=relevance_classifier,
+                    relevance_action=relevance_action,
                 )
                 self._link_phase_run_contributors(
                     evaluation_id=evaluation_id,
@@ -1147,6 +1177,8 @@ class EvaluationStore:
                 evaluation_id = self.save_evaluation(
                     result, post_id, scan_id, keyword_route_id, project_key, posture,
                     "surfaced", None, dossier_revision, dossier_summary_id,
+                    relevance_classifier=relevance_classifier,
+                    relevance_action=relevance_action,
                 )
                 self._link_phase_run_contributors(
                     evaluation_id=evaluation_id,

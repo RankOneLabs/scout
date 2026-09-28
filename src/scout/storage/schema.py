@@ -9,7 +9,7 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 48
+LATEST_SCHEMA_VERSION = 49
 
 RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS relevance_holdouts (
@@ -447,6 +447,16 @@ CREATE TABLE IF NOT EXISTS evaluations (
     failure_reason TEXT,
     dossier_summary_id TEXT,
     dossier_revision TEXT,
+    relevance_classifier TEXT NOT NULL DEFAULT 'llm' CHECK(
+        relevance_classifier IN ('llm','zeroshot','human')
+    ),
+    relevance_action TEXT CHECK(
+        relevance_action IS NULL
+        OR relevance_action IN ('respond','review','drop')
+    ) CHECK(
+        (relevance_classifier = 'llm' AND relevance_action IS NULL)
+        OR (relevance_classifier <> 'llm' AND relevance_action IS NOT NULL)
+    ),
     FOREIGN KEY (post_id) REFERENCES posts(id),
     FOREIGN KEY (keyword_route_id) REFERENCES project_keywords(id)
 );

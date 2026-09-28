@@ -466,6 +466,8 @@ async def _release_one(
                     failure_reason=decision.terminal_reason,
                     dossier_revision=context.dossier_revision,
                     dossier_summary_id=context.dossier_summary_id,
+                    relevance_classifier="human",
+                    relevance_action=action,
                 )
             else:
                 target_evaluation_id = persist_outcome(state, decision, context)

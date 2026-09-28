@@ -152,7 +152,7 @@ class ReplyCandidate(BaseModel):
     critique_feedback: str | None = None
     structured_draft: StructuredDraftOutput | None = None
     relevance_output: SerializeAsAny[RelevancePhaseOutput] | None = None
-    relevance_classifier: str | None = None
+    relevance_classifier: Literal["llm", "zeroshot", "human"] = "llm"
     relevance_action: Literal["respond", "review", "drop"] | None = None
     held: bool = False
 

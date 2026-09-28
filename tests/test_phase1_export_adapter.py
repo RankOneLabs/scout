@@ -475,7 +475,9 @@ def _seed_graded_evaluation(state: StateManager) -> None:
         message=msg, relevant=True, score=0.8,
         reason="matches project", relevant_to=("gateway",),
     )
-    evaluation_id = state.save_evaluation(result, post_id, scan_id)
+    evaluation_id = state.save_evaluation(
+        result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+    )
     state.complete_scan(scan_id, 1, 1)
 
     # false_positive keeps the projection on the not_relevant path, which

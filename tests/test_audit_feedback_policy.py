@@ -47,6 +47,9 @@ def _seed_grade(
     eval_id = state.save_evaluation(
         result, post_id, scan_id, project_key="proj", posture="answer",
         surface_status="surfaced",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     state.save_draft(post_id, eval_id, "proj", "draft text", scan_id, posture="answer")
     return state.save_grade(GradeRecord(

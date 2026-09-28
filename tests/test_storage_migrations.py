@@ -5,6 +5,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
+from scout.storage.migrations import _migrate_to_48, _migrate_to_49
 from scout.storage.schema import LATEST_SCHEMA_VERSION
 from scout.storage.state import StateManager
 
@@ -159,20 +162,75 @@ def test_v48_migration_only_adds_holdout_table_and_indexes(tmp_path: Path) -> No
         seeded.conn.execute("DROP INDEX relevance_holdouts_batch_idx")
         seeded.conn.execute("DROP INDEX relevance_holdouts_status_idx")
         seeded.conn.execute("DROP TABLE relevance_holdouts")
+        seeded.conn.execute("ALTER TABLE evaluations DROP COLUMN relevance_action")
+        seeded.conn.execute("ALTER TABLE evaluations DROP COLUMN relevance_classifier")
         seeded.conn.execute("PRAGMA user_version = 47")
 
     before_conn = sqlite3.connect(db_path)
     before = _application_schema(before_conn)
     before_conn.close()
 
-    with StateManager(str(db_path)) as upgraded, StateManager(":memory:") as fresh:
-        after = _application_schema(upgraded.conn)
+    upgraded = sqlite3.connect(db_path)
+    upgraded.row_factory = sqlite3.Row
+    _migrate_to_48(upgraded)
+    with StateManager(":memory:") as fresh:
+        after = _application_schema(upgraded)
         added = [item for item in after if item not in before]
 
-        assert upgraded.conn.execute("PRAGMA user_version").fetchone()[0] == 48
-        assert LATEST_SCHEMA_VERSION == 48
+        assert LATEST_SCHEMA_VERSION == 49
         assert added == _holdout_objects(fresh.conn)
         assert [item for item in before if item not in after] == []
-        assert upgraded.conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert upgraded.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert upgraded.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 1
+        assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert upgraded.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert upgraded.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 1
+    upgraded.close()
+
+
+def test_v49_adds_classifier_columns_and_backfills_human_targets() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(
+        """
+        CREATE TABLE evaluations (id INTEGER PRIMARY KEY);
+        CREATE TABLE human_positive_promotions (
+            target_evaluation_id INTEGER,
+            status TEXT NOT NULL,
+            FOREIGN KEY (target_evaluation_id) REFERENCES evaluations(id)
+        );
+        CREATE TABLE relevance_holdouts (
+            target_evaluation_id INTEGER UNIQUE,
+            release_action TEXT,
+            FOREIGN KEY (target_evaluation_id) REFERENCES evaluations(id)
+        );
+        INSERT INTO evaluations(id) VALUES (1), (2), (3), (4), (5);
+        INSERT INTO human_positive_promotions(target_evaluation_id, status)
+        VALUES (2, 'completed'), (3, 'running');
+        INSERT INTO relevance_holdouts(target_evaluation_id, release_action)
+        VALUES (4, 'review'), (5, 'drop');
+        """
+    )
+
+    _migrate_to_49(conn)
+
+    rows = conn.execute(
+        "SELECT id, relevance_classifier, relevance_action FROM evaluations ORDER BY id"
+    ).fetchall()
+    assert rows == [
+        (1, "llm", None),
+        (2, "human", "respond"),
+        (3, "llm", None),
+        (4, "human", "review"),
+        (5, "human", "drop"),
+    ]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO evaluations(id, relevance_classifier) VALUES (6, 'zeroshot')"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO evaluations(id, relevance_classifier, relevance_action) "
+            "VALUES (7, 'llm', 'respond')"
+        )

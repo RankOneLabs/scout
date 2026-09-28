@@ -48,7 +48,7 @@ from scout.storage.evaluations import (
     AUTHOR_RATE_EVALUATOR_VERSION as AUTHOR_RATE_EVALUATOR_VERSION,
 )
 from scout.storage.evaluations import PHASE_RUN_PHASE_ORDER as PHASE_RUN_PHASE_ORDER
-from scout.storage.evaluations import EvaluationStore
+from scout.storage.evaluations import EvaluationAction, EvaluationClassifier, EvaluationStore
 from scout.storage.evaluations import ExperimentCASError as ExperimentCASError
 from scout.storage.evaluations import PhaseRunLinkageError as PhaseRunLinkageError
 from scout.storage.evaluations import SurfaceRateLimitedError as SurfaceRateLimitedError
@@ -863,10 +863,15 @@ class StateManager:
         failure_reason: str | None = None,
         dossier_revision: str | None = None,
         dossier_summary_id: str | None = None,
+        *,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         return self._evaluations.save_evaluation(
             result, post_id, scan_id, keyword_route_id, project_key, posture,
             surface_status, failure_reason, dossier_revision, dossier_summary_id,
+            relevance_classifier=relevance_classifier,
+            relevance_action=relevance_action,
         )
 
     def persist_terminal_outcome(
@@ -886,6 +891,8 @@ class StateManager:
         critique: tuple[str, str] | None = None,
         gate_violations: Iterable[object] | None = None,
         allow_response_only_phase_runs: bool = False,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> int:
         return self._evaluations.persist_terminal_outcome(
             result,
@@ -902,6 +909,8 @@ class StateManager:
             critique=critique,
             gate_violations=gate_violations,
             allow_response_only_phase_runs=allow_response_only_phase_runs,
+            relevance_classifier=relevance_classifier,
+            relevance_action=relevance_action,
         )
 
     def persist_surfaced_outcome(
@@ -924,6 +933,8 @@ class StateManager:
         surfaced_at: str | None = None,
         fail_at: str | None = None,
         allow_response_only_phase_runs: bool = False,
+        relevance_classifier: EvaluationClassifier,
+        relevance_action: EvaluationAction | None,
     ) -> tuple[int, int, int]:
         return self._evaluations.persist_surfaced_outcome(
             result,
@@ -943,6 +954,8 @@ class StateManager:
             surfaced_at=surfaced_at,
             fail_at=fail_at,
             allow_response_only_phase_runs=allow_response_only_phase_runs,
+            relevance_classifier=relevance_classifier,
+            relevance_action=relevance_action,
         )
 
     def get_latest_evaluation_id(self, post_id: int, scan_id: int) -> int | None:

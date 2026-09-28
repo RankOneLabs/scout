@@ -13,7 +13,7 @@ from typing import Literal
 from scout.config import RelevanceResult
 from scout.registry import RuntimeRegistry
 from scout.relevance.models import RelevanceAction
-from scout.storage.evaluations import EvaluationStore
+from scout.storage.evaluations import EvaluationClassifier, EvaluationStore
 from scout.storage.unit_of_work import UnitOfWork
 
 HoldoutStatus = Literal["pending", "claimed", "released", "failed"]
@@ -115,6 +115,7 @@ class RelevanceHoldoutStore:
         scan_id: int,
         *,
         production_action: RelevanceAction,
+        relevance_classifier: EvaluationClassifier,
         registry: RuntimeRegistry,
         contributor_phase_run_ids: tuple[int, ...],
         keyword_route_id: int | None,
@@ -134,6 +135,10 @@ class RelevanceHoldoutStore:
                 project_key=project_key,
                 dossier_revision=dossier_revision,
                 dossier_summary_id=dossier_summary_id,
+                relevance_classifier=relevance_classifier,
+                relevance_action=(
+                    None if relevance_classifier == "llm" else production_action
+                ),
             )
             holdout = self.record_holdout(
                 evaluation_id=evaluation_id,

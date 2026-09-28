@@ -803,6 +803,9 @@ def _seed_grade(
     eval_id = state.save_evaluation(
         result, post_id, scan_id, project_key=project_key, posture="answer",
         surface_status="surfaced",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     if with_draft:
         state.save_draft(post_id, eval_id, project_key, "draft text", scan_id, posture="answer")

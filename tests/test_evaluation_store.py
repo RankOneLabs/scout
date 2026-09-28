@@ -75,7 +75,9 @@ class TestCritiqueFeedback:
             reason="test",
             relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         draft_id = in_memory_state.save_draft(
             post_id,
             eval_id,
@@ -96,6 +98,38 @@ class TestCritiqueFeedback:
         assert lessons == []
 
 class TestEvaluationPersistence:
+    def test_save_evaluation_enforces_and_persists_classifier_pair(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        msg = _make_discord_msg("classifier-pair")
+        post_id = in_memory_state.save_post(msg, scan_id)
+        result = _make_relevance(msg)
+
+        evaluation_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
+        row = in_memory_state.get_evaluation(evaluation_id)
+        assert row is not None
+        assert (row["relevance_classifier"], row["relevance_action"]) == ("llm", None)
+
+        with pytest.raises(ValueError, match="zeroshot evaluations require"):
+            in_memory_state.save_evaluation(
+                result,
+                post_id,
+                scan_id,
+                relevance_classifier="zeroshot",
+                relevance_action=None,
+            )
+        with pytest.raises(ValueError, match="llm evaluations require"):
+            in_memory_state.save_evaluation(
+                result,
+                post_id,
+                scan_id,
+                relevance_classifier="llm",
+                relevance_action="respond",
+            )
+
     def test_save_evaluation_persists_keyword_route_id(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
         now = datetime.now(UTC).isoformat()
@@ -138,6 +172,9 @@ class TestEvaluationPersistence:
             post_id,
             scan_id,
             keyword_route_id=7,
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
 
         row = in_memory_state.conn.execute(
@@ -166,8 +203,20 @@ class TestGetLatestEvaluationId:
     ) -> None:
         scan_id = in_memory_state.start_scan()
         post_id = in_memory_state.save_post(sample_message, scan_id)
-        in_memory_state.save_evaluation(sample_relevance_result, post_id, scan_id)
-        second_eval_id = in_memory_state.save_evaluation(sample_relevance_result, post_id, scan_id)
+        in_memory_state.save_evaluation(
+            sample_relevance_result,
+            post_id,
+            scan_id,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
+        second_eval_id = in_memory_state.save_evaluation(
+            sample_relevance_result,
+            post_id,
+            scan_id,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
 
         assert in_memory_state.get_latest_evaluation_id(post_id, scan_id) == second_eval_id
 
@@ -209,6 +258,9 @@ class TestGateBlocksWriter:
             dossier_revision="rev-9",
             dossier_summary_id="gw-dossier",
             gate_violations=[violation],
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
 
         rows = in_memory_state.conn.execute(
@@ -254,6 +306,9 @@ class TestGateBlocksWriter:
             contributor_phase_run_ids=contributor_ids,
             project_key="gateway",
             gate_violations=violations,
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
 
         rows = in_memory_state.conn.execute(
@@ -304,6 +359,9 @@ class TestDossierGroundedFields:
             surface_status="surfaced",
             dossier_revision="abc123",
             dossier_summary_id="summary-1",
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
 
         row = in_memory_state.conn.execute(
@@ -325,7 +383,9 @@ class TestDossierGroundedFields:
         msg = _make_discord_msg()
         post_id = in_memory_state.save_post(msg, scan_id)
         result = _make_relevance(msg)
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         structured = json.dumps(
             {"posture": "answer", "segments": [], "claims": [], "resources_used": []}
@@ -358,7 +418,9 @@ class TestDossierGroundedFields:
         msg = _make_discord_msg()
         post_id = in_memory_state.save_post(msg, scan_id)
         result = _make_relevance(msg)
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         draft_id = in_memory_state.save_draft(post_id, eval_id, "gateway", "Draft text", scan_id)
 
         event_id = in_memory_state.save_surfaced_event(
@@ -428,7 +490,9 @@ class TestMigration27FeedbackSnapshots:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         state.save_grade(
             GradeRecord(
                 post_id=post_id,
@@ -671,6 +735,9 @@ class TestMigration28FeedbackAuditFidelity:
             ),
             post_id,
             scan_id,
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         grade_id = in_memory_state.save_grade(
             GradeRecord(
@@ -896,12 +963,18 @@ class TestMigration29EvaluationPhaseRuns:
             post_id,
             scan_id,
             surface_status="not_relevant",
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         second_eval_id = in_memory_state.save_evaluation(
             result,
             post_id,
             scan_id,
             surface_status="not_relevant",
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         with in_memory_state.db.begin_immediate():
             in_memory_state.conn.execute(
@@ -946,6 +1019,9 @@ class TestMigration29EvaluationPhaseRuns:
             scan_id,
             surface_status="not_relevant",
             contributor_phase_run_ids=contributor_ids,
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         row = in_memory_state.get_phase_run(contributor_ids[0])
         assert row is not None
@@ -983,6 +1059,9 @@ class TestMigration29EvaluationPhaseRuns:
                 scan_id,
                 surface_status="not_relevant",
                 contributor_phase_run_ids=(),
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
         assert (
             in_memory_state.conn.execute(
@@ -1024,6 +1103,9 @@ class TestMigration29EvaluationPhaseRuns:
                 scan_id,
                 surface_status="not_relevant",
                 contributor_phase_run_ids=(contributor_ids[0], contributor_ids[0]),
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
         assert (
             in_memory_state.conn.execute(
@@ -1083,6 +1165,9 @@ class TestMigration29EvaluationPhaseRuns:
                 scan_id,
                 surface_status="not_relevant",
                 contributor_phase_run_ids=other_contributor_ids,
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
         assert (
             in_memory_state.conn.execute(
@@ -1136,6 +1221,9 @@ class TestMigration29EvaluationPhaseRuns:
                 scan_id,
                 surface_status="not_relevant",
                 contributor_phase_run_ids=(reply_draft_id,),
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
         assert (
             in_memory_state.conn.execute(
@@ -1176,6 +1264,9 @@ class TestMigration29EvaluationPhaseRuns:
             scan_id,
             surface_status="not_relevant",
             contributor_phase_run_ids=contributor_ids,
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         # A retry with the same (now-linked) contributor must not attach a
         # second evaluation to it.
@@ -1186,6 +1277,9 @@ class TestMigration29EvaluationPhaseRuns:
                 scan_id,
                 surface_status="not_relevant",
                 contributor_phase_run_ids=contributor_ids,
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
         assert (
             in_memory_state.conn.execute(
@@ -1230,6 +1324,9 @@ class TestMigration29EvaluationPhaseRuns:
             comment_text="hello",
             structured_output="{}",
             contributor_phase_run_ids=contributor_ids,
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         for phase_run_id in contributor_ids:
             row = in_memory_state.get_phase_run(phase_run_id)
@@ -1268,6 +1365,9 @@ class TestMigration29EvaluationPhaseRuns:
             post_id,
             scan_id,
             surface_status="surfaced",
+
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         rows = in_memory_state.conn.execute(
             "SELECT id FROM evaluation_phase_runs WHERE evaluation_id = ?", (eval_id,)

@@ -10,16 +10,14 @@ import pytest
 
 import scout.replay.experiments as experiments
 from scout.relevance.classifier_identity import (
-    UnknownClassifier,
     classifier_of,
     zeroshot_classifier,
 )
-from scout.result import Err, Ok
 
 
 @pytest.mark.parametrize("model", ["zeroshot:jev-latest", "zeroshot:jev-v6"])
 def test_classifier_of_known_zeroshot_models(model: str) -> None:
-    assert classifier_of(model) == Ok("zeroshot")
+    assert classifier_of(model) == "zeroshot"
 
 
 @pytest.mark.parametrize(
@@ -34,12 +32,12 @@ def test_classifier_of_known_zeroshot_models(model: str) -> None:
     ],
 )
 def test_classifier_of_known_llm_models(model: str) -> None:
-    assert classifier_of(model) == Ok("llm")
+    assert classifier_of(model) == "llm"
 
 
-def test_classifier_of_unknown_model_is_explicit() -> None:
+def test_classifier_of_unknown_model_defaults_to_llm() -> None:
     model = "unrecognised-relevance-engine"
-    assert classifier_of(model) == Err(UnknownClassifier(model))
+    assert classifier_of(model) == "llm"
 
 
 def test_zeroshot_classifier_builds_namespaced_payload_identity() -> None:
