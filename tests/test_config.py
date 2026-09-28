@@ -13,7 +13,7 @@ import scout.config as config_module
 
 _NEW_ENV_KEYS = (
     "RELEVANCE_CLASSIFIER",
-    "RELEVANCE_JEV_CATALOGUE_PATH",
+    "RELEVANCE_ZEROSHOT_CATALOGUE_PATH",
     "RELEVANCE_JEV_MODEL",
     "RELEVANCE_JEV_ENDPOINT",
     "TYPESAFE_API_KEY",
@@ -43,7 +43,7 @@ def test_relevance_classifier_defaults_match_pinned_jig(
     jev_parameters = signature(JevClient).parameters
 
     assert reloaded.RELEVANCE_CLASSIFIER == "llm"
-    assert reloaded.RELEVANCE_JEV_CATALOGUE_PATH == ""
+    assert reloaded.RELEVANCE_ZEROSHOT_CATALOGUE_PATH == ""
     assert reloaded.RELEVANCE_JEV_MODEL == jev_parameters["model"].default == "jev-latest"
     assert jev_parameters["endpoint"].default == "https://api.typesafe.ai/v1/systemone"
     assert reloaded.RELEVANCE_JEV_ENDPOINT == "https://api.typesafe.ai/v1/systemone"
@@ -57,16 +57,16 @@ def test_relevance_classifier_accepts_configured_values(
 ) -> None:
     reloaded = _reload(
         monkeypatch,
-        RELEVANCE_CLASSIFIER="jev",
-        RELEVANCE_JEV_CATALOGUE_PATH=" /catalogues/agent-ops.yaml ",
+        RELEVANCE_CLASSIFIER="zeroshot",
+        RELEVANCE_ZEROSHOT_CATALOGUE_PATH=" /catalogues/agent-ops.yaml ",
         RELEVANCE_JEV_MODEL="jev-v6",
         RELEVANCE_JEV_ENDPOINT="https://typesafe.test/systemone/",
         TYPESAFE_API_KEY="secret-value",
         RELEVANCE_HOLDOUT_RATE="0.25",
     )
 
-    assert reloaded.RELEVANCE_CLASSIFIER == "jev"
-    assert reloaded.RELEVANCE_JEV_CATALOGUE_PATH == "/catalogues/agent-ops.yaml"
+    assert reloaded.RELEVANCE_CLASSIFIER == "zeroshot"
+    assert reloaded.RELEVANCE_ZEROSHOT_CATALOGUE_PATH == "/catalogues/agent-ops.yaml"
     assert reloaded.RELEVANCE_JEV_MODEL == "jev-v6"
     assert reloaded.RELEVANCE_JEV_ENDPOINT == "https://typesafe.test/systemone"
     assert reloaded.TYPESAFE_API_KEY == "secret-value"

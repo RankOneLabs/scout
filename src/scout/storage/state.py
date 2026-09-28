@@ -254,7 +254,7 @@ class StateManager:
 
     @property
     def relevance_holdouts(self) -> RelevanceHoldoutStore:
-        """Held Jev decisions and their export/release lifecycle."""
+        """Held zero-shot decisions and their export/release lifecycle."""
         return self._relevance_holdouts
 
     def record_account_snapshot(self, account: Account) -> bool:

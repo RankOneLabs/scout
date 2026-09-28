@@ -1,4 +1,4 @@
-"""Atomic, deterministic export of held Jev relevance evaluations."""
+"""Atomic, deterministic export of held zero-shot relevance evaluations."""
 
 from __future__ import annotations
 

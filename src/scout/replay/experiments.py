@@ -454,9 +454,9 @@ async def resolve_baseline(
                 f"{phase_run['status']!r}, not 'complete'"
             )
         classifier = classifier_of(phase_run["model"])
-        if isinstance(classifier, Ok) and classifier.value == "jev":
+        if isinstance(classifier, Ok) and classifier.value == "zeroshot":
             raise BaselineResolutionError(
-                f"evaluation_phase_runs {phase_run_id} was produced by Jev and cannot be "
+                f"evaluation_phase_runs {phase_run_id} was produced by zero-shot and cannot be "
                 "replayed as an LLM baseline"
             )
         # Historical opaque LLM fixture/alias names remain readable here: the

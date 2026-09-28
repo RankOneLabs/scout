@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scout-jev-web-"));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scout-zeroshot-web-"));
 const dbPath = path.join(tmpDir, "scout.db");
 const tracesPath = path.join(tmpDir, "traces.db");
 process.env.SCOUT_DB_PATH = dbPath;
@@ -52,9 +52,9 @@ beforeAll(() => {
     );
     INSERT INTO posts (id, platform, platform_msg_id, author_name, content, scan_id)
       VALUES (1, 'discord', 'llm-low', 'Ada', 'LLM 0.8', 7),
-             (2, 'discord', 'jev-review', 'Bea', 'Jev review', 7),
+             (2, 'discord', 'zeroshot-review', 'Bea', 'Zero-shot review', 7),
              (3, 'discord', 'llm-high', 'Cy', 'LLM 0.95', 7),
-             (4, 'discord', 'jev-bad-evidence', 'Dee', 'Jev bad evidence', 8),
+             (4, 'discord', 'zeroshot-bad-evidence', 'Dee', 'Zero-shot bad evidence', 8),
              (5, 'discord', 'unknown-classifier', 'Eli', 'Unknown classifier', 8);
     INSERT INTO evaluations
       (id, post_id, relevant, score, reason, relevant_to, scan_id, surface_status)
@@ -66,9 +66,9 @@ beforeAll(() => {
     INSERT INTO evaluation_phase_runs
       (id, evaluation_id, phase, trace_id, model, status, created_at)
       VALUES (21, 11, 'relevance', 'trace-llm-low', 'openrouter/acme/model', 'complete', '2026-09-01T00:00:00Z'),
-             (22, 12, 'relevance', 'trace-jev', 'jev:jev-latest', 'complete', '2026-09-01T00:00:01Z'),
+             (22, 12, 'relevance', 'trace-zeroshot', 'zeroshot:jev-latest', 'complete', '2026-09-01T00:00:01Z'),
              (23, 13, 'relevance', 'trace-llm-high', 'openrouter/acme/model', 'complete', '2026-09-01T00:00:02Z'),
-             (24, 14, 'relevance', 'trace-jev-bad-answers', 'jev:jev-latest', 'complete', '2026-09-01T00:00:03Z'),
+             (24, 14, 'relevance', 'trace-zeroshot-bad-answers', 'zeroshot:jev-latest', 'complete', '2026-09-01T00:00:03Z'),
              (25, 15, 'relevance', 'trace-unknown', 'mystery', 'complete', '2026-09-01T00:00:04Z');
   `);
   db.close();
@@ -76,7 +76,7 @@ beforeAll(() => {
   const traces = new Database(tracesPath);
   traces.exec(`CREATE TABLE spans (trace_id TEXT, parent_id TEXT, output TEXT);`);
   traces.prepare("INSERT INTO spans VALUES (?, NULL, ?)").run(
-    "trace-jev",
+    "trace-zeroshot",
     JSON.stringify({
       output_kind: "structured",
       output_complete: {
@@ -99,7 +99,7 @@ beforeAll(() => {
     })
   );
   traces.prepare("INSERT INTO spans VALUES (?, NULL, ?)").run(
-    "trace-jev-bad-answers",
+    "trace-zeroshot-bad-answers",
     JSON.stringify({
       output_complete: {
         action: "drop",
@@ -119,16 +119,16 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("mixed Jev and LLM query presentation", () => {
-  it("selects an action badge only for Jev relevance scores", async () => {
+describe("mixed zero-shot and LLM query presentation", () => {
+  it("selects an action badge only for zero-shot relevance scores", async () => {
     const { selectScoreBar } = await import("@/components/atoms/ScoreBar");
 
     expect(selectScoreBar({
       score: 1,
       relevancePresentation: {
-        classifier: "jev",
-        model: "jev:jev-latest",
-        jev: {
+        classifier: "zeroshot",
+        model: "zeroshot:jev-latest",
+        zeroshot: {
           action: "review",
           line: "needs_thread",
           exclusion: null,
@@ -139,24 +139,24 @@ describe("mixed Jev and LLM query presentation", () => {
     })).toEqual({ kind: "action", action: "review" });
     expect(selectScoreBar({
       score: 0.8,
-      relevancePresentation: { classifier: "llm", model: "openrouter/acme/model", jev: null },
+      relevancePresentation: { classifier: "llm", model: "openrouter/acme/model", zeroshot: null },
     })).toEqual({ kind: "score", score: 0.8 });
     expect(selectScoreBar({
       score: 0.99,
-      relevancePresentation: { classifier: "unknown", model: "mystery", jev: null },
+      relevancePresentation: { classifier: "unknown", model: "mystery", zeroshot: null },
     })).toEqual({ kind: "unknown", model: "mystery" });
     expect(selectScoreBar({ value: 2, max: 8, label: "distance" })).toEqual({
       kind: "distance", value: 2, max: 8, label: "distance",
     });
   });
 
-  it("reads classifier and complete Jev routing evidence through the shared helper", async () => {
+  it("reads classifier and complete zero-shot routing evidence through the shared helper", async () => {
     const { getRelevancePresentations } = await import("@/lib/queries");
 
     expect(getRelevancePresentations([11, 12]).get(12)).toEqual({
-      classifier: "jev",
-      model: "jev:jev-latest",
-      jev: {
+      classifier: "zeroshot",
+      model: "zeroshot:jev-latest",
+      zeroshot: {
         action: "review",
         line: "needs_thread",
         exclusion: null,
@@ -172,22 +172,22 @@ describe("mixed Jev and LLM query presentation", () => {
     });
     expect(getRelevancePresentations([11]).get(11)).toMatchObject({
       classifier: "llm",
-      jev: null,
+      zeroshot: null,
     });
   });
 
-  it("rejects array-shaped Jev answers and preserves unknown classifier identities", async () => {
+  it("rejects array-shaped zero-shot answers and preserves unknown classifier identities", async () => {
     const { getRelevancePresentations } = await import("@/lib/queries");
 
     expect(getRelevancePresentations([14]).get(14)).toEqual({
-      classifier: "jev",
-      model: "jev:jev-latest",
-      jev: null,
+      classifier: "zeroshot",
+      model: "zeroshot:jev-latest",
+      zeroshot: null,
     });
     expect(getRelevancePresentations([15]).get(15)).toEqual({
       classifier: "unknown",
       model: "mystery",
-      jev: null,
+      zeroshot: null,
     });
   });
 
@@ -198,7 +198,7 @@ describe("mixed Jev and LLM query presentation", () => {
     expect(getPosts({ scan_id: 7, score_max: 0.85 }).data.map((post) => post.id)).toEqual([2, 1]);
   });
 
-  it("applies repeated actions only to Jev rows", async () => {
+  it("applies repeated actions only to zero-shot rows", async () => {
     const { getPosts } = await import("@/lib/queries");
 
     expect(getPosts({ scan_id: 7, action: ["respond", "drop"] }).data.map((post) => post.id)).toEqual([3, 1]);
@@ -222,7 +222,7 @@ describe("mixed Jev and LLM query presentation", () => {
     });
   });
 
-  it("orders LLM rows by score without using Jev's constant score", async () => {
+  it("orders LLM rows by score without using zero-shot's constant score", async () => {
     const { getEvaluationsByScan } = await import("@/lib/queries");
 
     expect(getEvaluationsByScan(7).map((evaluation) => evaluation.id)).toEqual([13, 11, 12]);

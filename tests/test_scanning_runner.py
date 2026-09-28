@@ -1,4 +1,4 @@
-"""Focused scan-start integration tests for the live Jev classifier."""
+"""Focused scan-start integration tests for the live zero-shot classifier."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import scout.scanning.runner as runner
 from scout.config import Account, Message
 from scout.errors import LLMError
 from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
-from scout.relevance.setup import setup_jev_scan
+from scout.relevance.setup import setup_zeroshot_scan
 from scout.result import Err, Ok
 from scout.scanning.prefilter import RoutedMessage
 from scout.scanning.schemas import ReplyCandidate
@@ -67,7 +67,7 @@ def _main_loop_shell(
     monkeypatch.setattr(runner, "build_platform_scanners", lambda: (Mock(), Mock(), Mock()))
     monkeypatch.setattr(runner, "StateManager", Mock(side_effect=(state, heartbeat)))
     monkeypatch.setattr(runner, "_acquire_scan_lease", Mock(return_value=lease))
-    monkeypatch.setattr(runner._config, "RELEVANCE_CLASSIFIER", "jev")
+    monkeypatch.setattr(runner._config, "RELEVANCE_CLASSIFIER", "zeroshot")
     return state, lease
 
 
@@ -92,13 +92,13 @@ def test_held_candidate_wins_over_conflicting_terminal_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unreadable_jev_catalogue_refuses_scan_before_fetch(
+async def test_unreadable_zeroshot_catalogue_refuses_scan_before_fetch(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     missing = tmp_path / "missing-catalogue.yaml"
     _main_loop_shell(monkeypatch, RuntimeRegistry({}, (), {}))
     fetch = AsyncMock()
-    monkeypatch.setattr(runner._config, "RELEVANCE_JEV_CATALOGUE_PATH", str(missing))
+    monkeypatch.setattr(runner._config, "RELEVANCE_ZEROSHOT_CATALOGUE_PATH", str(missing))
     monkeypatch.setattr(runner, "fetch_messages", fetch)
 
     with pytest.raises(RuntimeError, match=str(missing)):
@@ -108,13 +108,13 @@ async def test_unreadable_jev_catalogue_refuses_scan_before_fetch(
 
 
 @pytest.mark.asyncio
-async def test_jev_client_closes_when_scan_body_raises(
+async def test_zeroshot_client_closes_when_scan_body_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _main_loop_shell(monkeypatch, RuntimeRegistry({}, (), {}))
     client = SimpleNamespace(aclose=AsyncMock())
     context = SimpleNamespace(client=client)
-    monkeypatch.setattr(runner, "setup_jev_scan", Mock(return_value=Ok(context)))
+    monkeypatch.setattr(runner, "setup_zeroshot_scan", Mock(return_value=Ok(context)))
     monkeypatch.setattr(
         runner,
         "build_search_queries",
@@ -127,15 +127,15 @@ async def test_jev_client_closes_when_scan_body_raises(
     client.aclose.assert_awaited_once()
 
 
-def test_missing_routed_jev_project_is_a_setup_error(
+def test_missing_routed_zeroshot_project_is_a_setup_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     catalogue = SimpleNamespace(questions=(object(),))
     monkeypatch.setattr("scout.relevance.setup.load_catalogue", Mock(return_value=catalogue))
-    monkeypatch.setattr(runner._config, "RELEVANCE_JEV_CATALOGUE_PATH", "/catalogue.yaml")
+    monkeypatch.setattr(runner._config, "RELEVANCE_ZEROSHOT_CATALOGUE_PATH", "/catalogue.yaml")
     registry = RuntimeRegistry({}, (_route("agent-evals"),), {})
 
-    result = runner.setup_jev_scan(registry)
+    result = runner.setup_zeroshot_scan(registry)
 
     assert isinstance(result, Err)
     assert result.error.operation == "resolve_relevance_project"
@@ -143,7 +143,7 @@ def test_missing_routed_jev_project_is_a_setup_error(
 
 
 @pytest.mark.asyncio
-async def test_one_setup_is_reused_across_posts_and_jev_errors_are_retryable(
+async def test_one_setup_is_reused_across_posts_and_zeroshot_errors_are_retryable(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     project = ProjectTarget("agent-ops", "Agent Ops", "desc", "")
@@ -154,9 +154,9 @@ async def test_one_setup_is_reused_across_posts_and_jev_errors_are_retryable(
     client_constructor = Mock(return_value=client)
     monkeypatch.setattr("scout.relevance.setup.load_catalogue", load)
     monkeypatch.setattr("scout.relevance.setup.JevClient", client_constructor)
-    monkeypatch.setattr(runner._config, "RELEVANCE_JEV_CATALOGUE_PATH", "/catalogue.yaml")
+    monkeypatch.setattr(runner._config, "RELEVANCE_ZEROSHOT_CATALOGUE_PATH", "/catalogue.yaml")
 
-    setup = setup_jev_scan(registry)
+    setup = setup_zeroshot_scan(registry)
     assert isinstance(setup, Ok)
 
     state = StateManager(db_path=str(tmp_path / "state.db"))
@@ -171,7 +171,7 @@ async def test_one_setup_is_reused_across_posts_and_jev_errors_are_retryable(
         step_outputs={
             "score_and_draft": Err(
                 LLMError(
-                    operation="jev.evaluate",
+                    operation="zeroshot.evaluate",
                     message_id="post",
                     detail="provider unavailable",
                 )
@@ -200,7 +200,7 @@ async def test_one_setup_is_reused_across_posts_and_jev_errors_are_retryable(
         scan_id,
         str(tmp_path / "digest.md"),
         feedback_snapshot=snapshot,
-        jev_context=setup.value,
+        zeroshot_context=setup.value,
     )
 
     load.assert_called_once_with("/catalogue.yaml")
@@ -209,5 +209,9 @@ async def test_one_setup_is_reused_across_posts_and_jev_errors_are_retryable(
     assert [failure.kind for failure in failures] == ["scoring_error", "scoring_error"]
     assert all(failure.retryable for failure in failures)
     assert all(failure.message == "provider unavailable" for failure in failures)
-    assert all(failure.context.endswith(":jev.evaluate") for failure in failures if failure.context)
+    assert all(
+        failure.context.endswith(":zeroshot.evaluate")
+        for failure in failures
+        if failure.context
+    )
     state.close()

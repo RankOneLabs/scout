@@ -100,7 +100,9 @@ def test_old_grade_is_not_excluded_by_prompt_lookback(state: StateManager) -> No
     assert len(snapshot.members) == 1
 
 
-def test_jev_phase_run_is_excluded_when_new_corpus_is_selected(state: StateManager) -> None:
+def test_zeroshot_phase_run_is_excluded_when_new_corpus_is_selected(
+    state: StateManager,
+) -> None:
     scan_id = state.start_scan()
     snapshot = state.record_feedback_snapshot(scan_id, mode="shadow")
     relevance_phase = next(phase for phase in snapshot.phases if phase.phase == "relevance")
@@ -109,8 +111,8 @@ def test_jev_phase_run_is_excluded_when_new_corpus_is_selected(state: StateManag
         post_id=1,
         snapshot_phase_id=relevance_phase.snapshot_phase_id,
         phase="relevance",
-        trace_id="jev-trace",
-        model="jev:jev-latest",
+        trace_id="zeroshot-trace",
+        model="zeroshot:jev-latest",
         status="complete",
     )
     with state.db.transaction():

@@ -26,8 +26,8 @@ import scout.scanning.pipeline as pipeline
 from scout.config import Account, Message
 from scout.registry import KeywordRoute, ProjectTarget
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
-from scout.relevance.models import JevRelevanceOutput
-from scout.relevance.setup import JevScanContext
+from scout.relevance.models import ZeroShotRelevanceOutput
+from scout.relevance.setup import ZeroShotScanContext
 from scout.result import Ok
 from scout.scanning.agent import PhaseRunIdentity, ScoutExecutionContext
 from scout.scanning.pipeline import PhaseExecution, score_and_draft_step
@@ -66,7 +66,7 @@ def _routed(project_key: str) -> RoutedMessage:
     )
 
 
-def _context(project_key: str, model: str, jev_context: object | None = None) -> dict:
+def _context(project_key: str, model: str, zeroshot_context: object | None = None) -> dict:
     identity = SimpleNamespace(snapshot_phase_id=1, model=model)
     return {
         "input": _routed(project_key),
@@ -80,14 +80,14 @@ def _context(project_key: str, model: str, jev_context: object | None = None) ->
             reply_draft=identity,
             critic=identity,
         ),
-        "jev_context": jev_context,
+        "zeroshot_context": zeroshot_context,
     }
 
 
 class _UnusedLLM(LLMClient):
     async def complete(self, params: CompletionParams) -> LLMResponse:
         del params
-        raise AssertionError("the Jev executor must not call the LLM client")
+        raise AssertionError("the zero-shot executor must not call the LLM client")
 
 
 class _CapturingJevClient:
@@ -112,7 +112,7 @@ def _catalogue() -> RelevanceCatalogue:
     document = {
         "id": "test-relevance",
         "decide": "agent_ops_route/v1",
-        "description": "Test Jev relevance catalogue.",
+        "description": "Test zero-shot relevance catalogue.",
         "state": {
             "post": ["platform", "channel", "url", "text"],
             "parent_context_only": ["author_name", "text"],
@@ -165,7 +165,7 @@ def _relevance_config(tracer: SQLiteTracer) -> AgentConfig[RelevancePhaseOutput]
 
 
 @pytest.mark.asyncio
-async def test_agent_ops_dispatches_jev_and_carries_whole_output(
+async def test_agent_ops_dispatches_zeroshot_and_carries_whole_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     answers = {
@@ -176,7 +176,7 @@ async def test_agent_ops_dispatches_jev_and_carries_whole_output(
         "points_somewhere": 0.0,
     }
     decision = route(answers)
-    jev_output = JevRelevanceOutput(
+    zeroshot_output = ZeroShotRelevanceOutput(
         relevant=False,
         score=1.0,
         reason="exclusion: noise",
@@ -194,45 +194,45 @@ async def test_agent_ops_dispatches_jev_and_carries_whole_output(
         seen_executor = kwargs["executor"]
         return Ok(
             PhaseExecution(
-                parsed=jev_output,
-                trace_id="jev-trace",
+                parsed=zeroshot_output,
+                trace_id="zeroshot-trace",
                 phase_run_id=7,
                 phase="relevance",
-                model="jev:jev-latest",
+                model="zeroshot:jev-latest",
             )
         )
 
     target = ProjectTarget("agent-ops", "Agent Ops", "desc", "")
-    jev_context = SimpleNamespace(
+    zeroshot_context = SimpleNamespace(
         projects={"agent-ops": target},
         catalogue=Mock(),
         questions=(),
         client=SimpleNamespace(model="jev-latest"),
     )
-    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "jev")
+    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "zeroshot")
     monkeypatch.setattr(pipeline, "build_state", Mock(return_value={}))
     monkeypatch.setattr(pipeline, "_run_phase", fake_run_phase)
 
     result = await score_and_draft_step(
-        _context("agent-ops", "jev:jev-latest", jev_context)
+        _context("agent-ops", "zeroshot:jev-latest", zeroshot_context)
     )
 
     assert isinstance(result, Ok)
     candidate = result.value
     assert seen_executor is not run_agent
     assert candidate.relevance_action == decision.action
-    assert candidate.relevance_classifier == "jev:jev-latest"
-    assert candidate.relevance_output is jev_output
+    assert candidate.relevance_classifier == "zeroshot:jev-latest"
+    assert candidate.relevance_output is zeroshot_output
     assert candidate.model_dump()["relevance_output"]["answers"] == answers
     assert candidate.score == 1.0
     outcome = classify_outcome(candidate, _message(), {})
-    assert outcome.relevance_output is jev_output
+    assert outcome.relevance_output is zeroshot_output
     assert outcome.relevance_classifier == candidate.relevance_classifier
     assert outcome.relevance_action == candidate.relevance_action
 
 
 @pytest.mark.asyncio
-async def test_unmeasured_project_uses_llm_when_classifier_is_jev(
+async def test_unmeasured_project_uses_llm_when_classifier_is_zeroshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_executor: object | None = None
@@ -252,7 +252,7 @@ async def test_unmeasured_project_uses_llm_when_classifier_is_jev(
             )
         )
 
-    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "jev")
+    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "zeroshot")
     monkeypatch.setattr(pipeline, "_run_phase", fake_run_phase)
 
     result = await score_and_draft_step(_context("gateway", "llm-model"))
@@ -265,7 +265,7 @@ async def test_unmeasured_project_uses_llm_when_classifier_is_jev(
 
 
 @pytest.mark.asyncio
-async def test_jev_dispatch_projects_state_and_returns_real_candidate(
+async def test_zeroshot_dispatch_projects_state_and_returns_real_candidate(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     message = _message()
@@ -279,12 +279,12 @@ async def test_jev_dispatch_projects_state_and_returns_real_candidate(
     )
     identity = PhaseRunIdentity(
         snapshot_phase_id=relevance_snapshot.snapshot_phase_id,
-        model="jev:jev-latest",
+        model="zeroshot:jev-latest",
     )
     target = ProjectTarget("agent-ops", "Agent Ops", "Agent operations", "")
     catalogue = _catalogue()
     client = _CapturingJevClient(_jev_review_result())
-    jev_context = JevScanContext(
+    zeroshot_context = ZeroShotScanContext(
         catalogue=catalogue,
         questions=catalogue.questions,
         client=cast(Any, client),
@@ -298,7 +298,7 @@ async def test_jev_dispatch_projects_state_and_returns_real_candidate(
         reply_draft=identity,
         critic=identity,
     )
-    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "jev")
+    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "zeroshot")
 
     result = await score_and_draft_step(
         {
@@ -306,18 +306,18 @@ async def test_jev_dispatch_projects_state_and_returns_real_candidate(
             "phase_configs": SimpleNamespace(relevance=_relevance_config(tracer)),
             "dossier_summaries": {},
             "execution_context": execution,
-            "jev_context": jev_context,
+            "zeroshot_context": zeroshot_context,
         }
     )
 
     assert isinstance(result, Ok)
-    assert isinstance(result.value.relevance_output, JevRelevanceOutput)
+    assert isinstance(result.value.relevance_output, ZeroShotRelevanceOutput)
     assert result.value.relevance_output.answers == {
         key: answer.noul for key, answer in client.result.answers.items()
     }
     assert result.value.relevant is False
     assert result.value.relevance_action == "review"
-    assert result.value.relevance_classifier == "jev:jev-latest"
+    assert result.value.relevance_classifier == "zeroshot:jev-latest"
     assert result.value.score == 1.0
     assert result.value.structured_draft is None
     assert client.state == {

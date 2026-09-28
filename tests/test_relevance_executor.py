@@ -1,4 +1,4 @@
-"""Jev relevance executor, trace, and phase persistence tests."""
+"""Zero-shot relevance executor, trace, and phase persistence tests."""
 
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ from jig.jev import JevResult, JevUsage, NoulAnswer
 
 import scout.config as scout_config
 from scout.config import Account, Message
-from scout.relevance.executor import run_jev_relevance
+from scout.relevance.executor import run_zeroshot_relevance
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
-from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
+from scout.relevance.models import ZeroShotRelevanceError, ZeroShotRelevanceOutput
 from scout.replay.experiments import BaselineResolutionError, build_domain_diff, resolve_baseline
 from scout.result import Ok
 from scout.scanning.pipeline import _run_phase
@@ -37,7 +37,7 @@ from scout.storage.state import StateManager
 class _UnusedLLM(LLMClient):
     async def complete(self, params: CompletionParams) -> LLMResponse:
         del params
-        raise AssertionError("the Jev executor must not call the LLM client")
+        raise AssertionError("the zero-shot executor must not call the LLM client")
 
 
 class _JevStub:
@@ -87,7 +87,7 @@ def _catalogue() -> RelevanceCatalogue:
     document = {
         "id": "test-relevance",
         "decide": "agent_ops_route/v1",
-        "description": "Test Jev relevance catalogue.",
+        "description": "Test zero-shot relevance catalogue.",
         "state": {
             "post": ["platform", "channel", "url", "text"],
             "parent_context_only": ["author_name", "text"],
@@ -124,8 +124,8 @@ def _result() -> JevResult:
     )
 
 
-def _config(tracer: SQLiteTracer) -> AgentConfig[JevRelevanceOutput]:
-    return AgentConfig[JevRelevanceOutput](
+def _config(tracer: SQLiteTracer) -> AgentConfig[ZeroShotRelevanceOutput]:
+    return AgentConfig[ZeroShotRelevanceOutput](
         name="unused-llm-config",
         description="unused",
         system_prompt="unused",
@@ -133,7 +133,7 @@ def _config(tracer: SQLiteTracer) -> AgentConfig[JevRelevanceOutput]:
         feedback=NullFeedbackLoop(),
         tracer=tracer,
         tools=ToolRegistry([]),
-        output_schema=JevRelevanceOutput,
+        output_schema=ZeroShotRelevanceOutput,
     )
 
 
@@ -160,18 +160,18 @@ def _seed(state: StateManager) -> tuple[int, int, int]:
 
 def _executor(client: Any, catalogue: RelevanceCatalogue) -> Any:
     return partial(
-        run_jev_relevance,
+        run_zeroshot_relevance,
         client=client,
         catalogue=catalogue,
         questions=catalogue.questions,
-        jev_state={"post": {"text": "agent retries"}},
+        zeroshot_state={"post": {"text": "agent retries"}},
         project_key="agent-ops",
         message_id="post-1",
     )
 
 
 @pytest.mark.asyncio
-async def test_jev_executor_writes_prescribed_trace_without_api_key(
+async def test_zeroshot_executor_writes_prescribed_trace_without_api_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
@@ -179,13 +179,13 @@ async def test_jev_executor_writes_prescribed_trace_without_api_key(
     monkeypatch.setattr(scout_config, "TYPESAFE_API_KEY", secret)
     client = _JevStub(replace(_result(), call_id=f"call-{secret}"), api_key=secret)
 
-    result = await run_jev_relevance(
+    result = await run_zeroshot_relevance(
         _config(tracer),
         "formatted post",
         client=cast(Any, client),
         catalogue=_catalogue(),
         questions=_catalogue().questions,
-        jev_state={"post": {"text": "agent retries"}},
+        zeroshot_state={"post": {"text": "agent retries"}},
         project_key="agent-ops",
         message_id="post-1",
     )
@@ -194,7 +194,7 @@ async def test_jev_executor_writes_prescribed_trace_without_api_key(
     roots = [span for span in spans if span.parent_id is None]
     children = [span for span in spans if span.parent_id == roots[0].id]
     assert [(span.name, span.kind) for span in roots] == [
-        ("scout_relevance_jev", SpanKind.AGENT_RUN)
+        ("scout_relevance_zeroshot", SpanKind.AGENT_RUN)
     ]
     assert [(span.name, span.kind) for span in children] == [
         ("jev.call", SpanKind.PROVIDER_CALL)
@@ -239,18 +239,18 @@ async def test_generic_executor_failure_redacts_api_key_from_trace(
     catalogue = _catalogue()
 
     with pytest.raises(RuntimeError, match="provider runtime failed"):
-        await run_jev_relevance(
+        await run_zeroshot_relevance(
             _config(tracer),
             "formatted post",
             client=cast(Any, _FailingJevStub(f"provider runtime failed: {secret}")),
             catalogue=catalogue,
             questions=catalogue.questions,
-            jev_state={"post": {"text": "agent retries"}},
+            zeroshot_state={"post": {"text": "agent retries"}},
             project_key="agent-ops",
             message_id="post-1",
         )
 
-    roots = await tracer.list_traces(name="scout_relevance_jev")
+    roots = await tracer.list_traces(name="scout_relevance_zeroshot")
     assert len(roots) == 1
     spans = await tracer.get_trace(roots[0].trace_id)
     serialized = json.dumps(
@@ -263,7 +263,7 @@ async def test_generic_executor_failure_redacts_api_key_from_trace(
 
 
 @pytest.mark.asyncio
-async def test_jev_phase_is_refused_as_replay_baseline(tmp_path) -> None:
+async def test_zeroshot_phase_is_refused_as_replay_baseline(tmp_path) -> None:
     tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
     state = StateManager(db_path=str(tmp_path / "state.db"))
     scan_id, post_id, snapshot_phase_id = _seed(state)
@@ -278,13 +278,13 @@ async def test_jev_phase_is_refused_as_replay_baseline(tmp_path) -> None:
         scan_id=scan_id,
         post_id=post_id,
         snapshot_phase_id=snapshot_phase_id,
-        model="jev:jev-latest",
+        model="zeroshot:jev-latest",
         executor=_executor(_JevStub(_result()), catalogue),
     )
 
     assert isinstance(phase, Ok)
-    assert isinstance(phase.value.parsed, JevRelevanceOutput)
-    with pytest.raises(BaselineResolutionError, match="produced by Jev"):
+    assert isinstance(phase.value.parsed, ZeroShotRelevanceOutput)
+    with pytest.raises(BaselineResolutionError, match="produced by zero-shot"):
         await resolve_baseline(state, tracer, phase.value.phase_run_id)
     phase_run_count = state.conn.execute(
         "SELECT COUNT(*) FROM evaluation_phase_runs WHERE post_id = ?", (post_id,)
@@ -295,7 +295,7 @@ async def test_jev_phase_is_refused_as_replay_baseline(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_jev_phase_uses_phase_cleanup_path(tmp_path) -> None:
+async def test_cancelled_zeroshot_phase_uses_phase_cleanup_path(tmp_path) -> None:
     tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
     state = StateManager(db_path=str(tmp_path / "state.db"))
     scan_id, post_id, snapshot_phase_id = _seed(state)
@@ -311,7 +311,7 @@ async def test_cancelled_jev_phase_uses_phase_cleanup_path(tmp_path) -> None:
             scan_id=scan_id,
             post_id=post_id,
             snapshot_phase_id=snapshot_phase_id,
-            model="jev:jev-latest",
+            model="zeroshot:jev-latest",
             executor=_executor(client, catalogue),
         )
     )
@@ -330,15 +330,15 @@ async def test_cancelled_jev_phase_uses_phase_cleanup_path(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_jev_error_is_returned_with_retryable_scoring_fields(tmp_path) -> None:
+async def test_zeroshot_error_is_returned_with_retryable_scoring_fields(tmp_path) -> None:
     tracer = SQLiteTracer(db_path=str(tmp_path / "traces.db"))
     state = StateManager(db_path=str(tmp_path / "state.db"))
     scan_id, post_id, snapshot_phase_id = _seed(state)
 
     async def failed_executor(config, input_text):
         del config, input_text
-        raise JevRelevanceError(
-            operation="jev.evaluate",
+        raise ZeroShotRelevanceError(
+            operation="zeroshot.evaluate",
             message_id="post-1",
             detail="provider unavailable",
         )
@@ -352,12 +352,12 @@ async def test_jev_error_is_returned_with_retryable_scoring_fields(tmp_path) -> 
         scan_id=scan_id,
         post_id=post_id,
         snapshot_phase_id=snapshot_phase_id,
-        model="jev:jev-latest",
+        model="zeroshot:jev-latest",
         executor=failed_executor,
     )
 
     assert not isinstance(result, Ok)
-    assert result.error.operation == "jev.evaluate"
+    assert result.error.operation == "zeroshot.evaluate"
     assert result.error.detail == "provider unavailable"
     await tracer.close()
     state.close()

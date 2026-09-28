@@ -1,4 +1,4 @@
-"""Jev holdout selection and atomic persistence."""
+"""Zero-shot holdout selection and atomic persistence."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 from scout.config import Account, Message, RelevanceResult
 from scout.registry import KeywordRoute, ProjectTarget, RuntimeRegistry
 from scout.relevance.holdout import draw_relevance_holdout
-from scout.relevance.models import JevRelevanceOutput, RelevanceAction
+from scout.relevance.models import RelevanceAction, ZeroShotRelevanceOutput
 from scout.result import Ok
 from scout.scanning.pipeline import PhaseExecution, score_and_draft_step
 from scout.scanning.prefilter import RoutedMessage
@@ -78,17 +78,17 @@ def _relevance_phase_run(state: StateManager, scan_id: int, post_id: int) -> int
         snapshot_phase_id=relevance.snapshot_phase_id,
         phase="relevance",
         trace_id=f"trace-{post_id}",
-        model="jev:test",
+        model="zeroshot:test",
         status="complete",
     )
 
 
 @pytest.mark.parametrize("action", ["respond", "review", "drop"])
-def test_draw_covers_every_jev_action(action: RelevanceAction) -> None:
+def test_draw_covers_every_zeroshot_action(action: RelevanceAction) -> None:
     rng = StubRng(0.24)
 
     held = draw_relevance_holdout(
-        classifier="jev",
+        classifier="zeroshot",
         project_key="agent-ops",
         production_action=action,
         rate=0.25,
@@ -101,7 +101,7 @@ def test_draw_covers_every_jev_action(action: RelevanceAction) -> None:
 
 @pytest.mark.parametrize(
     ("classifier", "project_key"),
-    [("llm", "agent-ops"), ("jev", "gateway"), ("jev", None)],
+    [("llm", "agent-ops"), ("zeroshot", "gateway"), ("zeroshot", None)],
 )
 def test_ineligible_posts_are_never_drawn(classifier: str, project_key: str | None) -> None:
     rng = StubRng(0.0)
@@ -120,7 +120,7 @@ def test_ineligible_posts_are_never_drawn(classifier: str, project_key: str | No
 
 def test_above_rate_is_not_held() -> None:
     assert not draw_relevance_holdout(
-        classifier="jev",
+        classifier="zeroshot",
         project_key="agent-evals",
         production_action="respond",
         rate=0.25,
@@ -130,13 +130,13 @@ def test_above_rate_is_not_held() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["respond", "drop"])
-async def test_selected_jev_post_returns_held_before_drafting(
+async def test_selected_zeroshot_post_returns_held_before_drafting(
     monkeypatch: pytest.MonkeyPatch,
     action: RelevanceAction,
 ) -> None:
     import scout.scanning.pipeline as pipeline
 
-    relevance = JevRelevanceOutput(
+    relevance = ZeroShotRelevanceOutput(
         relevant=action == "respond",
         score=1.0,
         reason="in_post",
@@ -157,7 +157,7 @@ async def test_selected_jev_post_returns_held_before_drafting(
                     trace_id="trace-held",
                     phase_run_id=91,
                     phase="relevance",
-                    model="jev:test",
+                    model="zeroshot:test",
                 )
             )
         ),
@@ -165,7 +165,7 @@ async def test_selected_jev_post_returns_held_before_drafting(
     draft = AsyncMock()
     monkeypatch.setattr(pipeline, "_draft_and_critic", draft)
     monkeypatch.setattr(pipeline, "build_state", Mock(return_value={}))
-    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "jev")
+    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "zeroshot")
     project = _registry().projects["agent-ops"]
     context = {
         "input": RoutedMessage(_message(), _registry().keywords[0]),
@@ -175,9 +175,9 @@ async def test_selected_jev_post_returns_held_before_drafting(
             state=object(),
             scan_id=1,
             post_id=2,
-            relevance=SimpleNamespace(snapshot_phase_id=3, model="jev:test"),
+            relevance=SimpleNamespace(snapshot_phase_id=3, model="zeroshot:test"),
         ),
-        "jev_context": SimpleNamespace(
+        "zeroshot_context": SimpleNamespace(
             client=SimpleNamespace(model="test"),
             catalogue=object(),
             questions=(),
@@ -202,10 +202,12 @@ async def test_selected_jev_post_returns_held_before_drafting(
 
 
 @pytest.mark.asyncio
-async def test_unselected_jev_post_drafts_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_unselected_zeroshot_post_drafts_normally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import scout.scanning.pipeline as pipeline
 
-    relevance = JevRelevanceOutput(
+    relevance = ZeroShotRelevanceOutput(
         relevant=True,
         score=1.0,
         reason="in_post",
@@ -226,7 +228,7 @@ async def test_unselected_jev_post_drafts_normally(monkeypatch: pytest.MonkeyPat
                     trace_id="trace-normal",
                     phase_run_id=92,
                     phase="relevance",
-                    model="jev:test",
+                    model="zeroshot:test",
                 )
             )
         ),
@@ -242,7 +244,7 @@ async def test_unselected_jev_post_drafts_normally(monkeypatch: pytest.MonkeyPat
     draft = AsyncMock(return_value=Ok(expected))
     monkeypatch.setattr(pipeline, "_draft_and_critic", draft)
     monkeypatch.setattr(pipeline, "build_state", Mock(return_value={}))
-    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "jev")
+    monkeypatch.setattr(pipeline._config, "RELEVANCE_CLASSIFIER", "zeroshot")
     project = _registry().projects["agent-ops"]
 
     result = await score_and_draft_step(
@@ -254,9 +256,9 @@ async def test_unselected_jev_post_drafts_normally(monkeypatch: pytest.MonkeyPat
                 state=object(),
                 scan_id=1,
                 post_id=2,
-                relevance=SimpleNamespace(snapshot_phase_id=3, model="jev:test"),
+                relevance=SimpleNamespace(snapshot_phase_id=3, model="zeroshot:test"),
             ),
-            "jev_context": SimpleNamespace(
+            "zeroshot_context": SimpleNamespace(
                 client=SimpleNamespace(model="test"),
                 catalogue=object(),
                 questions=(),
@@ -290,7 +292,7 @@ def test_held_evaluation_and_holdout_are_atomic_and_freeze_context(
         reason="in post",
         relevant_to=["agent-ops"],
         project_key="agent-ops",
-        relevance_classifier="jev:test",
+        relevance_classifier="zeroshot:test",
         relevance_action="respond",
         held=True,
         contributor_phase_run_ids=(phase_run_id,),

@@ -12,14 +12,14 @@ import scout.replay.experiments as experiments
 from scout.relevance.classifier_identity import (
     UnknownClassifier,
     classifier_of,
-    jev_classifier,
+    zeroshot_classifier,
 )
 from scout.result import Err, Ok
 
 
-@pytest.mark.parametrize("model", ["jev:jev-latest", "jev:jev-v6"])
-def test_classifier_of_known_jev_models(model: str) -> None:
-    assert classifier_of(model) == Ok("jev")
+@pytest.mark.parametrize("model", ["zeroshot:jev-latest", "zeroshot:jev-v6"])
+def test_classifier_of_known_zeroshot_models(model: str) -> None:
+    assert classifier_of(model) == Ok("zeroshot")
 
 
 @pytest.mark.parametrize(
@@ -42,22 +42,22 @@ def test_classifier_of_unknown_model_is_explicit() -> None:
     assert classifier_of(model) == Err(UnknownClassifier(model))
 
 
-def test_jev_classifier_builds_namespaced_payload_identity() -> None:
-    assert jev_classifier("jev-latest") == "jev:jev-latest"
+def test_zeroshot_classifier_builds_namespaced_payload_identity() -> None:
+    assert zeroshot_classifier("jev-latest") == "zeroshot:jev-latest"
 
 
 @pytest.mark.parametrize("model", ["", " leading-space", "bad:model"])
-def test_jev_classifier_rejects_invalid_payload_model(model: str) -> None:
+def test_zeroshot_classifier_rejects_invalid_payload_model(model: str) -> None:
     with pytest.raises(ValueError, match="non-empty model identifier"):
-        jev_classifier(model)
+        zeroshot_classifier(model)
 
 
-async def test_resolve_baseline_refuses_jev_phase_run() -> None:
+async def test_resolve_baseline_refuses_zeroshot_phase_run() -> None:
     phase_run = {
         "id": 17,
         "status": "complete",
         "phase": "relevance",
-        "model": "jev:jev-latest",
+        "model": "zeroshot:jev-latest",
     }
     state = SimpleNamespace(
         db=SimpleNamespace(read_transaction=nullcontext),
@@ -65,6 +65,6 @@ async def test_resolve_baseline_refuses_jev_phase_run() -> None:
     )
     tracer = AsyncMock()
 
-    with pytest.raises(experiments.BaselineResolutionError, match="produced by Jev"):
+    with pytest.raises(experiments.BaselineResolutionError, match="produced by zero-shot"):
         await experiments.resolve_baseline(state, tracer, 17)
     tracer.get_trace.assert_not_awaited()

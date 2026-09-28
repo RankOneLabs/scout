@@ -502,7 +502,7 @@ def _rewrite_frozen_relevance_model(
 
 
 class TestRelevanceBatch:
-    async def test_loader_excludes_frozen_jev_phase(
+    async def test_loader_excludes_frozen_zeroshot_phase(
         self,
         state,
         tracer,
@@ -512,7 +512,7 @@ class TestRelevanceBatch:
     ) -> None:
         task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
         rewritten, evaluation_id = _rewrite_frozen_relevance_model(
-            state, task, monkeypatch, "jev:jev-latest"
+            state, task, monkeypatch, "zeroshot:jev-latest"
         )
 
         loaded = load_relevance_population(state, rewritten)

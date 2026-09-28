@@ -194,15 +194,15 @@ TYPESAFE_PLACEHOLDER_ANSWERS_PATH: str = os.getenv(
 
 # --- Relevance classifier selection ---
 _relevance_classifier = os.getenv("RELEVANCE_CLASSIFIER", "llm").strip().lower()
-if _relevance_classifier not in {"llm", "jev"}:
-    _env_errors.append("RELEVANCE_CLASSIFIER must be one of llm, jev")
+if _relevance_classifier not in {"llm", "zeroshot"}:
+    _env_errors.append("RELEVANCE_CLASSIFIER must be one of llm, zeroshot")
     _relevance_classifier = "llm"
-RELEVANCE_CLASSIFIER: Literal["llm", "jev"] = cast(
-    Literal["llm", "jev"], _relevance_classifier
+RELEVANCE_CLASSIFIER: Literal["llm", "zeroshot"] = cast(
+    Literal["llm", "zeroshot"], _relevance_classifier
 )
 
-RELEVANCE_JEV_CATALOGUE_PATH: str = os.getenv(
-    "RELEVANCE_JEV_CATALOGUE_PATH", ""
+RELEVANCE_ZEROSHOT_CATALOGUE_PATH: str = os.getenv(
+    "RELEVANCE_ZEROSHOT_CATALOGUE_PATH", ""
 ).strip()
 
 # These defaults are sourced from jig.jev.JevClient at the pinned 5fa9c01

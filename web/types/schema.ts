@@ -171,7 +171,7 @@ export interface Evaluation {
   relevance_presentation?: RelevancePresentation | null;
 }
 
-export interface JevRouteEvidence {
+export interface ZeroShotRouteEvidence {
   action: RouteAction;
   line: string;
   exclusion: string | null;
@@ -180,9 +180,9 @@ export interface JevRouteEvidence {
 }
 
 export interface RelevancePresentation {
-  classifier: "llm" | "jev" | "unknown";
+  classifier: "llm" | "zeroshot" | "unknown";
   model: string;
-  jev: JevRouteEvidence | null;
+  zeroshot: ZeroShotRouteEvidence | null;
 }
 
 /** Latest schema-v47 shadow relevance run projected for review. */
