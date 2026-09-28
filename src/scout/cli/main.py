@@ -22,7 +22,7 @@ from scout.paa.event_store import ScoutEventStore
 from scout.scanning.runner import main_loop, run_preflight
 from scout.storage.state import StateManager
 
-_HOLDOUT_RELEASE_COMMAND = "_release"[1:]
+_HOLDOUT_RELEASE_COMMAND = "release"
 
 logger = logging.getLogger("scout.cli")
 
