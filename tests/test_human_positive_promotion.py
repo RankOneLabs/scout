@@ -1,14 +1,30 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from scout.config import Account, GradeRecord, Message, RelevanceResult
+from scout.dossiers.resolver import DossierSummary
+from scout.grading.promotion import promote_negative_case
+from scout.result import Ok
+from scout.scanning.schemas import (
+    QuestionSegment,
+    ReplyCandidate,
+    StructuredDraftOutput,
+)
+from scout.storage.evaluations import EvaluationAction, EvaluationClassifier
 from scout.storage.state import HumanPositivePromotionInProgressError, StateManager
 
 
-def _source(state: StateManager) -> tuple[int, int, int, Message]:
+def _source(
+    state: StateManager,
+    *,
+    relevance_classifier: EvaluationClassifier = "llm",
+    relevance_action: EvaluationAction | None = None,
+) -> tuple[int, int, int, Message]:
     scan_id = state.start_scan(run_kind="live")
     message = Message(
         platform="discord",
@@ -36,8 +52,8 @@ def _source(state: StateManager) -> tuple[int, int, int, Message]:
         post_id,
         scan_id,
 
-        relevance_classifier="llm",
-        relevance_action=None,
+        relevance_classifier=relevance_classifier,
+        relevance_action=relevance_action,
     )
     return scan_id, post_id, source_id, message
 
@@ -54,6 +70,92 @@ def _grade(scan_id: int, post_id: int, source_id: int) -> GradeRecord:
         dimensions=["usefulness"],
         failure_note="Scout should have surfaced this",
     )
+
+
+@pytest.mark.asyncio
+async def test_zero_shot_review_promotion_creates_one_human_response_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scout.grading.promotion as promotion
+
+    dossier = DossierSummary(
+        project_key="gateway",
+        last_reviewed=date(2026, 1, 1),
+        reviewer="operator",
+    )
+
+    async def generated_response(context: Any) -> Ok[ReplyCandidate]:
+        execution = context["execution_context"]
+        contributor_ids = tuple(
+            state.insert_phase_run(
+                scan_id=execution.scan_id,
+                post_id=execution.post_id,
+                snapshot_phase_id=getattr(execution, phase).snapshot_phase_id,
+                phase=phase,
+                trace_id=f"trace-{phase}",
+                model=getattr(execution, phase).model,
+                status="complete",
+            )
+            for phase in ("reply_draft", "critic")
+        )
+        return Ok(
+            ReplyCandidate(
+                relevant=True,
+                score=1.0,
+                reason="human override",
+                relevant_to=["gateway"],
+                project_key="gateway",
+                critique_verdict="approve",
+                critique_feedback="approved",
+                structured_draft=StructuredDraftOutput(
+                    posture="ask",
+                    segments=[QuestionSegment(type="question", text="Could you share more?")],
+                ),
+                relevance_classifier="human",
+                relevance_action="respond",
+                contributor_phase_run_ids=contributor_ids,
+            )
+        )
+
+    monkeypatch.setattr(
+        promotion,
+        "load_project_dossiers",
+        lambda _projects: ({"gateway": dossier}, []),
+    )
+    monkeypatch.setattr(promotion, "draft_and_critic_step", generated_response)
+
+    with StateManager(db_path=":memory:") as state:
+        state.upsert_project(
+            "gateway", "Gateway", "Gateway project", "https://example.test"
+        )
+        state.upsert_keyword("gateway", "response")
+        source_scan_id, post_id, source_id, _message = _source(
+            state,
+            relevance_classifier="zeroshot",
+            relevance_action="review",
+        )
+        outcome = await promote_negative_case(
+            state=state,
+            tracer=Mock(),
+            feedback=Mock(),
+            source_evaluation_id=source_id,
+            grade=_grade(source_scan_id, post_id, source_id),
+        )
+
+        target = state.get_evaluation(outcome.target_evaluation_id)
+        assert target is not None
+        assert (target["relevance_classifier"], target["relevance_action"]) == (
+            "human",
+            "respond",
+        )
+        assert state.conn.execute(
+            "SELECT COUNT(*) FROM human_positive_promotions WHERE source_evaluation_id = ?",
+            (source_id,),
+        ).fetchone()[0] == 1
+        assert state.conn.execute(
+            "SELECT COUNT(*) FROM draft_comments WHERE evaluation_id = ?",
+            (outcome.target_evaluation_id,),
+        ).fetchone()[0] == 1
 
 
 def test_promotion_claim_is_durable_retryable_and_idempotent(tmp_path) -> None:

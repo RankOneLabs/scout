@@ -1135,8 +1135,11 @@ class GradeStore:
 
         relevance_rows = [r for r in rows if r["relevance_classifier"] == "llm"]
         for r in rows:
-            rel = r["relevance_judgment"]
             action = r["action_judgment"]
+            if action == "accept":
+                pass_count += 1
+            else:
+                fail_count += 1
 
             if r["dimensions"]:
                 try:
@@ -1157,11 +1160,6 @@ class GradeStore:
                 causal_examples.append(str(r["failure_note"])[:120])
 
         for r in relevance_rows:
-            action = r["action_judgment"]
-            if action == "accept":
-                pass_count += 1
-            else:
-                fail_count += 1
             rel = r["relevance_judgment"]
             if rel == "false_positive":
                 fp_count += 1
@@ -1173,7 +1171,7 @@ class GradeStore:
         )
 
         return GradingSignal(
-            total_graded=len(relevance_rows),
+            total_graded=len(rows),
             pass_count=pass_count,
             false_positive_count=fp_count,
             false_negative_count=fn_count,
