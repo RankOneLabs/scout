@@ -25,13 +25,14 @@ from jig.jev import JevResult, JevUsage, NoulAnswer
 
 import scout.config as scout_config
 from scout.config import Account, Message
-from scout.relevance.executor import run_zeroshot_relevance
+from scout.relevance.executor import _reason, run_zeroshot_relevance
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue_bytes
 from scout.relevance.models import ZeroShotRelevanceError, ZeroShotRelevanceOutput
 from scout.replay.experiments import BaselineResolutionError, build_domain_diff, resolve_baseline
 from scout.result import Ok
 from scout.scanning.pipeline import _run_phase
 from scout.storage.state import StateManager
+from scout.typesafe.routes import route
 
 
 class _UnusedLLM(LLMClient):
@@ -121,6 +122,63 @@ def _result() -> JevResult:
         call_id="call-1",
         provider_request_id="provider-1",
         attempts=1,
+    )
+
+
+def _answers(**overrides: float) -> dict[str, float]:
+    return {
+        "excl_noise": 0.0,
+        "needs_thread": 0.0,
+        "answerable_from_post": 0.0,
+        "about_agent_work": 0.0,
+        "points_somewhere": 0.0,
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize(
+    ("answers", "expected"),
+    [
+        (
+            _answers(excl_hype=0.9),
+            "Zero-shot: excluded (hype).",
+        ),
+        (
+            _answers(needs_thread=0.9),
+            "Zero-shot: review; the post needs its thread for context.",
+        ),
+        (
+            _answers(answerable_from_post=0.9, about_agent_work=0.9),
+            "Zero-shot: respond; answerable from the post and about agent work.",
+        ),
+        (
+            _answers(points_somewhere=0.9),
+            "Zero-shot: review; the post points to something outside itself.",
+        ),
+        (
+            _answers(),
+            "Zero-shot: no respond or review signal.",
+        ),
+    ],
+)
+def test_route_reason_strings(answers: dict[str, float], expected: str) -> None:
+    assert _reason(route(answers)) == expected
+
+
+def test_route_reason_appends_close_call_names_in_consulted_order() -> None:
+    decision = route(
+        _answers(
+            excl_noise=0.45,
+            needs_thread=0.45,
+            answerable_from_post=0.9,
+            about_agent_work=0.9,
+        )
+    )
+
+    assert decision.margin == ("excl_noise", "needs_thread")
+    assert _reason(decision) == (
+        "Zero-shot: respond; answerable from the post and about agent work. "
+        "Close call on excl_noise, needs_thread; sent to review."
     )
 
 

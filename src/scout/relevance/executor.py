@@ -22,7 +22,7 @@ import scout.config as _config
 from scout.relevance.classifier_identity import zeroshot_classifier
 from scout.relevance.loader import RelevanceCatalogue
 from scout.relevance.models import ZeroShotRelevanceError, ZeroShotRelevanceOutput
-from scout.typesafe.routes import route
+from scout.typesafe.routes import RouteDecision, route
 
 
 class PhaseTracer(Protocol):
@@ -70,8 +70,20 @@ def _config_snapshot(catalogue: RelevanceCatalogue, model: str) -> dict[str, Any
     }
 
 
-def _reason(line: str, exclusion: str | None) -> str:
-    return f"{line}: {exclusion}" if line == "exclusion" and exclusion else line
+def _reason(decision: RouteDecision) -> str:
+    reasons = {
+        "exclusion": f"Zero-shot: excluded ({decision.exclusion}).",
+        "needs_thread": "Zero-shot: review; the post needs its thread for context.",
+        "respond": "Zero-shot: respond; answerable from the post and about agent work.",
+        "points_somewhere": (
+            "Zero-shot: review; the post points to something outside itself."
+        ),
+        "otherwise": "Zero-shot: no respond or review signal.",
+    }
+    reason = reasons[decision.line]
+    if decision.margin:
+        reason += f" Close call on {', '.join(decision.margin)}; sent to review."
+    return reason
 
 
 def _redact_api_key(value: str | None) -> str | None:
@@ -175,7 +187,7 @@ async def run_zeroshot_relevance(
         output = ZeroShotRelevanceOutput(
             relevant=relevant,
             score=1.0,
-            reason=_reason(decision.line, decision.exclusion),
+            reason=_reason(decision),
             relevant_to=[project_key] if relevant else [],
             action=decision.action,
             answers=answers,
