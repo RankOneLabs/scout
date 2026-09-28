@@ -117,6 +117,7 @@ def load_live_population(
         "SELECT e.id AS evaluation_id, p.platform, p.channel_name AS channel, "
         "p.url, p.content AS text, p.parent_author_name, p.parent_text, p.author_name, "
         "e.score AS production_score, e.relevant AS production_decision, "
+        "e.relevance_action AS production_action, "
         "CASE WHEN g.schema_version = ? AND g.needs_regrade = 0 THEN "
         "CASE "
         "WHEN g.relevance_judgment = 'correct' AND e.relevant IN (0, 1) "
@@ -126,7 +127,10 @@ def load_live_population(
         "END END AS human_label "
         "FROM evaluations e JOIN posts p ON p.id = e.post_id "
         "LEFT JOIN grades g ON g.evaluation_id = e.id "
-        "WHERE e.project_key = ? ORDER BY e.id",
+        "WHERE e.project_key = ? "
+        "AND e.relevance_classifier IN ('llm', 'zeroshot') "
+        "AND NOT EXISTS (SELECT 1 FROM relevance_holdouts h "
+        "WHERE h.evaluation_id = e.id AND h.held = 1) ORDER BY e.id",
         (HUMAN_GRADE_SCHEMA_VERSION, project_key),
     ).fetchall()
     records: list[PopulationExportRecord] = []
@@ -153,6 +157,7 @@ def load_live_population(
                 ),
                 production_score=row["production_score"],
                 production_decision=bool(production_decision),
+                production_action=row["production_action"],
             )
         )
     return tuple(records)
