@@ -581,6 +581,54 @@ async def test_canonical_owner_finalized_interrupted_on_cancellation(
     real_state.close()
 
 
+
+@pytest.mark.asyncio
+async def test_cancelling_continuous_loop_between_scans_releases_the_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A worker stopped while it sleeps between scans (how SIGTERM reaches it,
+    via run_scan_loop) releases its environment lease, so a replacement worker
+    can acquire it at once instead of waiting out the TTL."""
+    db_path = str(tmp_path / "sleep_cancelled.db")
+    real_state = StateManager(db_path=db_path)
+    state_cm = MagicMock()
+    state_cm.__enter__ = Mock(return_value=real_state)
+    state_cm.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(scan_runner, "validate_config", lambda: [])
+    monkeypatch.setattr(
+        scan_runner, "fetch_messages", AsyncMock(return_value=PlatformsFetch([], []))
+    )
+    monkeypatch.setattr(scan_runner, "StateManager", Mock(return_value=state_cm))
+    monkeypatch.setattr(scan_runner, "SQLiteTracer", Mock(return_value=_FakeTracer()))
+    monkeypatch.setattr(scan_runner, "SQLiteFeedbackLoop", Mock(return_value=_FakeFeedback()))
+    monkeypatch.setattr(
+        scan_runner, "MODES", {"default": {"evaluate": "e", "respond": "r", "critique": "c"}},
+    )
+
+    args = Namespace(mode="default", rescore=None, rescore_failed=None, continuous=True)
+    loop_task = asyncio.create_task(scan_runner.main_loop(args))
+    for _ in range(200):
+        row = real_state.conn.execute(
+            "SELECT status FROM scans ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if row is not None and row["status"] == "complete":
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)
+    assert not loop_task.done()
+    loop_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await loop_task
+
+    replacement = real_state.acquire_environment_lease(
+        scan_runner.SCOUT_ENVIRONMENT, "replacement-worker", ttl_seconds=120
+    )
+    assert isinstance(replacement, Ok)
+
+    real_state.close()
+
 @pytest.mark.asyncio
 async def test_mode_both_second_pass_is_a_linked_non_advancing_secondary(
     monkeypatch: pytest.MonkeyPatch,
