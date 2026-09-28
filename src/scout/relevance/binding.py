@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 def _frozen(values: dict[str, str]) -> Mapping[str, str]:
@@ -47,10 +47,16 @@ BINDABLE_STATE_SOURCES: Mapping[str, frozenset[str]] = MappingProxyType(
     {group: frozenset(bindings.values()) for group, bindings in STATE_FIELD_BINDINGS.items()}
 )
 
-HOLDOUT_SOURCE_ALIASES: Mapping[str, str] = MappingProxyType(
+POPULATION_EXPORT_STATE_BINDINGS: Mapping[str, str] = MappingProxyType(
     {
-        "channel_name": "channel",
-        "content": "text",
+        "platform": "platform",
+        "channel": "channel_name",
+        "url": "url",
+        "text": "content",
+        "parent_author_name": "parent_author_name",
+        "parent_text": "parent_text",
+        "author_name": "author_name",
+        "author_handle": "author_handle",
     }
 )
 
@@ -71,13 +77,20 @@ def source_for(group: str, declared_name: str) -> str | None:
     return None if bindings is None else bindings.get(declared_name)
 
 
-def _record_value(record: Mapping[str, object], source: str) -> object:
-    if source in record:
-        return record[source]
-    alias = HOLDOUT_SOURCE_ALIASES.get(source)
-    if alias is not None and alias in record:
-        return record[alias]
-    raise ValueError(f"relevance state source is missing {source!r}")
+def population_export_record_fields(source: Mapping[str, object]) -> dict[str, Any]:
+    """Project state-source fields into the population export record names."""
+    return {
+        record_field: source[state_source]
+        for record_field, state_source in POPULATION_EXPORT_STATE_BINDINGS.items()
+    }
+
+
+def population_export_state_source(record: Mapping[str, object]) -> dict[str, object]:
+    """Restore state-source names from one population export record."""
+    return {
+        state_source: record[record_field]
+        for record_field, state_source in POPULATION_EXPORT_STATE_BINDINGS.items()
+    }
 
 
 def bind_state(
@@ -90,7 +103,7 @@ def bind_state(
     for group, names in declared_fields.items():
         source_values = project if group == "project" else post
         projected = {
-            name: _record_value(source_values, STATE_FIELD_BINDINGS[group][name])
+            name: source_values[STATE_FIELD_BINDINGS[group][name]]
             for name in names
         }
         state[group] = (
@@ -103,8 +116,11 @@ def bind_state(
 
 __all__ = [
     "BINDABLE_STATE_SOURCES",
+    "POPULATION_EXPORT_STATE_BINDINGS",
     "RelevancePostStateSource",
     "STATE_FIELD_BINDINGS",
     "bind_state",
+    "population_export_record_fields",
+    "population_export_state_source",
     "source_for",
 ]

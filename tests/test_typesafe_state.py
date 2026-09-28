@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from scout.config import Account, Message
 from scout.registry import ProjectTarget
 from scout.relevance.loader import load_catalogue_bytes
@@ -113,12 +115,10 @@ def test_declared_state_keeps_partial_unresolved_parent() -> None:
     }
 
 
-def test_declared_state_accepts_holdout_export_source_names() -> None:
+def test_declared_state_rejects_unbound_holdout_export_source_names() -> None:
     record = _stored_record()
     record["channel"] = record.pop("channel_name")
     record["text"] = record.pop("content")
 
-    state = _v2_state(record)
-
-    assert set(state) == {"post", "parent_context_only", "author", "project"}
-    assert set(state["post"]) == {"platform", "channel", "url", "text"}
+    with pytest.raises(KeyError, match="channel_name"):
+        _v2_state(record)
