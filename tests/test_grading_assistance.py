@@ -760,6 +760,22 @@ def test_capture_invalid_decision_and_missing_context_are_exclusions(state, requ
     assert by_id[103] == "missing_project_context"
 
 
+def test_held_drop_is_excluded_from_false_negative_assistance(state, tmp_path):
+    with state.db.transaction():
+        state.conn.execute(
+            "INSERT INTO relevance_holdouts(evaluation_id, production_action, held, "
+            "dossier_revision, registry_state, created_at) "
+            "VALUES (101, 'drop', 1, ?, '{}', ?)",
+            ("b" * 40, "2026-09-27T00:00:00+00:00"),
+        )
+
+    with state.db.read_transaction():
+        captured = read_rejected_population(state.conn, "synthetic", tmp_path)
+
+    assert isinstance(captured, Ok)
+    assert 101 not in {item.evaluation.id for item in captured.value.items}
+
+
 def test_unknown_assistance_producer_is_reported_not_replayed(request_data, runtime):
     built = build_assistance_bundle(request_data, runtime)
     assert isinstance(built, Ok)

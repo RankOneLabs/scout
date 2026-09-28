@@ -299,6 +299,8 @@ def build_fixture_source_database(db_path: Path) -> None:
             project_key="gateway",
             dossier_revision=_FIXTURE_DOSSIER_REVISION,
             dossier_summary_id="gateway-dossier",
+            relevance_classifier="llm",
+            relevance_action=None,
             gate_violations=[
                 GateViolation(
                     reason_code="safe_phrasing",
@@ -397,6 +399,8 @@ def build_fixture_source_database(db_path: Path) -> None:
             keyword_route_id=keyword_route_id,
             dossier_revision=_FIXTURE_DOSSIER_REVISION, dossier_summary_id="gateway-dossier",
             surfaced_at=_FIXTURE_NOW,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         state.save_grade_for_migration(
             GradeRecord(
@@ -718,7 +722,7 @@ async def _seed_and_run_experiment_batch(state: StateManager, tracer: Any, feedb
     from scout.replay.pricing import ModelRate, PricingCatalog
     from scout.scanning.schemas import StructuredDraftOutput
 
-    class _FakeLLMClient(LLMClient):  # type: ignore[misc]
+    class _FakeLLMClient(LLMClient):
         def __init__(self, responses: list[Any], *, model: str) -> None:
             self._responses = list(responses)
             self._model = model
@@ -797,6 +801,8 @@ async def _seed_and_run_experiment_batch(state: StateManager, tracer: Any, feedb
             contributor_phase_run_ids=[phase_run_id],
             dossier_revision=_FIXTURE_DOSSIER_REVISION, dossier_summary_id="gateway-dossier",
             allow_response_only_phase_runs=True,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         state.save_grade_for_migration(
             GradeRecord(

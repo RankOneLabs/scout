@@ -44,13 +44,71 @@ function makeEvaluation(overrides: Partial<ReviewEvaluation> = {}): ReviewEvalua
     critique: null,
     gate_violations: [],
     grade: null,
+    held: false,
     ...overrides,
   };
 }
 
 describe("EvaluationCard", () => {
+  it("renders a human action badge and hides grade controls for held rows", () => {
+    const evaluation = makeEvaluation({
+      held: true,
+      relevance_presentation: {
+        classifier: "human",
+        model: "human",
+        action: "respond",
+        zeroshot: null,
+      },
+    });
+    const { getByRole, queryByText } = render(
+      React.createElement(EvaluationCard, { evaluation })
+    );
+    expect(getByRole("button", { name: /Human action: respond/i })).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: /re: alice/i }));
+    expect(queryByText("Should this post have been surfaced?")).toBeNull();
+  });
+
+  it("renders zero-shot exclusion detail and the empty-margin fallback", () => {
+    const evaluation = makeEvaluation({
+      relevance_presentation: {
+        classifier: "zeroshot",
+        model: "zeroshot:jev-latest",
+        zeroshot: {
+          action: "drop",
+          line: "exclusion",
+          exclusion: "hype",
+          margin_features: [],
+          feature_probabilities: {
+            excl_hype: 0.91,
+            needs_thread: 0.12,
+          },
+        },
+      },
+    });
+    const { getByRole, getByText, queryByText } = render(
+      React.createElement(EvaluationCard, { evaluation })
+    );
+
+    expect(getByRole("button", { name: /Zero-shot action: drop/i })).toBeTruthy();
+    expect(queryByText("80%")).toBeNull();
+    fireEvent.click(getByRole("button", { name: /re: alice/i }));
+
+    expect(getByText("Zero-shot route detail")).toBeTruthy();
+    expect(getByText("exclusion", { selector: "dd" })).toBeTruthy();
+    expect(getByText("hype")).toBeTruthy();
+    expect(getByText("None")).toBeTruthy();
+    expect(getByText("excl_hype")).toBeTruthy();
+    expect(getByText("0.910")).toBeTruthy();
+  });
+
   it("passes the evaluation's predicted relevance through to GradeControls so a false negative can be graded", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+    let resolveSave!: (response: Response) => void;
+    const saveResponse = new Promise<Response>((resolve) => {
+      resolveSave = resolve;
+    });
+    const fetchMock = vi.fn().mockReturnValue(saveResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const successfulResponse = {
       ok: true,
       json: async () => ({
         id: 1,
@@ -73,22 +131,31 @@ describe("EvaluationCard", () => {
         implication_implied_claim: null,
         implication_missing_support: null,
       }),
-    } as Response);
-    vi.stubGlobal("fetch", fetchMock);
+    } as Response;
 
-    const evaluation = makeEvaluation({ relevant: false });
-    const { getByRole, getByPlaceholderText } = render(
+    const evaluation = makeEvaluation({
+      relevant: false,
+      relevance_presentation: {
+        classifier: "zeroshot",
+        model: "zeroshot:jev-latest",
+        action: "review",
+        zeroshot: null,
+      },
+    });
+    const { getByRole, getByPlaceholderText, getByText } = render(
       React.createElement(EvaluationCard, { evaluation })
     );
 
     fireEvent.click(getByRole("button", { name: /re: alice/i }));
-    fireEvent.click(getByRole("button", { name: /yes/i }));
+    fireEvent.click(getByRole("button", { name: "Respond" }));
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(getByRole("button", { name: "Usefulness" }));
     fireEvent.change(getByPlaceholderText("Failure note..."), {
       target: { value: "Scout should have surfaced this" },
     });
     fireEvent.click(getByRole("button", { name: "Save & generate draft" }));
+    expect(getByText("generating response draft...")).toBeTruthy();
+    resolveSave(successfulResponse);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -103,5 +170,36 @@ describe("EvaluationCard", () => {
         })
       );
     });
+  });
+
+  it("sends a correct accept grade when a zero-shot review row is dropped", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 2,
+        evaluation_id: 10,
+        relevance_judgment: "correct",
+        action_judgment: "accept",
+      }),
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const evaluation = makeEvaluation({
+      relevant: false,
+      relevance_presentation: {
+        classifier: "zeroshot",
+        model: "zeroshot:jev-latest",
+        action: "review",
+        zeroshot: null,
+      },
+    });
+    const { getByRole } = render(React.createElement(EvaluationCard, { evaluation }));
+    fireEvent.click(getByRole("button", { name: /re: alice/i }));
+    fireEvent.click(getByRole("button", { name: "Drop" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/grades/10",
+      expect.objectContaining({
+        body: JSON.stringify({ relevance_judgment: "correct", action_judgment: "accept" }),
+      })
+    ));
   });
 });

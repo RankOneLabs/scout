@@ -54,6 +54,9 @@ def _seed_source_evaluation(state: StateManager) -> tuple[int, int, int]:
         ),
         post_id,
         scan_id,
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     return scan_id, post_id, source_evaluation_id
 
@@ -107,6 +110,9 @@ def test_composed_evaluation_and_grade_write_commits_together(tmp_path) -> None:
                 target_scan_id,
                 project_key="gateway",
                 surface_status="surfaced",
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
             state.complete_human_positive_promotion(
                 source_evaluation_id,
@@ -161,6 +167,9 @@ def test_composed_evaluation_and_grade_write_rolls_back_together_on_failure(tmp_
                 target_scan_id,
                 project_key="gateway",
                 surface_status="surfaced",
+
+                relevance_classifier="llm",
+                relevance_action=None,
             )
             state.complete_human_positive_promotion(
                 source_evaluation_id,

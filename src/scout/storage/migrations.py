@@ -3196,6 +3196,45 @@ def _migrate_to_47(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_to_48(conn: sqlite3.Connection) -> None:
+    """Held relevance decisions and their export/release lifecycle (v48)."""
+    from scout.storage.schema import RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS
+
+    for statement in RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+
+
+def _migrate_to_49(conn: sqlite3.Connection) -> None:
+    """Persist the classifier and action that produced each evaluation (v49)."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(evaluations)")}
+    if "relevance_classifier" not in columns:
+        conn.execute(
+            "ALTER TABLE evaluations ADD COLUMN relevance_classifier TEXT NOT NULL "
+            "DEFAULT 'llm' CHECK(relevance_classifier IN ('llm','zeroshot','human'))"
+        )
+    if "relevance_action" not in columns:
+        conn.execute(
+            "ALTER TABLE evaluations ADD COLUMN relevance_action TEXT "
+            "CHECK(relevance_action IS NULL OR relevance_action IN "
+            "('respond','review','drop')) "
+            "CHECK((relevance_classifier = 'llm' AND relevance_action IS NULL) OR "
+            "(relevance_classifier <> 'llm' AND relevance_action IS NOT NULL))"
+        )
+    conn.execute(
+        "UPDATE evaluations SET relevance_classifier = 'human', "
+        "relevance_action = 'respond' WHERE id IN ("
+        "SELECT target_evaluation_id FROM human_positive_promotions "
+        "WHERE status = 'completed' AND target_evaluation_id IS NOT NULL)"
+    )
+    conn.execute(
+        "UPDATE evaluations SET relevance_classifier = 'human', relevance_action = ("
+        "SELECT release_action FROM relevance_holdouts "
+        "WHERE target_evaluation_id = evaluations.id) WHERE id IN ("
+        "SELECT target_evaluation_id FROM relevance_holdouts "
+        "WHERE target_evaluation_id IS NOT NULL AND release_action IS NOT NULL)"
+    )
+
+
 MIGRATIONS: dict[int, Migration] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
@@ -3243,4 +3282,6 @@ MIGRATIONS: dict[int, Migration] = {
     45: _migrate_to_45,
     46: _migrate_to_46,
     47: _migrate_to_47,
+    48: _migrate_to_48,
+    49: _migrate_to_49,
 }

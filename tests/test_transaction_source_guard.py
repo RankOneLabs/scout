@@ -52,7 +52,8 @@ OWNER_MODULES = {
 # unrelated word like "beginning", and "COMMIT" from matching inside
 # "committed".
 _SQL_LITERAL_RE = re.compile(
-    r"""['"]\s*(?:BEGIN\s+IMMEDIATE|BEGIN|SAVEPOINT|RELEASE\s+SAVEPOINT|RELEASE|"""
+    r"""['"]\s*(?:BEGIN\s+IMMEDIATE|BEGIN|SAVEPOINT|"""
+    r"""RELEASE(?:\s+SAVEPOINT)?\s+[A-Za-z_][A-Za-z0-9_]*|"""
     r"""ROLLBACK\s+TO\s+SAVEPOINT|ROLLBACK|COMMIT)\b""",
     re.IGNORECASE,
 )
@@ -105,6 +106,7 @@ def test_only_db_py_issues_transaction_control(path: pathlib.Path) -> None:
         'conn.execute("\nBEGIN")',
         'conn.execute("  COMMIT")',
         'conn.execute(f"""\n    ROLLBACK""")',
+        'conn.execute("RELEASE worker_savepoint")',
         "state.conn.commit()",
         "scout.db.conn.rollback()",
     ],
@@ -120,6 +122,7 @@ def test_has_transaction_control_detects_every_shape(text: str) -> None:
         'logger.info("beginning scan")',
         "state.commit()",
         "state.rollback()",
+        '_HOLDOUT_RELEASE_COMMAND = "release"',
     ],
 )
 def test_has_transaction_control_does_not_false_positive(text: str) -> None:

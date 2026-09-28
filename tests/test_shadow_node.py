@@ -121,6 +121,9 @@ async def test_shadow_runner_records_ok_and_can_be_backfilled() -> None:
         assert run_id is not None
         evaluation_id = state.save_evaluation(
             RelevanceResult(message, True, 0.9, "pipeline"), post_id, scan_id
+        ,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         assert state.shadow_relevance.backfill_evaluation_id(run_id, evaluation_id)
         row = state.shadow_relevance.list_runs_for_scan(scan_id)[0]
@@ -154,6 +157,9 @@ async def test_shadow_backend_exception_becomes_error_row(
         assert run_id is not None
         evaluation_id = state.save_evaluation(
             RelevanceResult(message, False, 0.1, "pipeline"), post_id, scan_id
+        ,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         assert state.shadow_relevance.backfill_evaluation_id(run_id, evaluation_id)
         row = state.shadow_relevance.list_runs_for_scan(scan_id)[0]

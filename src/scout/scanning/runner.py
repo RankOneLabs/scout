@@ -10,6 +10,7 @@ import heapq
 import json
 import logging
 import os
+import random
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -87,6 +88,10 @@ from scout.platforms.discord import DiscordScanner
 from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
+from scout.relevance.classifier_identity import zeroshot_classifier
+from scout.relevance.holdout import RandomSource, draw_relevance_holdout
+from scout.relevance.models import ZEROSHOT_PROJECT_KEYS
+from scout.relevance.setup import ZeroShotScanContext, setup_zeroshot_scan
 from scout.result import Err, Ok
 from scout.scanning import coverage as coverage_lifecycle
 from scout.scanning import lease as lease_lifecycle
@@ -106,7 +111,12 @@ from scout.scanning.digest import (
 )
 from scout.scanning.pipeline import build_scout_pipeline
 from scout.scanning.prefilter import RoutedMessage, keyword_prefilter
-from scout.scanning.schemas import ReplyCandidate, StructuredDraftOutput, unpack_candidate
+from scout.scanning.schemas import (
+    RelevancePhaseOutput,
+    ReplyCandidate,
+    StructuredDraftOutput,
+    unpack_candidate,
+)
 from scout.storage.state import (
     AUTHOR_RATE_EVALUATOR_VERSION,
     ScanStatus,
@@ -572,8 +582,12 @@ class OutcomeDecision:
     validated_text: str | None
     terminal_reason: str | None
     structured_draft: StructuredDraftOutput | None
+    relevance_output: RelevancePhaseOutput | None
+    relevance_classifier: Literal["llm", "zeroshot", "human"]
+    relevance_action: Literal["respond", "review", "drop"] | None
     critique: CritiqueResult | None
     contributor_phase_run_ids: tuple[int, ...]
+    held: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,6 +605,7 @@ class PersistenceContext:
     dossier_summary_id: str | None
     surfaced_at: str | None
     allow_response_only_phase_runs: bool = False
+    registry: RuntimeRegistry | None = None
 
 
 def _resolve_project_key(candidate: ReplyCandidate) -> str | None:
@@ -643,9 +658,19 @@ def classify_outcome(
             validated_text=validated_text,
             terminal_reason=terminal_reason,
             structured_draft=structured,
+            relevance_output=candidate.relevance_output,
+            relevance_classifier=candidate.relevance_classifier,
+            relevance_action=candidate.relevance_action,
             critique=critique,
             contributor_phase_run_ids=candidate.contributor_phase_run_ids,
+            held=candidate.held,
         )
+
+    # A hold is terminal at the relevance boundary. Keep the classifier's
+    # actual relevant/score/action values on the evaluation, while the joined
+    # relevance_holdouts row records why no surface decision or draft exists.
+    if candidate.held:
+        return _decision("not_relevant", project_key=_resolve_project_key(candidate))
 
     # 1. Critic reject is an intentional terminal decision — it must not be
     # hidden behind relevance or an empty draft's segment count.
@@ -756,6 +781,34 @@ def persist_outcome(
     Invariant violations on a surfaced decision raise as programming errors
     — they are not converted to a retryable scoring failure.
     """
+    relevance_action = (
+        None if decision.relevance_classifier == "llm" else decision.relevance_action
+    )
+    if decision.relevance_classifier != "llm" and relevance_action is None:
+        raise ValueError(
+            f"{decision.relevance_classifier} outcome requires a relevance action"
+        )
+
+    if decision.held:
+        if decision.relevance_action is None:
+            raise ValueError("held outcome requires its production relevance action")
+        if context.registry is None:
+            raise ValueError("held outcome requires the classification-time registry")
+        evaluation_id, _holdout = state.relevance_holdouts.persist_held_evaluation(
+            decision.evaluation,
+            context.post_id,
+            context.scan_id,
+            production_action=decision.relevance_action,
+            relevance_classifier=decision.relevance_classifier,
+            registry=context.registry,
+            contributor_phase_run_ids=decision.contributor_phase_run_ids,
+            keyword_route_id=context.keyword_route_id,
+            project_key=decision.project_key,
+            dossier_revision=context.dossier_revision,
+            dossier_summary_id=context.dossier_summary_id,
+        )
+        return evaluation_id
+
     critique_pair = (
         (decision.critique.verdict, decision.critique.feedback)
         if decision.critique is not None
@@ -783,6 +836,8 @@ def persist_outcome(
             dossier_summary_id=context.dossier_summary_id,
             surfaced_at=context.surfaced_at,
             allow_response_only_phase_runs=context.allow_response_only_phase_runs,
+            relevance_classifier=decision.relevance_classifier,
+            relevance_action=relevance_action,
         )
         return evaluation_id
 
@@ -801,6 +856,8 @@ def persist_outcome(
         critique=critique_pair if decision.status == "critic_rejected" else None,
         gate_violations=decision.gate_violations or None,
         allow_response_only_phase_runs=context.allow_response_only_phase_runs,
+        relevance_classifier=decision.relevance_classifier,
+        relevance_action=relevance_action,
     )
 
 
@@ -854,6 +911,9 @@ async def score_messages(
     dossier_summaries: dict[str, DossierSummary] | None = None,
     dossier_revision: str | None = None,
     lease_check: Callable[[], None] | None = None,
+    zeroshot_context: ZeroShotScanContext | None = None,
+    runtime_registry: RuntimeRegistry | None = None,
+    holdout_rng: RandomSource | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
     """Score messages via Scout's phase pipeline, write digest incrementally.
 
@@ -1007,6 +1067,7 @@ async def score_messages(
     relevant_count = 0
 
     _dossiers: dict[str, DossierSummary] = dossier_summaries or {}
+    rng = random if holdout_rng is None else holdout_rng
 
     for i, routed in enumerate(routed_candidates):
         if lease_check is not None:
@@ -1079,7 +1140,17 @@ async def score_messages(
             state=state,
             scan_id=scan_id,
             post_id=post_id,
-            relevance=phase_run_identity["relevance"],
+            relevance=PhaseRunIdentity(
+                snapshot_phase_id=phase_run_identity["relevance"].snapshot_phase_id,
+                model=(
+                    zeroshot_classifier(zeroshot_context.client.model)
+                    if _config.RELEVANCE_CLASSIFIER == "zeroshot"
+                    and routed.keyword_route is not None
+                    and routed.keyword_route.project_key in ZEROSHOT_PROJECT_KEYS
+                    and zeroshot_context is not None
+                    else phase_run_identity["relevance"].model
+                ),
+            ),
             reply_draft=phase_run_identity["reply_draft"],
             critic=phase_run_identity["critic"],
         )
@@ -1111,6 +1182,16 @@ async def score_messages(
                     "phase_configs": phase_configs,
                     "dossier_summaries": _dossiers,
                     "execution_context": execution_context,
+                    "zeroshot_context": zeroshot_context,
+                    "holdout_draw": lambda classifier, project_key, action: (
+                        draw_relevance_holdout(
+                            classifier=classifier,
+                            project_key=project_key,
+                            production_action=action,
+                            rate=_config.RELEVANCE_HOLDOUT_RATE,
+                            rng=rng,
+                        )
+                    ),
                 },
             )
         except asyncio.CancelledError:
@@ -1209,12 +1290,14 @@ async def score_messages(
             dossier_revision=dossier_revision,
             dossier_summary_id=dossier_summary_id,
             surfaced_at=msg.created_at.isoformat(),
+            registry=runtime_registry,
         )
 
         logger.info(
-            "  → score=%.2f relevant=%s surface_status=%s reason=%s",
+            "  → score=%.2f relevant=%s held=%s surface_status=%s reason=%s",
             decision.evaluation.score,
             decision.evaluation.relevant,
+            decision.held,
             decision.status,
             decision.evaluation.reason,
         )
@@ -1248,6 +1331,9 @@ async def score_messages(
                 validated_text=None,
                 terminal_reason=None,
                 structured_draft=decision.structured_draft,
+                relevance_output=decision.relevance_output,
+                relevance_classifier=decision.relevance_classifier,
+                relevance_action=decision.relevance_action,
                 critique=decision.critique,
                 contributor_phase_run_ids=decision.contributor_phase_run_ids,
             )
@@ -1445,6 +1531,7 @@ async def main_loop(args: argparse.Namespace) -> None:
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
     feedback: SQLiteFeedbackLoop | None = None
+    zeroshot_context: ZeroShotScanContext | None = None
     owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
         # Heartbeat renewals run on their own connection so they can never
@@ -1488,6 +1575,15 @@ async def main_loop(args: argparse.Namespace) -> None:
                 active_overflow = 0
                 try:
                     registry = state.load_runtime_registry()
+                    if _config.RELEVANCE_CLASSIFIER == "zeroshot":
+                        setup_result = setup_zeroshot_scan(registry)
+                        if isinstance(setup_result, Err):
+                            setup_error = setup_result.error
+                            raise RuntimeError(
+                                f"{setup_error.operation} failed for "
+                                f"{setup_error.entity!r}: {setup_error.detail}"
+                            )
+                        zeroshot_context = setup_result.value
                     search_queries = build_search_queries(registry.keywords)
                     log_prompt_diagnostics(registry, mode_names)
 
@@ -1512,6 +1608,9 @@ async def main_loop(args: argparse.Namespace) -> None:
                             "Sleeping %d hours before retrying dossier readiness...",
                             SCAN_INTERVAL_HOURS,
                         )
+                        if zeroshot_context is not None:
+                            await zeroshot_context.client.aclose()
+                            zeroshot_context = None
                         await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
                         continue
 
@@ -1928,6 +2027,8 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 dossier_summaries=_dossier_summaries,
                                 dossier_revision=_dossier_revision,
                                 lease_check=lease_handle.check,
+                                zeroshot_context=zeroshot_context,
+                                runtime_registry=registry,
                             )
 
                             for failure in processing_failures:
@@ -2048,10 +2149,16 @@ async def main_loop(args: argparse.Namespace) -> None:
                 if not args.continuous:
                     break
 
+                if zeroshot_context is not None:
+                    await zeroshot_context.client.aclose()
+                    zeroshot_context = None
+
                 logger.info("Sleeping %d hours until next scan...", SCAN_INTERVAL_HOURS)
                 await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
 
         finally:
+            if zeroshot_context is not None:
+                await zeroshot_context.client.aclose()
             if feedback is not None:
                 await feedback.close()
             if tracer is not None:

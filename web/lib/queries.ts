@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { getTracesDb } from "./traces-db";
 import {
   type AuthorClass,
   type ScanDetail,
@@ -26,8 +27,11 @@ import {
   type RecoveryOperation,
   type SourceProbeRun,
   type ShadowRelevanceRunRow,
+  type RelevancePresentation,
+  type RouteAction,
 } from "@/types/schema";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
+import { HUMAN_GRADE_SCHEMA_VERSION } from "@/lib/feedback-grade-queries";
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -51,6 +55,136 @@ function parseStringList(raw: string | null): string[] {
       .map((entry) => entry.trim())
       .filter(Boolean);
   }
+}
+
+const ROUTE_ACTIONS = new Set<RouteAction>(["respond", "review", "drop"]);
+
+function parseZeroShotEvidence(raw: string | null): RelevancePresentation["zeroshot"] {
+  if (raw === null) return null;
+  try {
+    const envelope: unknown = JSON.parse(raw);
+    if (typeof envelope !== "object" || envelope === null) return null;
+    const output = (envelope as Record<string, unknown>).output_complete;
+    if (typeof output !== "object" || output === null) return null;
+    const record = output as Record<string, unknown>;
+    if (
+      typeof record.action !== "string" ||
+      !ROUTE_ACTIONS.has(record.action as RouteAction) ||
+      typeof record.line !== "string" ||
+      !Array.isArray(record.margin) ||
+      !record.margin.every((item) => typeof item === "string") ||
+      typeof record.answers !== "object" ||
+      record.answers === null ||
+      Array.isArray(record.answers)
+    ) {
+      return null;
+    }
+    const probabilities = Object.entries(record.answers).reduce<Record<string, number>>(
+      (result, [name, value]) => {
+        if (typeof value === "number" && Number.isFinite(value)) result[name] = value;
+        return result;
+      },
+      {}
+    );
+    if (Object.keys(probabilities).length !== Object.keys(record.answers).length) return null;
+    return {
+      action: record.action as RouteAction,
+      line: record.line,
+      exclusion: typeof record.exclusion === "string" ? record.exclusion : null,
+      margin_features: record.margin as string[],
+      feature_probabilities: probabilities,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The only query that resolves an evaluation's relevance classifier. The
+ * phase-run join is kept here so every row surface uses the same latest
+ * complete relevance-run rule.
+ */
+export function getRelevancePresentations(
+  evaluationIds: readonly number[]
+): Map<number, RelevancePresentation> {
+  const presentations = new Map<number, RelevancePresentation>();
+  if (evaluationIds.length === 0) return presentations;
+  const db = getDb();
+  const evaluationColumns = new Set(
+    (db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>).map(
+      (column) => column.name
+    )
+  );
+  const hasClassifierColumns =
+    evaluationColumns.has("relevance_classifier") &&
+    evaluationColumns.has("relevance_action");
+  const hasPhaseRuns = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evaluation_phase_runs'")
+    .get();
+  const rankedRuns = hasPhaseRuns ? `WITH ranked_relevance_runs AS (
+       SELECT evaluation_id, model, trace_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY evaluation_id ORDER BY created_at DESC, id DESC
+              ) AS recency
+       FROM evaluation_phase_runs
+       WHERE phase = 'relevance'
+         AND status = 'complete'
+         AND evaluation_id IN (
+           SELECT CAST(value AS INTEGER) FROM json_each(?)
+         )
+     )` : "";
+  const runJoin = hasPhaseRuns
+    ? "LEFT JOIN ranked_relevance_runs relevance ON relevance.evaluation_id = e.id AND relevance.recency = 1"
+    : "";
+  const evaluationIdsJson = JSON.stringify(evaluationIds);
+  const rows = db.prepare(
+    `${rankedRuns}
+     SELECT e.id AS evaluation_id,
+            ${hasClassifierColumns ? "e.relevance_classifier" : "'llm'"} AS classifier,
+            ${hasClassifierColumns ? "e.relevance_action" : "NULL"} AS action,
+            ${hasPhaseRuns ? "relevance.model" : "NULL"} AS model,
+            ${hasPhaseRuns ? "relevance.trace_id" : "NULL"} AS trace_id
+     FROM evaluations e
+     ${runJoin}
+     WHERE e.id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`
+  ).all(...(hasPhaseRuns ? [evaluationIdsJson, evaluationIdsJson] : [evaluationIdsJson])) as Array<{
+    evaluation_id: number;
+    classifier: RelevancePresentation["classifier"];
+    action: RouteAction | null;
+    model: string | null;
+    trace_id: string | null;
+  }>;
+
+  const zeroshotRows = rows.filter((row) => row.classifier === "zeroshot" && row.trace_id !== null);
+  const traceOutputs = new Map<string, string | null>();
+  if (zeroshotRows.length > 0) {
+    try {
+      const traces = getTracesDb().prepare(
+        `SELECT trace_id, output
+         FROM spans
+         WHERE parent_id IS NULL
+           AND trace_id IN (SELECT value FROM json_each(?))`
+      ).all(JSON.stringify(zeroshotRows.map((row) => row.trace_id))) as Array<{
+        trace_id: string;
+        output: string | null;
+      }>;
+      for (const trace of traces) traceOutputs.set(trace.trace_id, trace.output);
+    } catch {
+      // The classifier identity still renders honestly when a historical or
+      // unavailable trace database cannot supply the detailed zero-shot evidence.
+    }
+  }
+
+  for (const row of rows) {
+    const classifier = row.classifier;
+    presentations.set(row.evaluation_id, {
+      classifier,
+      model: row.model ?? classifier,
+      action: row.action,
+      zeroshot: classifier === "zeroshot" ? parseZeroShotEvidence(traceOutputs.get(row.trace_id ?? "") ?? null) : null,
+    });
+  }
+  return presentations;
 }
 
 const MATCH_TYPES: readonly MatchedRoute["match_type"][] = [
@@ -414,8 +548,20 @@ export function getLatestProbeRun(environment: string): SourceProbeRun | null {
   return { ...row, passed: row.passed === null ? null : row.passed === 1 };
 }
 
+/** Databases before the classifier migration lack these columns; every row there is an LLM row. */
+function hasRelevanceClassifierColumns(db: ReturnType<typeof getDb>): boolean {
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>).map(
+      (column) => column.name
+    )
+  );
+  return columns.has("relevance_classifier") && columns.has("relevance_action");
+}
+
 export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
   const db = getDb();
+  const hasClassifier = hasRelevanceClassifierColumns(db);
+  const nonLlmRow = hasClassifier ? "e.relevance_classifier <> 'llm' OR " : "";
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
@@ -427,25 +573,28 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     conditions.push("e.relevant = ?");
     params.push(filters.relevant ? 1 : 0);
   }
-  if (filters?.score_min !== undefined) {
-    conditions.push("e.score >= ?");
-    params.push(filters.score_min);
-  }
-  if (filters?.score_max !== undefined) {
-    conditions.push("e.score <= ?");
-    params.push(filters.score_max);
-  }
   if (filters?.scan_id !== undefined) {
     conditions.push("p.scan_id = ?");
     params.push(filters.scan_id);
+  }
+  const limit = filters?.limit ?? DEFAULT_PAGE_SIZE;
+  if (filters?.score_min !== undefined) {
+    conditions.push(`(e.id IS NULL OR ${nonLlmRow}e.score >= ?)`);
+    params.push(filters.score_min);
+  }
+  if (filters?.score_max !== undefined) {
+    conditions.push(`(e.id IS NULL OR ${nonLlmRow}e.score <= ?)`);
+    params.push(filters.score_max);
+  }
+  // The action filter only narrows non-LLM rows, and an unmigrated database has none.
+  if (filters?.action !== undefined && hasClassifier) {
+    conditions.push(`(e.id IS NULL OR e.relevance_classifier = 'llm' OR e.relevance_action IN (${filters.action.map(() => "?").join(",")}))`);
+    params.push(...filters.action);
   }
   if (filters?.before_id !== undefined) {
     conditions.push("p.id < ?");
     params.push(filters.before_id);
   }
-
-  const limit = filters?.limit ?? DEFAULT_PAGE_SIZE;
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   interface PostEvalRow {
     id: number;
@@ -486,41 +635,44 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     resolved_critique_prompt: string | null;
   }
 
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = db
-    .prepare(
-      `SELECT
-        p.*,
-        e.id AS eval_id,
-        e.relevant,
-        e.score,
-        e.reason,
-        e.relevant_to,
-        e.keyword_route_id,
-        pk.id AS matched_route_id,
-        pk.project_key AS matched_project_key,
-        pk.keyword AS matched_keyword,
-        pk.match_type AS matched_match_type,
-        pk.intent AS matched_intent,
-        pk.positive_context AS matched_positive_context,
-        pk.negative_context AS matched_negative_context,
-        pk.evaluate_prompt AS matched_evaluate_prompt,
-        pk.respond_prompt AS matched_respond_prompt,
-        pk.critique_prompt AS matched_critique_prompt,
-        pe.body AS resolved_evaluate_prompt,
-        pr.body AS resolved_respond_prompt,
-        pc.body AS resolved_critique_prompt
-      FROM posts p
-      LEFT JOIN evaluations e ON e.post_id = p.id
-      LEFT JOIN project_keywords pk ON pk.id = e.keyword_route_id
-      LEFT JOIN prompt_templates pe ON pe.name = pk.evaluate_prompt AND pe.active = 1
-      LEFT JOIN prompt_templates pr ON pr.name = pk.respond_prompt AND pr.active = 1
-      LEFT JOIN prompt_templates pc ON pc.name = pk.critique_prompt AND pc.active = 1
-      ${where}
-      ORDER BY p.id DESC
-      LIMIT ?`
-    )
-    .all(...params, limit + 1) as PostEvalRow[];
-
+      .prepare(
+        `SELECT
+          p.*,
+          e.id AS eval_id,
+          e.relevant,
+          e.score,
+          e.reason,
+          e.relevant_to,
+          e.keyword_route_id,
+          pk.id AS matched_route_id,
+          pk.project_key AS matched_project_key,
+          pk.keyword AS matched_keyword,
+          pk.match_type AS matched_match_type,
+          pk.intent AS matched_intent,
+          pk.positive_context AS matched_positive_context,
+          pk.negative_context AS matched_negative_context,
+          pk.evaluate_prompt AS matched_evaluate_prompt,
+          pk.respond_prompt AS matched_respond_prompt,
+          pk.critique_prompt AS matched_critique_prompt,
+          pe.body AS resolved_evaluate_prompt,
+          pr.body AS resolved_respond_prompt,
+          pc.body AS resolved_critique_prompt
+        FROM posts p
+        LEFT JOIN evaluations e ON e.post_id = p.id
+        LEFT JOIN project_keywords pk ON pk.id = e.keyword_route_id
+        LEFT JOIN prompt_templates pe ON pe.name = pk.evaluate_prompt AND pe.active = 1
+        LEFT JOIN prompt_templates pr ON pr.name = pk.respond_prompt AND pr.active = 1
+        LEFT JOIN prompt_templates pc ON pc.name = pk.critique_prompt AND pc.active = 1
+        ${where}
+        ORDER BY p.id DESC
+        LIMIT ?`
+      )
+      .all(...params, limit + 1) as PostEvalRow[];
+  const presentations = getRelevancePresentations(
+    rows.flatMap((row) => (row.eval_id === null ? [] : [row.eval_id]))
+  );
   const has_more = rows.length > limit;
   const data = (has_more ? rows.slice(0, limit) : rows).map((row) => {
     const parentCtx = toSourceParent(row);
@@ -545,6 +697,8 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
       relevant_to: parseRelevantTo(row.relevant_to as unknown as string | null),
       keyword_route_id: row.keyword_route_id,
       matched_route: toMatchedRoute(row),
+      relevance_presentation:
+        row.eval_id === null ? null : presentations.get(row.eval_id) ?? null,
     };
   });
 
@@ -675,7 +829,9 @@ export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
     .all(...params, limit + 1) as DraftRow[];
 
   const has_more = rows.length > limit;
-  const data = (has_more ? rows.slice(0, limit) : rows).map((row) => {
+  const sliced = has_more ? rows.slice(0, limit) : rows;
+  const presentations = getRelevancePresentations(sliced.map((row) => row.evaluation_id));
+  const data = sliced.map((row) => {
     const parentCtx = toSourceParent(row);
     return {
       draft_id: row.draft_id,
@@ -701,6 +857,7 @@ export function getDrafts(filters?: DraftFilters): Paginated<DraftWithContext> {
       posture: row.posture ?? null,
       dossier_revision: row.dossier_revision ?? null,
       relevant: toBool(row.relevant),
+      relevance_presentation: presentations.get(row.evaluation_id) ?? null,
     };
   });
   return { data, has_more };
@@ -735,6 +892,22 @@ export interface GradeableEvaluation {
   scan_id: number | null;
   posture: string | null;
   relevant: number;
+}
+
+export function isEvaluationHeld(evaluationId: number): boolean {
+  let db: ReturnType<typeof getDb>;
+  try {
+    db = getDb();
+  } catch {
+    return false;
+  }
+  const hasTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'relevance_holdouts'"
+  ).get();
+  if (!hasTable) return false;
+  return db.prepare(
+    "SELECT 1 FROM relevance_holdouts WHERE evaluation_id = ? AND held = 1"
+  ).get(evaluationId) !== undefined;
 }
 
 export function getEvaluationById(evaluationId: number): GradeableEvaluation | null {
@@ -995,6 +1168,7 @@ export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWith
   const revisionMeta = getGradeRevisionMetaBatch(
     sliced.filter((row) => row.grade_id !== null).map((row) => row.grade_id!)
   );
+  const presentations = getRelevancePresentations(sliced.map((row) => row.evaluation_id));
 
   const data = sliced.map((row) => {
     const parentCtx = toSourceParent(row);
@@ -1022,6 +1196,7 @@ export function getDraftsWithGrades(filters?: DraftFilters): Paginated<DraftWith
       posture: row.posture ?? null,
       dossier_revision: row.dossier_revision ?? null,
       relevant: toBool(row.relevant),
+      relevance_presentation: presentations.get(row.evaluation_id) ?? null,
       grade: row.grade_id
         ? {
             id: row.grade_id,
@@ -1170,6 +1345,7 @@ function getReviewEvaluations({
     shadow_status: ShadowRelevanceRunRow["status"] | null;
     shadow_error_detail: string | null;
     shadow_created_at: string | null;
+    held: number;
   }
 
   const authorClassificationSelect = tableNames.has("author_classifications")
@@ -1241,7 +1417,10 @@ function getReviewEvaluations({
         pr.body AS resolved_respond_prompt,
         pc.body AS resolved_critique_prompt,
         ${authorClassificationSelect},
-        ${shadowSelect}
+        ${shadowSelect},
+        ${tableNames.has("relevance_holdouts")
+          ? "EXISTS (SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = e.id AND h.held = 1)"
+          : "0"} AS held
       FROM evaluations e
       JOIN posts p ON p.id = e.post_id
       ${authorClassificationJoin}
@@ -1261,6 +1440,7 @@ function getReviewEvaluations({
   if (rows.length === 0) return [];
 
   const evaluationIds = JSON.stringify(rows.map((row) => row.id));
+  const presentations = getRelevancePresentations(rows.map((row) => row.id));
 
   const violations = tableNames.has("gate_blocks") ? db.prepare(
     `SELECT id, reason_code, offending_text, segment_index, project_key,
@@ -1379,23 +1559,65 @@ function getReviewEvaluations({
       },
       gate_violations: violationsByEvaluation.get(row.id) ?? [],
       grade: gradesByEvaluation.get(row.id) ?? null,
+      held: toBool(row.held),
       ...(hasShadowRelevance ? { shadow_relevance: shadowRelevance } : {}),
+      relevance_presentation: presentations.get(row.id) ?? null,
     };
   });
 }
 
 export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
+  const db = getDb();
+  const hasClassifier = (
+    db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>
+  ).some((column) => column.name === "relevance_classifier");
   return getReviewEvaluations({
     whereClause: "e.scan_id = ?",
     params: [scanId],
-    orderBy: "e.score DESC",
+    orderBy: hasClassifier
+      ? `CASE e.relevance_classifier
+          WHEN 'zeroshot' THEN 0 WHEN 'human' THEN 1 WHEN 'llm' THEN 2 ELSE 3 END,
+          CASE WHEN e.relevance_classifier = 'llm' THEN e.score END DESC,
+          e.id DESC`
+      : "e.score DESC, e.id DESC",
   });
+}
+
+export function getZeroShotReviewCases(
+  filters: NegativeGradingFilters = {}
+): Paginated<ReviewEvaluation> {
+  const db = getDb();
+  const hasHoldouts = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'relevance_holdouts'"
+  ).get() !== undefined;
+  const conditions = [
+    "e.relevance_classifier = 'zeroshot'",
+    "e.relevance_action = 'review'",
+    "e.scan_id IS NOT NULL",
+    `NOT EXISTS (SELECT 1 FROM grades g WHERE g.evaluation_id = e.id AND g.schema_version = ${HUMAN_GRADE_SCHEMA_VERSION} AND g.needs_regrade = 0)`,
+  ];
+  if (hasHoldouts) {
+    conditions.push(
+      "NOT EXISTS (SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = e.id AND h.held = 1)"
+    );
+  }
+  const params: Array<string | number> = [];
+  if (filters.before_id !== undefined) {
+    conditions.push("e.id < ?");
+    params.push(filters.before_id);
+  }
+  const limit = filters.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = getReviewEvaluations({
+    whereClause: conditions.join(" AND "), params, orderBy: "e.id DESC", limit: limit + 1,
+  });
+  return { data: rows.slice(0, limit), has_more: rows.length > limit };
 }
 
 export function getNegativeGradingCases(
   filters: NegativeGradingFilters = {}
 ): Paginated<ReviewEvaluation> {
   const conditions = [
+    "e.relevance_classifier = 'llm'",
     "e.relevant = 0",
     "e.surface_status = 'not_relevant'",
     "e.scan_id IS NOT NULL",

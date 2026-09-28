@@ -425,12 +425,51 @@ def _seed_evaluation(
             message=msg, relevant=relevant, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id, posture=posture)
+        eval_id = state.save_evaluation(
+            result,
+            post_id,
+            scan_id,
+            posture=posture,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
         state.commit()
     return scan_id, post_id, eval_id
 
 
 class TestGrade:
+    def test_released_holdout_source_stays_ungradable_but_target_is_gradable(
+        self, db_path: str, client: TestClient
+    ) -> None:
+        _scan_id, _post_id, held_id = _seed_evaluation(
+            db_path, platform_id="held-source", relevant=False, posture=None
+        )
+        _target_scan, _target_post, target_id = _seed_evaluation(
+            db_path, platform_id="held-target", relevant=True
+        )
+        with StateManager(db_path=db_path) as state:
+            state.conn.execute(
+                "INSERT INTO relevance_holdouts "
+                "(evaluation_id, production_action, held, registry_state, status, "
+                "release_action, target_evaluation_id, released_at, created_at) "
+                "VALUES (?, 'review', 1, '{}', 'released', 'respond', ?, ?, ?)",
+                (held_id, target_id, datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+            )
+            state.commit()
+
+        grade_body = {"relevance_judgment": "correct", "action_judgment": "accept"}
+        assert client.post(f"/grades/{held_id}", json=grade_body).status_code == 409
+        assert client.post(
+            f"/grades/{held_id}/promote",
+            json={
+                "relevance_judgment": "false_negative",
+                "action_judgment": "fail",
+                "dimensions": ["usefulness"],
+                "failure_note": "should respond",
+            },
+        ).status_code == 409
+        assert client.post(f"/grades/{target_id}", json=grade_body).status_code == 200
+
     def test_happy_path(self, db_path: str, client: TestClient) -> None:
         _scan_id, _post_id, eval_id = _seed_evaluation(db_path)
         resp = client.post(

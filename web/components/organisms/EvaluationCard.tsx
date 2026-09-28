@@ -30,7 +30,7 @@ export function EvaluationCard({ evaluation, onGradeUpdate }: {
         <span className="text-xs text-gray-600 dark:text-gray-500">evaluation #{evaluation.id}</span>
         <span className="text-sm text-gray-600 dark:text-gray-400">re: {evaluation.post.author_name ?? "unknown"}</span>
       </div>
-      <ScoreBar score={evaluation.score} />
+      <ScoreBar score={evaluation.score} relevancePresentation={evaluation.relevance_presentation} />
     </button>
     {expanded && <div className="space-y-4 border-t border-gray-200 dark:border-gray-800 p-4">
       {surfaced && evaluation.draft ? <div>
@@ -64,6 +64,20 @@ export function EvaluationCard({ evaluation, onGradeUpdate }: {
         {evaluation.post.url && <div className="mt-2"><ExternalLink href={evaluation.post.url}>View original</ExternalLink></div>}
       </div>
       <MatchedRouteSummary route={evaluation.matched_route} />
+      {evaluation.relevance_presentation?.classifier === "zeroshot" && evaluation.relevance_presentation.zeroshot && <div className="rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
+        <h4 className="mb-2 text-xs font-medium uppercase text-gray-600 dark:text-gray-500">Zero-shot route detail</h4>
+        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+          <div><dt className="text-xs text-gray-500">Route line</dt><dd className="font-mono text-gray-700 dark:text-gray-300">{evaluation.relevance_presentation.zeroshot.line}</dd></div>
+          {evaluation.relevance_presentation.zeroshot.exclusion && <div><dt className="text-xs text-gray-500">Exclusion</dt><dd className="font-mono text-gray-700 dark:text-gray-300">{evaluation.relevance_presentation.zeroshot.exclusion}</dd></div>}
+          <div><dt className="text-xs text-gray-500">Margin features</dt><dd className="text-gray-700 dark:text-gray-300">{evaluation.relevance_presentation.zeroshot.margin_features.join(", ") || "None"}</dd></div>
+        </dl>
+        <div className="mt-3">
+          <p className="text-xs text-gray-500">Feature probabilities</p>
+          <dl className="mt-1 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+            {Object.entries(evaluation.relevance_presentation.zeroshot.feature_probabilities).map(([feature, probability]) => <div key={feature} className="flex justify-between gap-3"><dt className="font-mono text-gray-600 dark:text-gray-400">{feature}</dt><dd className="tabular-nums text-gray-700 dark:text-gray-300">{probability.toFixed(3)}</dd></div>)}
+          </dl>
+        </div>
+      </div>}
       {evaluation.scan_id && <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h4 className="text-xs font-medium uppercase text-gray-600 dark:text-gray-500">Grade</h4>
@@ -84,7 +98,7 @@ export function EvaluationCard({ evaluation, onGradeUpdate }: {
             {evaluation.grade.revision_count === 1 ? "revision" : "revisions"}
           </p>
         )}
-        <GradeControls postId={evaluation.post_id} scanId={evaluation.scan_id} evaluationId={evaluation.id} predictedRelevant={evaluation.relevant} existingGrade={evaluation.grade} draftComment={evaluation.draft?.comment_text} onGradeChange={(grade) => onGradeUpdate?.(evaluation.id, grade)} />
+        {!evaluation.held && <GradeControls postId={evaluation.post_id} scanId={evaluation.scan_id} evaluationId={evaluation.id} predictedRelevant={evaluation.relevant} existingGrade={evaluation.grade} draftComment={evaluation.draft?.comment_text} relevanceClassifier={evaluation.relevance_presentation?.classifier} relevanceAction={evaluation.relevance_presentation?.action} onGradeChange={(grade) => onGradeUpdate?.(evaluation.id, grade)} />}
       </div>}
     </div>}
   </div>;

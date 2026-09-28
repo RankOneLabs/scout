@@ -71,6 +71,7 @@ from scout.grading.correction import (
     normalized_edit_distance,
 )
 from scout.reasoning_control import ReasoningControlClient
+from scout.relevance.classifier_identity import classifier_of
 from scout.replay.pricing import (
     PriceEstimate,
     PricingCatalog,
@@ -103,7 +104,7 @@ from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text
 # trace_comparisons row so stored comparison evidence identifies the exact
 # upstream semantics that produced it without a runtime git checkout.
 # tests/test_jig_contract.py contract-tests this constant against the pin.
-JIG_REVISION = "55081e81cee5c6faf0c2d376ab4691f69e111b3d"
+JIG_REVISION = "5fa9c01"
 
 # v2: candidate-only (experiment_runs.candidate_config). Per-baseline
 # provenance moved out to baseline_evidence — see BASELINE_EVIDENCE_VERSION.
@@ -452,6 +453,14 @@ async def resolve_baseline(
                 f"evaluation_phase_runs {phase_run_id} has status "
                 f"{phase_run['status']!r}, not 'complete'"
             )
+        classifier = classifier_of(phase_run["model"])
+        if classifier == "zeroshot":
+            raise BaselineResolutionError(
+                f"evaluation_phase_runs {phase_run_id} was produced by zero-shot and cannot be "
+                "replayed as an LLM baseline"
+            )
+        # Any non-zero-shot model identity is an LLM, including historical
+        # opaque aliases; the trace's recorded model is independently checked below.
         phase = phase_run["phase"]
         if phase not in PHASE_REPLAY_CONFIGS:
             raise BaselineResolutionError(f"unknown replayable phase: {phase!r}")

@@ -43,6 +43,58 @@ from scout.result import Err
 from scout.storage.state import StateManager
 
 
+def export_holdout_batch(args: argparse.Namespace) -> None:
+    """Write held relevance rows as one deterministic file per project."""
+    from scout.relevance.holdout_export import export_holdouts
+
+    try:
+        with StateManager(db_path=DB_PATH, allow_create=False) as state:
+            result = export_holdouts(
+                state,
+                Path(args.out),
+                batch_id=getattr(args, "batch", None),
+            )
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        print(f"error: could not export holdouts: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(
+        f"exported {result.row_count} holdouts in batch {result.batch_id} "
+        f"to {args.out}"
+    )
+
+
+def release_holdout_batch_cli(args: argparse.Namespace) -> None:
+    """Apply a complete blind-grading answer key to one exported batch."""
+    from scout.relevance.holdout_release import (
+        load_answer_key,
+        release_holdout_batch,
+    )
+
+    async def _run() -> None:
+        answers = load_answer_key(Path(args.answer_key))
+        async with replay_runtime(db_path=DB_PATH) as runtime:
+            result = await release_holdout_batch(
+                state=runtime.state,
+                tracer=runtime.tracer,
+                feedback=runtime.feedback,
+                batch_id=args.batch,
+                answers=answers,
+            )
+        print(
+            f"released {result.released} holdouts from batch {result.batch_id}; "
+            f"already released: {result.already_released}; "
+            f"actions: {dict(result.action_counts)}"
+        )
+
+    try:
+        asyncio.run(_run())
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        # HoldoutReleaseError is a RuntimeError; so is claim_release's
+        # already-claimed refusal, which fires before a release can wrap it.
+        print(f"error: could not release holdouts: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def positive_int(value: str) -> int:
     """argparse type for --phase-run-id: a positive integer only."""
     try:
@@ -580,9 +632,11 @@ def grid_expand_feedback(args: argparse.Namespace) -> None:
 __all__ = [
     "batch_replay_feedback",
     "export_population",
+    "export_holdout_batch",
     "grid_expand_feedback",
     "batch_retry_feedback",
     "positive_int",
+    "release_holdout_batch_cli",
     "replay_feedback",
     "report_feedback",
 ]

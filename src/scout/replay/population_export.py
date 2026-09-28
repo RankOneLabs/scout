@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -13,6 +14,7 @@ from scout.grading.relevance_targets import (
     project_relevance_target_source,
 )
 from scout.grading.snapshots import FrozenGradeInput
+from scout.relevance.binding import population_export_record_fields
 from scout.result import Err
 from scout.scanning.author_class import handle_from_post_url
 
@@ -35,6 +37,35 @@ class PopulationExportRecord(BaseModel):
     human_label: bool | None
     production_score: float
     production_decision: bool
+    production_action: str | None = None
+
+
+def record_from_held_row(row: Mapping[str, Any]) -> PopulationExportRecord:
+    """Project one ungraded held evaluation without weakening the graded path."""
+    decision = row["production_decision"]
+    if decision not in (0, 1):
+        raise ValueError(
+            f"population export evaluation {row['evaluation_id']} decision must be boolean"
+        )
+    state_source = {
+        "platform": row["platform"],
+        "channel_name": row["channel"],
+        "url": row["url"],
+        "content": row["text"],
+        "parent_author_name": row["parent_author_name"],
+        "parent_text": row["parent_text"],
+        "author_name": row["author_name"],
+        "author_handle": handle_from_post_url(row["platform"], row["url"]),
+    }
+    return PopulationExportRecord(
+        evaluation_id=row["evaluation_id"],
+        **population_export_record_fields(state_source),
+        snapshot_id=None,
+        human_label=None,
+        production_score=row["production_score"],
+        production_decision=bool(decision),
+        production_action=row["production_action"],
+    )
 
 
 def record_from_frozen_input(item: FrozenGradeInput) -> PopulationExportRecord:
@@ -86,6 +117,7 @@ def load_live_population(
         "SELECT e.id AS evaluation_id, p.platform, p.channel_name AS channel, "
         "p.url, p.content AS text, p.parent_author_name, p.parent_text, p.author_name, "
         "e.score AS production_score, e.relevant AS production_decision, "
+        "e.relevance_action AS production_action, "
         "CASE WHEN g.schema_version = ? AND g.needs_regrade = 0 THEN "
         "CASE "
         "WHEN g.relevance_judgment = 'correct' AND e.relevant IN (0, 1) "
@@ -95,7 +127,10 @@ def load_live_population(
         "END END AS human_label "
         "FROM evaluations e JOIN posts p ON p.id = e.post_id "
         "LEFT JOIN grades g ON g.evaluation_id = e.id "
-        "WHERE e.project_key = ? ORDER BY e.id",
+        "WHERE e.project_key = ? "
+        "AND e.relevance_classifier IN ('llm', 'zeroshot') "
+        "AND NOT EXISTS (SELECT 1 FROM relevance_holdouts h "
+        "WHERE h.evaluation_id = e.id AND h.held = 1) ORDER BY e.id",
         (HUMAN_GRADE_SCHEMA_VERSION, project_key),
     ).fetchall()
     records: list[PopulationExportRecord] = []
@@ -122,6 +157,7 @@ def load_live_population(
                 ),
                 production_score=row["production_score"],
                 production_decision=bool(production_decision),
+                production_action=row["production_action"],
             )
         )
     return tuple(records)
@@ -137,6 +173,7 @@ __all__ = [
     "PopulationExportRecord",
     "load_live_population",
     "record_from_frozen_input",
+    "record_from_held_row",
     "records_from_frozen_inputs",
     "render_population_jsonl",
 ]

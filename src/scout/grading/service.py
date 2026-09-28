@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -28,6 +29,20 @@ from scout.storage.state import StateManager
 # artifact fails fast at import time rather than at first grade write.
 Draft202012Validator.check_schema(GRADING_SCHEMA)
 _ENVELOPE_VALIDATOR = Draft202012Validator(GRADING_SCHEMA)
+
+
+def evaluation_is_held(conn: sqlite3.Connection, evaluation_id: int) -> bool:
+    """Return whether an evaluation is permanently excluded from grading.
+
+    Holdout rows retain ``held = 1`` after release.  This deliberately checks
+    the source evaluation marker rather than release status so operators grade
+    the target evaluation produced by release.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM relevance_holdouts WHERE evaluation_id = ? AND held = 1",
+        (evaluation_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _envelope_errors(instance: dict[str, Any]) -> list[str]:

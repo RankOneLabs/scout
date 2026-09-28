@@ -75,6 +75,9 @@ def _seed_surfaced_correct_grade(state: StateManager, *, with_draft: bool = True
         surface_status="surfaced",
         dossier_revision="a" * 40,
         dossier_summary_id="gateway-dossier",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     if with_draft:
         state.save_draft(
@@ -111,6 +114,9 @@ def _seed_false_positive_grade(state: StateManager) -> int:
     )
     evaluation_id = state.save_evaluation(
         result, post_id, scan_id, surface_status="not_relevant",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     state.complete_scan(scan_id, 1, 1)
     state.save_grade(GradeRecord(
@@ -139,6 +145,9 @@ def _seed_false_negative_missing_identity_grade(state: StateManager) -> int:
     )
     evaluation_id = state.save_evaluation(
         result, post_id, scan_id, surface_status="not_relevant",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     state.complete_scan(scan_id, 1, 1)
     state.save_grade(GradeRecord(
@@ -169,6 +178,9 @@ def _seed_malformed_grade(state: StateManager) -> int:
     result = RelevanceResult(message=msg, relevant=True, score=0.5, reason="r")
     evaluation_id = state.save_evaluation(
         result, post_id, scan_id, surface_status="not_relevant",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     state.complete_scan(scan_id, 1, 1)
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.") + (

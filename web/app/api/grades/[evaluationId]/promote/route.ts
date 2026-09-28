@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { callSidecar, parseObjectBody } from "@/lib/sidecar-bridge";
 import { validateGradeEnvelope } from "@/lib/grade-validation";
-import { getEvaluationById } from "@/lib/queries";
+import { getEvaluationById, isEvaluationHeld } from "@/lib/queries";
 import { parseIdParam } from "@/lib/route-utils";
 import { isTrustedWriteContext } from "@/lib/write-guard";
 
@@ -24,6 +24,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json(
       { errors: [`Evaluation ${evaluationId} not found`] },
       { status: 404 }
+    );
+  }
+  if (isEvaluationHeld(evaluationId)) {
+    return NextResponse.json(
+      { errors: ["held evaluations cannot be promoted"] },
+      { status: 409 }
     );
   }
   if (evaluation.relevant) {

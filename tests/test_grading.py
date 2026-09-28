@@ -147,7 +147,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         return scan_id, post_id, eval_id
 
     def _make_pass_grade(
@@ -388,8 +390,12 @@ class TestGradeStorage:
                              reason="r1", relevant_to=("a",))
         r2 = RelevanceResult(message=msg2, relevant=True, score=0.7,
                              reason="r2", relevant_to=("a",))
-        e1 = in_memory_state.save_evaluation(r1, p1, scan_id)
-        e2 = in_memory_state.save_evaluation(r2, p2, scan_id)
+        e1 = in_memory_state.save_evaluation(
+            r1, p1, scan_id, relevance_classifier="llm", relevance_action=None
+        )
+        e2 = in_memory_state.save_evaluation(
+            r2, p2, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         # Save v2 grade for p1 only
         in_memory_state.save_grade(self._make_pass_grade(p1, scan_id, e1))
@@ -417,11 +423,12 @@ class TestGradeStorage:
     ) -> None:
         scan_id = in_memory_state.start_scan()
 
-        for i, (rel, action, dims, note) in enumerate([
-            ("correct", "accept", None, None),
-            ("correct", "accept", None, None),
-            ("correct", "fail", ["tone"], "bad tone"),
-            ("false_positive", "fail", ["contextual_understanding"], "missed ctx"),
+        for i, (rel, action, dims, note, classifier) in enumerate([
+            ("correct", "accept", None, None, "llm"),
+            ("correct", "accept", None, None, "llm"),
+            ("correct", "fail", ["tone"], "bad tone", "llm"),
+            ("false_positive", "fail", ["contextual_understanding"], "missed ctx", "llm"),
+            ("false_negative", "fail", ["usefulness"], "zero-shot should respond", "zeroshot"),
         ]):
             msg = Message(
                 platform="discord", platform_id=f"sig-{i}", channel_name="ch",
@@ -438,7 +445,10 @@ class TestGradeStorage:
                 message=msg, relevant=True, score=0.8,
                 reason="r", relevant_to=("a",),
             )
-            eid = in_memory_state.save_evaluation(result, pid, scan_id)
+            eid = in_memory_state.save_evaluation(
+                result, pid, scan_id, relevance_classifier=classifier,
+                relevance_action="review" if classifier == "zeroshot" else None,
+            )
             in_memory_state.save_grade(GradeRecord(
                 post_id=pid, evaluation_id=eid, source="cli",
                 graded_at=datetime.now(UTC), scan_id=scan_id,
@@ -448,13 +458,59 @@ class TestGradeStorage:
                 context_missing_input="ctx" if "contextual_understanding" in (dims or []) else None,
             ))
 
-        in_memory_state.complete_scan(scan_id, 4, 3)
+        in_memory_state.complete_scan(scan_id, 5, 3)
         sig = in_memory_state.get_recent_grading_signals(limit_scans=1)
 
-        assert sig.total_graded == 4
+        assert sig.total_graded == 5
         assert sig.pass_count == 2
-        assert sig.fail_count == 2
+        assert sig.fail_count == 3
         assert sig.false_positive_count == 1
+        assert sig.false_negative_count == 0
+        assert ("usefulness", 1) in sig.dimension_counts
+        assert "zero-shot should respond" in sig.recent_causal_examples
+        rendered = format_grading_signals(sig)
+        assert "usefulness (1)" in rendered
+        assert "zero-shot should respond" in rendered
+
+    def test_zero_shot_only_signals_keep_failure_feedback(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        msg = Message(
+            platform="discord", platform_id="zero-only", channel_name="ch",
+            channel_id="c1", author=Account(
+                platform="discord", id="u1", name="a", handle=None,
+            ),
+            content="please respond", created_at=datetime.now(UTC),
+        )
+        post_id = in_memory_state.save_post(msg, scan_id)
+        evaluation_id = in_memory_state.save_evaluation(
+            RelevanceResult(
+                message=msg, relevant=False, score=0.0, reason="review",
+                relevant_to=(),
+            ),
+            post_id,
+            scan_id,
+            relevance_classifier="zeroshot",
+            relevance_action="review",
+        )
+        in_memory_state.save_grade(GradeRecord(
+            post_id=post_id, evaluation_id=evaluation_id, source="web",
+            graded_at=datetime.now(UTC), scan_id=scan_id,
+            relevance_judgment="false_negative", action_judgment="fail",
+            schema_version=3, needs_regrade=False, dimensions=["usefulness"],
+            failure_note="zero-shot should respond",
+        ))
+        in_memory_state.complete_scan(scan_id, 1, 0)
+
+        signal = in_memory_state.get_recent_grading_signals(limit_scans=1)
+        assert signal.total_graded == 1
+        assert signal.fail_count == 1
+        assert signal.false_negative_count == 0
+        assert format_grading_signals(signal) == (
+            "Recent reviews: 0 of 1 passed. Top failure dimensions: usefulness (1). "
+            "Recent failure notes: zero-shot should respond."
+        )
 
     def test_export_eval_cases_v2(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
@@ -473,7 +529,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         in_memory_state.save_draft(post_id, eval_id, "gateway", "Great draft", scan_id)
         in_memory_state.save_grade(self._make_pass_grade(post_id, scan_id, eval_id))
 
@@ -503,7 +561,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         in_memory_state.save_draft(post_id, eval_id, "gateway", "Draft", scan_id)
         grade = replace(
             self._make_pass_grade(post_id, scan_id, eval_id),
@@ -536,7 +596,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.8,
             reason="r", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         # Save a v1 needs_regrade grade via the migration lane — a legacy
         # v1 row (schema_version=1, action_judgment=None) is exactly what
@@ -573,7 +635,9 @@ class TestGradeStorage:
             message=msg, relevant=True, score=0.85,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         in_memory_state.save_draft(post_id, eval_id, "gateway", "Draft text", scan_id)
 
         items = in_memory_state.get_gradeable_items(scan_id)
@@ -619,7 +683,14 @@ class TestSaveGradeValidationBoundary:
             message=msg, relevant=True, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id, posture=posture)
+        eval_id = state.save_evaluation(
+            result,
+            post_id,
+            scan_id,
+            posture=posture,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
         return scan_id, post_id, eval_id
 
     def _grades_row_count(self, state: StateManager, post_id: int) -> int:
@@ -1005,7 +1076,9 @@ class TestReviewScan:
             message=msg, relevant=True, score=0.85,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         state.save_draft(post_id, eval_id, "gateway", "Draft comment", scan_id)
         return scan_id, post_id, eval_id
 
@@ -1073,7 +1146,9 @@ class TestReviewScan:
         post2_id = in_memory_state.save_post(msg2, scan_id)
         r2 = RelevanceResult(message=msg2, relevant=True, score=0.6,
                              reason="r2", relevant_to=("a",))
-        in_memory_state.save_evaluation(r2, post2_id, scan_id)
+        in_memory_state.save_evaluation(
+            r2, post2_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         inputs = iter(["q"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))  # type: ignore[attr-defined]
@@ -1179,7 +1254,9 @@ class TestEditedTextCLI:
             message=msg, relevant=True, score=0.85,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         if with_draft:
             state.save_draft(post_id, eval_id, "gateway", "Draft comment", scan_id)
         return scan_id, post_id, eval_id

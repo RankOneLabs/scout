@@ -87,6 +87,7 @@ from scout.grading.snapshots import (
 )
 from scout.grading.wire import ArrayWire, encode_wire_v1, record_wire
 from scout.result import Err, Ok, Result
+from scout.storage.relevance_holdouts import load_held_evaluation_ids
 
 
 class RuntimePackage(BaseModel):
@@ -242,20 +243,30 @@ def read_rejected_population(
     try:
         # Restrict project before decoding. Missing project rows remain explicit
         # exclusions rather than being assigned to the requested project.
-        rows = conn.execute(
-            "SELECT e.*, EXISTS(SELECT 1 FROM grades g WHERE g.evaluation_id = e.id "
-            "OR (g.evaluation_id IS NULL AND g.post_id = e.post_id)) AS has_grade "
-            "FROM evaluations e WHERE e.project_key = ? OR e.project_key IS NULL "
-            "OR trim(e.project_key) = '' ORDER BY e.id",
-            (project,),
-        ).fetchall()
+        held_evaluation_ids = load_held_evaluation_ids(conn)
+        rows = [
+            row
+            for row in conn.execute(
+                "SELECT e.*, EXISTS(SELECT 1 FROM grades g WHERE g.evaluation_id = e.id "
+                "OR (g.evaluation_id IS NULL AND g.post_id = e.post_id)) AS has_grade "
+                "FROM evaluations e WHERE e.project_key = ? OR e.project_key IS NULL "
+                "OR trim(e.project_key) = '' ORDER BY e.id",
+                (project,),
+            ).fetchall()
+            if int(row["id"]) not in held_evaluation_ids
+        ]
+        candidate_post_ids = {int(row["post_id"]) for row in rows}
         # One joined population read replaces one post query per evaluation.
-        post_rows = conn.execute(
-            "SELECT DISTINCT p.* FROM posts p JOIN evaluations e ON e.post_id = p.id "
-            "WHERE e.project_key = ? OR e.project_key IS NULL OR trim(e.project_key) = '' "
-            "ORDER BY p.id",
-            (project,),
-        ).fetchall()
+        post_rows = [
+            row
+            for row in conn.execute(
+                "SELECT DISTINCT p.* FROM posts p JOIN evaluations e ON e.post_id = p.id "
+                "WHERE e.project_key = ? OR e.project_key IS NULL OR trim(e.project_key) = '' "
+                "ORDER BY p.id",
+                (project,),
+            ).fetchall()
+            if int(row["id"]) in candidate_post_ids
+        ]
         posts = {row["id"]: RecordedPost.model_validate(dict(row)) for row in post_rows}
         grouping = tuple(
             GroupingPost(

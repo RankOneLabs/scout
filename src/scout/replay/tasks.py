@@ -19,6 +19,7 @@ from scout.grading.assistance_scope import read_assistance_bundle
 from scout.grading.assistance_store import load_corpus_snapshot, load_training_examples
 from scout.grading.assistance_types import FrozenPartition, RejectedPopulation, SelectionReference
 from scout.grading.snapshots import FrozenGradeInput
+from scout.relevance.classifier_identity import classifier_of
 from scout.result import Err, Ok, Result
 from scout.scanning.schemas import RelevancePhaseOutput
 from scout.storage.evaluations import PhaseRun
@@ -51,7 +52,7 @@ class ReplayWorkerConfiguration:
     reasoning: bool | None = None
 
 
-class RelevanceGrader(Grader[RelevancePhaseOutput]):  # type: ignore[misc]
+class RelevanceGrader(Grader[RelevancePhaseOutput]):
     def __init__(self, target: RelevanceTarget) -> None:
         self.target = target
 
@@ -156,7 +157,7 @@ class RelevanceCaseSource:
 class RelevanceSourceExclusion(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     evaluation_id: int
-    reason: Literal["missing_complete_relevance_phase"]
+    reason: Literal["missing_complete_relevance_phase", "unsupported_relevance_classifier"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +224,7 @@ def load_relevance_population(
             if assigned is not None and assigned.partition != task.partition:
                 continue
             source = FrozenGradeInput.model_validate_json(contents[member.input_digest])
-            phases = sorted(
+            relevance_phases = sorted(
                 (
                     phase
                     for phase in source.phase_runs
@@ -231,7 +232,16 @@ def load_relevance_population(
                 ),
                 key=lambda phase: phase.id,
             )
-            if not phases:
+            classifiers = tuple(classifier_of(phase.model) for phase in relevance_phases)
+            if "zeroshot" in classifiers:
+                exclusions.append(
+                    RelevanceSourceExclusion(
+                        evaluation_id=member.evaluation_id,
+                        reason="unsupported_relevance_classifier",
+                    )
+                )
+                continue
+            if not relevance_phases:
                 exclusions.append(
                     RelevanceSourceExclusion(
                         evaluation_id=member.evaluation_id,
@@ -239,14 +249,14 @@ def load_relevance_population(
                     )
                 )
                 continue
-            phase = phases[-1]
+            phase = relevance_phases[-1]
             if (
                 phase.evaluation_id != member.evaluation_id
                 or source.post is None
                 or phase.post_id != source.post.id
             ):
                 raise ValueError("Frozen phase does not belong to corpus evaluation/post")
-            dropped.extend(prior.id for prior in phases[:-1])
+            dropped.extend(prior.id for prior in relevance_phases[:-1])
             cases.append(
                 RelevanceCaseSource(
                     target=RelevanceTarget(

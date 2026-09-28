@@ -9,7 +9,47 @@ project-local, so it can never be part of an import cycle.
 
 from __future__ import annotations
 
-LATEST_SCHEMA_VERSION = 47
+LATEST_SCHEMA_VERSION = 49
+
+RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS relevance_holdouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evaluation_id INTEGER NOT NULL UNIQUE REFERENCES evaluations(id),
+        production_action TEXT NOT NULL CHECK(
+            production_action IN ('respond', 'review', 'drop')
+        ),
+        held INTEGER NOT NULL CHECK(held IN (0, 1)),
+        batch_id TEXT,
+        exported_at TEXT,
+        dossier_revision TEXT,
+        registry_state TEXT NOT NULL CHECK(json_valid(registry_state)),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(
+            status IN ('pending', 'claimed', 'released', 'failed')
+        ),
+        claim_token TEXT,
+        claim_fence INTEGER NOT NULL DEFAULT 0,
+        claim_owner TEXT,
+        claim_expires_at TEXT,
+        release_action TEXT CHECK(
+            release_action IS NULL
+            OR release_action IN ('respond', 'review', 'drop')
+        ),
+        target_evaluation_id INTEGER UNIQUE REFERENCES evaluations(id),
+        released_at TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        CHECK((batch_id IS NULL) = (exported_at IS NULL)),
+        CHECK(target_evaluation_id IS NULL OR target_evaluation_id <> evaluation_id),
+        CHECK(status <> 'released' OR released_at IS NOT NULL),
+        CHECK(status <> 'released' OR release_action IS NOT NULL),
+        CHECK(status <> 'released' OR target_evaluation_id IS NOT NULL)
+    )""",
+    """CREATE INDEX IF NOT EXISTS relevance_holdouts_status_idx
+        ON relevance_holdouts(status, created_at, id)""",
+    """CREATE INDEX IF NOT EXISTS relevance_holdouts_batch_idx
+        ON relevance_holdouts(batch_id, exported_at, id)""",
+)
 
 SHADOW_RELEVANCE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """CREATE TABLE IF NOT EXISTS shadow_relevance_runs (
@@ -407,6 +447,16 @@ CREATE TABLE IF NOT EXISTS evaluations (
     failure_reason TEXT,
     dossier_summary_id TEXT,
     dossier_revision TEXT,
+    relevance_classifier TEXT NOT NULL DEFAULT 'llm' CHECK(
+        relevance_classifier IN ('llm','zeroshot','human')
+    ),
+    relevance_action TEXT CHECK(
+        relevance_action IS NULL
+        OR relevance_action IN ('respond','review','drop')
+    ) CHECK(
+        (relevance_classifier = 'llm' AND relevance_action IS NULL)
+        OR (relevance_classifier <> 'llm' AND relevance_action IS NOT NULL)
+    ),
     FOREIGN KEY (post_id) REFERENCES posts(id),
     FOREIGN KEY (keyword_route_id) REFERENCES project_keywords(id)
 );
@@ -1216,6 +1266,7 @@ CREATE INDEX IF NOT EXISTS human_positive_promotions_status_idx
 {';'.join(LEASE_AND_RECOVERY_SCHEMA_STATEMENTS)};
 {';'.join(ACCOUNT_SCHEMA_STATEMENTS)};
 {';'.join(SHADOW_RELEVANCE_SCHEMA_STATEMENTS)};
+{';'.join(RELEVANCE_HOLDOUT_SCHEMA_STATEMENTS)};
 
 PRAGMA user_version = {LATEST_SCHEMA_VERSION};
 """

@@ -49,6 +49,9 @@ def test_record_is_idempotent_and_backfills_evaluation() -> None:
 
         evaluation_id = state.save_evaluation(
             RelevanceResult(msg, True, 0.9, "fixture"), post_id, scan_id
+        ,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         assert state.shadow_relevance.backfill_evaluation_id(first.id, evaluation_id)
         assert not state.shadow_relevance.backfill_evaluation_id(first.id, evaluation_id)
@@ -106,11 +109,17 @@ def test_backfill_requires_matching_evaluation_identity() -> None:
         other_post_id = state.save_post(other, scan_id)
         wrong_evaluation_id = state.save_evaluation(
             RelevanceResult(other, True, 0.9, "fixture"), other_post_id, scan_id
+        ,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         assert not state.shadow_relevance.backfill_evaluation_id(run.id, wrong_evaluation_id)
 
         evaluation_id = state.save_evaluation(
             RelevanceResult(message, True, 0.9, "fixture"), post_id, scan_id
+        ,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         assert state.shadow_relevance.backfill_evaluation_id(run.id, evaluation_id)
 
@@ -120,6 +129,9 @@ def test_report_hides_grade_after_latest_revision_invalidates_it() -> None:
         scan_id, post_id, message = _parents(state)
         evaluation_id = state.save_evaluation(
             RelevanceResult(message, True, 0.9, "fixture"), post_id, scan_id
+        ,
+            relevance_classifier="llm",
+            relevance_action=None,
         )
         state.shadow_relevance.record_shadow_run(
             ShadowRunWrite(

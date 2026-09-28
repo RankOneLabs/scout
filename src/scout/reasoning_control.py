@@ -17,7 +17,7 @@ from dataclasses import replace
 from jig import CompletionParams, LLMClient, LLMResponse
 
 
-class ReasoningControlClient(LLMClient):  # type: ignore[misc]
+class ReasoningControlClient(LLMClient):
     """Preserve Jig's client/trace identity while pinning ``reasoning``.
 
     Wrap only when the plan sets an explicit value; a plan with

@@ -92,6 +92,12 @@ function getCoverage(from: string, to: string): CoverageBucket[] {
 
 function getRelevanceMetrics(validGradeIds: number[]): RelevanceMetrics {
   const db = getDb();
+  const hasRelevanceClassifier = (
+    db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>
+  ).some((column) => column.name === "relevance_classifier");
+  const classifierPredicate = hasRelevanceClassifier
+    ? "AND e.relevance_classifier = 'llm'"
+    : "";
   const rows = db
     .prepare(
       `SELECT g.relevance_judgment AS relevance_judgment,
@@ -100,7 +106,7 @@ function getRelevanceMetrics(validGradeIds: number[]): RelevanceMetrics {
        FROM grades g
        JOIN evaluations e ON e.id = g.evaluation_id
        LEFT JOIN draft_comments dc ON dc.evaluation_id = e.id
-       WHERE ${validGradeWhere()}
+       WHERE ${validGradeWhere()} ${classifierPredicate}
        GROUP BY g.relevance_judgment`
     )
     .all(validGradeParameter(validGradeIds)) as Array<{

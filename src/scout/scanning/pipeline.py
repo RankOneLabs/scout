@@ -5,14 +5,33 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, cast
 
-from jig import AgentConfig, PipelineConfig, Span, SpanKind, Step, TracingLogger, run_agent
+from jig import (
+    AgentConfig,
+    AgentResult,
+    PipelineConfig,
+    Span,
+    SpanKind,
+    Step,
+    TracingLogger,
+    run_agent,
+)
 
+import scout.config as _config
 from scout.dossiers.resolver import DossierSummary
 from scout.errors import LLMError, ParseError
+from scout.relevance.binding import RelevancePostStateSource
+from scout.relevance.executor import PhaseTracer, run_zeroshot_relevance
+from scout.relevance.models import (
+    ZEROSHOT_PROJECT_KEYS,
+    RelevanceAction,
+    ZeroShotRelevanceError,
+    ZeroShotRelevanceOutput,
+)
+from scout.relevance.setup import ZeroShotScanContext
 from scout.result import Err, Ok, Result
 from scout.scanning.agent import (
     ScoutExecutionContext,
@@ -30,6 +49,7 @@ from scout.scanning.schemas import (
     StructuredDraftOutput,
 )
 from scout.storage.state import StateManager
+from scout.typesafe.state import build_state
 
 logger = logging.getLogger("scout.scanning.pipeline")
 
@@ -58,7 +78,7 @@ class _TraceEvidenceError(RuntimeError):
     only for evidence-persistence itself failing after a real attempt."""
 
 
-class _TraceIdCapturingTracer(TracingLogger):  # type: ignore[misc]
+class _TraceIdCapturingTracer(TracingLogger):
     """Narrowly-scoped, single-call wrapper around a real TracingLogger.
 
     Captures the trace id Jig's run_agent assigns synchronously inside
@@ -132,7 +152,7 @@ def _verify_agent_run_root(spans: list[Span], trace_id: str) -> None:
 
 
 async def _finalize_and_persist_phase_run(
-    tracer: _TraceIdCapturingTracer,
+    tracer: PhaseTracer,
     trace_id: str,
     *,
     state: StateManager,
@@ -189,6 +209,58 @@ async def score_and_draft_step(
         formatted_input = format_message_input(msg)
         project_key = None
 
+    use_zeroshot = (
+        _config.RELEVANCE_CLASSIFIER == "zeroshot"
+        and project_key in ZEROSHOT_PROJECT_KEYS
+    )
+    executor: Callable[
+        [AgentConfig[RelevancePhaseOutput], str],
+        Awaitable[AgentResult[RelevancePhaseOutput]],
+    ] = run_agent
+    if use_zeroshot:
+        zeroshot_context: ZeroShotScanContext | None = ctx.get("zeroshot_context")
+        target = (
+            zeroshot_context.projects.get(project_key)
+            if zeroshot_context is not None and project_key is not None
+            else None
+        )
+        if zeroshot_context is None or target is None or project_key is None:
+            return Err(
+                LLMError(
+                    operation="relevance",
+                    message_id=msg.platform_id,
+                    detail=f"Zero-shot relevance context is missing project {project_key!r}",
+                )
+            )
+        source: RelevancePostStateSource = {
+            "platform": msg.platform,
+            "channel_name": msg.channel_name,
+            "url": msg.url,
+            "content": msg.content,
+            "parent_author_name": msg.parent.author.name if msg.parent else None,
+            "parent_text": msg.parent.text if msg.parent else None,
+            "author_name": msg.author.name,
+            "author_handle": msg.author.handle,
+        }
+        zeroshot_state = build_state(source, target, zeroshot_context.catalogue)
+
+        async def _execute_zeroshot(
+            config: AgentConfig[RelevancePhaseOutput], text: str
+        ) -> AgentResult[RelevancePhaseOutput]:
+            result = await run_zeroshot_relevance(
+                cast(AgentConfig[ZeroShotRelevanceOutput], config),
+                text,
+                client=zeroshot_context.client,
+                catalogue=zeroshot_context.catalogue,
+                questions=zeroshot_context.questions,
+                zeroshot_state=zeroshot_state,
+                project_key=project_key,
+                message_id=msg.platform_id,
+            )
+            return cast(AgentResult[RelevancePhaseOutput], result)
+
+        executor = _execute_zeroshot
+
     relevance: Result[PhaseExecution[RelevancePhaseOutput], LLMError | ParseError] = (
         await _run_phase(
             phase="relevance",
@@ -200,12 +272,47 @@ async def score_and_draft_step(
             post_id=execution.post_id,
             snapshot_phase_id=execution.relevance.snapshot_phase_id,
             model=execution.relevance.model,
+            executor=executor,
         )
     )
     if isinstance(relevance, Err):
         return relevance
     relevance_output = relevance.value.parsed
     contributor_ids = [relevance.value.phase_run_id]
+    relevance_classifier: Literal["llm", "zeroshot", "human"] = (
+        "zeroshot" if use_zeroshot else "llm"
+    )
+    relevance_action: RelevanceAction = (
+        relevance_output.action
+        if isinstance(relevance_output, ZeroShotRelevanceOutput)
+        else (
+            "respond"
+            if relevance_output.relevant
+            and relevance_output.score >= _config.RELEVANCE_THRESHOLD
+            else "drop"
+        )
+    )
+
+    holdout_draw: Callable[[str, str | None, RelevanceAction], bool] | None = ctx.get(
+        "holdout_draw"
+    )
+    if holdout_draw is not None and holdout_draw(
+        "zeroshot" if use_zeroshot else "llm", project_key, relevance_action
+    ):
+        return Ok(
+            ReplyCandidate(
+                relevant=relevance_output.relevant,
+                score=relevance_output.score,
+                reason=relevance_output.reason,
+                relevant_to=relevance_output.relevant_to,
+                project_key=project_key,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
+                held=True,
+                contributor_phase_run_ids=tuple(contributor_ids),
+            )
+        )
 
     if not relevance_output.relevant:
         return Ok(
@@ -215,6 +322,9 @@ async def score_and_draft_step(
                 reason=relevance_output.reason,
                 relevant_to=relevance_output.relevant_to,
                 project_key=project_key,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )
@@ -227,6 +337,8 @@ async def score_and_draft_step(
         dossier_summaries=dossier_summaries,
         execution=execution,
         relevance_output=relevance_output,
+        relevance_classifier=relevance_classifier,
+        relevance_action=relevance_action,
         contributor_ids=contributor_ids,
     )
 
@@ -245,6 +357,7 @@ async def draft_and_critic_step(
     dossier_summaries: Mapping[str, DossierSummary] = ctx.get("dossier_summaries", {})
     execution: ScoutExecutionContext = ctx["execution_context"]
     relevance_output: RelevancePhaseOutput = ctx["relevance_output"]
+    relevance_action = cast(RelevanceAction, ctx.get("relevance_action", "respond"))
     if not relevance_output.relevant:
         raise ValueError("draft_and_critic_step requires a relevant human override")
 
@@ -267,6 +380,8 @@ async def draft_and_critic_step(
         dossier_summaries=dossier_summaries,
         execution=execution,
         relevance_output=relevance_output,
+        relevance_classifier="human",
+        relevance_action=relevance_action,
         contributor_ids=[],
     )
 
@@ -280,6 +395,8 @@ async def _draft_and_critic(
     dossier_summaries: Mapping[str, DossierSummary],
     execution: ScoutExecutionContext,
     relevance_output: RelevancePhaseOutput,
+    relevance_classifier: Literal["llm", "zeroshot", "human"],
+    relevance_action: RelevanceAction,
     contributor_ids: list[int],
 ) -> Result[ReplyCandidate, LLMError | ParseError]:
     """Shared reply-draft and critic implementation for model and human relevance."""
@@ -321,6 +438,9 @@ async def _draft_and_critic(
                 relevant_to=relevance_output.relevant_to,
                 project_key=project_key,
                 structured_draft=draft_output,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )
@@ -363,6 +483,9 @@ async def _draft_and_critic(
                 critique_verdict=critique_output.verdict,
                 critique_feedback=critique_output.feedback,
                 structured_draft=draft_output,
+                relevance_output=relevance_output,
+                relevance_classifier=relevance_classifier,
+                relevance_action=relevance_action,
                 contributor_phase_run_ids=tuple(contributor_ids),
             )
         )
@@ -394,6 +517,9 @@ async def _draft_and_critic(
             critique_verdict=critique_output.verdict,
             critique_feedback=critique_output.feedback,
             structured_draft=final_draft,
+            relevance_output=relevance_output,
+            relevance_classifier=relevance_classifier,
+            relevance_action=relevance_action,
             contributor_phase_run_ids=tuple(contributor_ids),
         )
     )
@@ -410,12 +536,13 @@ async def _run_phase[T](
     post_id: int,
     snapshot_phase_id: int,
     model: str,
+    executor: Callable[[AgentConfig[T], str], Awaitable[AgentResult[T]]] = run_agent,
 ) -> Result[PhaseExecution[T], LLMError | ParseError]:
     capturing = _TraceIdCapturingTracer(config.tracer)
     phase_config = config.with_(tracer=capturing)
 
     try:
-        agent_result = await run_agent(phase_config, input_text)
+        agent_result = await executor(phase_config, input_text)
     except asyncio.CancelledError:
         trace_id = capturing.captured_trace_id
         if trace_id is not None:
@@ -431,6 +558,25 @@ async def _run_phase[T](
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(_cleanup()), timeout=5.0)
         raise
+    except ZeroShotRelevanceError as e:
+        logger.error(
+            "%s phase failed for message %s: %s", phase, message_id, e.detail
+        )
+        trace_id = capturing.captured_trace_id
+        if trace_id is not None:
+            with contextlib.suppress(Exception):
+                await _finalize_and_persist_phase_run(
+                    capturing, trace_id, state=state, scan_id=scan_id, post_id=post_id,
+                    snapshot_phase_id=snapshot_phase_id, phase=phase, model=model,
+                    status="error",
+                )
+        return Err(
+            LLMError(
+                operation=e.operation,
+                message_id=e.message_id,
+                detail=e.detail,
+            )
+        )
     except Exception as e:
         logger.error(
             "%s phase raised for message %s: %s", phase, message_id, e, exc_info=True

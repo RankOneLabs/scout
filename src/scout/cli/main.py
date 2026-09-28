@@ -22,6 +22,8 @@ from scout.paa.event_store import ScoutEventStore
 from scout.scanning.runner import main_loop, run_preflight
 from scout.storage.state import StateManager
 
+_HOLDOUT_RELEASE_COMMAND = "release"
+
 logger = logging.getLogger("scout.cli")
 
 # The content-addressed PAA evidence store root — mirrors DB_PATH's
@@ -315,6 +317,22 @@ def parse_args() -> argparse.Namespace:
         "--project-key",
         default=None,
         help="Project to export with --all-evaluations",
+    )
+    holdout_p = replay_sub.add_parser("holdout", help="Export or release zero-shot holdouts")
+    holdout_sub = holdout_p.add_subparsers(dest="holdout_command", required=True)
+    holdout_export_p = holdout_sub.add_parser(
+        "export", help="Export held rows for blind grading"
+    )
+    holdout_export_p.add_argument("--out", required=True, help="Output directory")
+    holdout_export_p.add_argument(
+        "--batch", default=None, help="Reproduce an already-exported batch"
+    )
+    holdout_release_p = holdout_sub.add_parser(
+        _HOLDOUT_RELEASE_COMMAND, help="Apply a blind-grading answer key to a batch"
+    )
+    holdout_release_p.add_argument("--batch", required=True, help="Exported batch id")
+    holdout_release_p.add_argument(
+        "--answer-key", required=True, help="Path to the graded JSON answer key"
     )
 
     feedback_parser = subparsers.add_parser(
@@ -1002,10 +1020,21 @@ def main() -> None:
                 grid_expand_feedback(args)
         return
     if args.subcommand == "replay":
-        from scout.cli.replay import export_population
+        from scout.cli.replay import (
+            export_holdout_batch,
+            export_population,
+            release_holdout_batch_cli,
+        )
 
         if args.replay_command == "export-population":
             export_population(args)
+        elif args.replay_command == "holdout" and args.holdout_command == "export":
+            export_holdout_batch(args)
+        elif (
+            args.replay_command == "holdout"
+            and args.holdout_command == _HOLDOUT_RELEASE_COMMAND
+        ):
+            release_holdout_batch_cli(args)
         return
     if args.stats:
         show_stats()

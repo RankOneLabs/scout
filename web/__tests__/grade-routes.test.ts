@@ -70,6 +70,11 @@ beforeAll(() => {
     );
     CREATE UNIQUE INDEX grades_evaluation_id_unique
       ON grades(evaluation_id) WHERE evaluation_id IS NOT NULL;
+    CREATE TABLE relevance_holdouts (
+      id INTEGER PRIMARY KEY,
+      evaluation_id INTEGER NOT NULL UNIQUE,
+      held INTEGER NOT NULL
+    );
   `);
 
   const now = "2026-05-15T00:00:00Z";
@@ -82,6 +87,7 @@ beforeAll(() => {
   insertPost.run(1, "discord", "msg-1", "general", "ch-1", "alice", "user-1", "hello", null, now, 1);
   insertPost.run(2, "discord", "msg-2", "general", "ch-1", "bob", "user-2", "hi", null, now, 1);
   insertPost.run(3, "discord", "msg-3", "general", "ch-1", "carol", "user-3", "relevant", null, now, 1);
+  insertPost.run(4, "discord", "msg-4", "general", "ch-1", "dana", "user-4", "held", null, now, 1);
 
   const insertEvaluation = db.prepare(
     `INSERT INTO evaluations (id, post_id, relevant, score, scan_id, posture) VALUES (?, ?, ?, ?, ?, ?)`
@@ -89,6 +95,8 @@ beforeAll(() => {
   insertEvaluation.run(1, 1, 1, 0.9, 1, "ask");
   insertEvaluation.run(2, 2, 1, 0.9, 1, "ask");
   insertEvaluation.run(3, 3, 0, 0.1, 1, null);
+  insertEvaluation.run(4, 4, 0, 0.1, 1, null);
+  db.prepare("INSERT INTO relevance_holdouts (id, evaluation_id, held) VALUES (1, 4, 1)").run();
 
   db.close();
 });
@@ -125,6 +133,37 @@ function makePostRequest(url: string, body: unknown, trustedHost = true) {
 function sidecarSuccess(body: unknown) {
   return { status: 200, text: async () => JSON.stringify(body) };
 }
+
+describe("held evaluation guards", () => {
+  it("returns 409 from grade, promote, and usage-override without calling the sidecar", async () => {
+    const gradeRoute = await import("@/app/api/grades/[evaluationId]/route");
+    const promoteRoute = await import("@/app/api/grades/[evaluationId]/promote/route");
+    const usageRoute = await import("@/app/api/grades/[evaluationId]/usage-override/route");
+    const params = { params: Promise.resolve({ evaluationId: "4" }) };
+    const grade = await gradeRoute.POST(
+      makePostRequest("http://localhost/api/grades/4", {
+        relevance_judgment: "correct",
+        action_judgment: "accept",
+      }) as never,
+      params
+    );
+    const promote = await promoteRoute.POST(
+      makePostRequest("http://localhost/api/grades/4/promote", {
+        relevance_judgment: "false_negative",
+        action_judgment: "fail",
+        dimensions: ["usefulness"],
+        failure_note: "should respond",
+      }) as never,
+      params
+    );
+    const usage = await usageRoute.POST(
+      makePostRequest("http://localhost/api/grades/4/usage-override", { mode: "auto" }) as never,
+      params
+    );
+    expect([grade.status, promote.status, usage.status]).toEqual([409, 409, 409]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("POST /api/grades/[evaluationId]/promote", () => {
   it("forwards a valid false-negative grade to the draft promotion endpoint", async () => {

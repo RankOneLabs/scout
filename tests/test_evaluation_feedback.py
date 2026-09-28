@@ -664,6 +664,60 @@ class TestRenderFeedbackSections:
             summary = json.loads(section.structured_summary)
             assert summary["reason"] == "no_eligible_feedback"
 
+    def test_relevance_section_counts_only_llm_rows_but_keeps_all_notes(self) -> None:
+        rows = [
+            _row(
+                grade_id=5,
+                relevance_judgment="false_negative",
+                action_judgment="fail",
+                dimensions=("usefulness",),
+                failure_note="zero-shot miss",
+                evaluation_relevance_classifier="zeroshot",
+            ),
+            _row(
+                grade_id=4,
+                relevance_judgment="false_positive",
+                action_judgment="fail",
+                dimensions=("usefulness",),
+                failure_note="human note",
+                evaluation_relevance_classifier="human",
+            ),
+            _row(grade_id=3, relevance_judgment="false_negative", action_judgment="fail",
+                 dimensions=("usefulness",), failure_note="llm miss"),
+            _row(grade_id=2, relevance_judgment="false_positive", action_judgment="fail",
+                 dimensions=("usefulness",), failure_note="llm false alarm"),
+            _row(grade_id=1),
+        ]
+        text = self._sections_for(
+            rows,
+            _config(segment_min_grades=2, relevance_example_limit=3),
+        )["relevance"].rendered_text
+        assert text == (
+            "## Relevance Feedback (evaluation-feedback/v1)\n"
+            "3 graded: 1 correct (33.3%), 1 false positives (33.3%), "
+            "1 false negatives (33.3%).\n"
+            "- platform:bluesky (n=3, correct=1, fp=1, fn=1)\n"
+            "- project:proj (n=3, correct=1, fp=1, fn=1)\n"
+            "Recent misses:\n"
+            "- [grade #5] false_negative: zero-shot miss\n"
+            "- [grade #4] false_positive: human note\n"
+            "- [grade #3] false_negative: llm miss"
+        )
+
+    def test_relevance_section_with_only_zero_shot_note_omits_counts(self) -> None:
+        text = self._sections_for(
+            [_row(grade_id=1, relevance_judgment="false_negative",
+                  action_judgment="fail", dimensions=("usefulness",),
+                  failure_note="route should respond",
+                  evaluation_relevance_classifier="zeroshot")],
+            _config(),
+        )["relevance"].rendered_text
+        assert text == (
+            "## Relevance Feedback (evaluation-feedback/v1)\n"
+            "Recent misses:\n"
+            "- [grade #1] false_negative: route should respond"
+        )
+
     def test_rendering_is_deterministic(self) -> None:
         rows = [_row(grade_id=1), _row(grade_id=2, action_judgment="fail",
                                         dimensions=("tone",), failure_note="n")]
@@ -803,6 +857,9 @@ def _seed_grade(
     eval_id = state.save_evaluation(
         result, post_id, scan_id, project_key=project_key, posture="answer",
         surface_status="surfaced",
+
+        relevance_classifier="llm",
+        relevance_action=None,
     )
     if with_draft:
         state.save_draft(post_id, eval_id, project_key, "draft text", scan_id, posture="answer")

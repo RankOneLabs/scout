@@ -12,7 +12,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    JsonValue,
+    SerializeAsAny,
+    field_validator,
+    model_validator,
+)
 
 from scout.config import CritiqueResult, Message, RelevanceResult
 
@@ -144,6 +151,10 @@ class ReplyCandidate(BaseModel):
     critique_verdict: Verdict | None = None
     critique_feedback: str | None = None
     structured_draft: StructuredDraftOutput | None = None
+    relevance_output: SerializeAsAny[RelevancePhaseOutput] | None = None
+    relevance_classifier: Literal["llm", "zeroshot", "human"] = "llm"
+    relevance_action: Literal["respond", "review", "drop"] | None = None
+    held: bool = False
 
     # Ordered, deduplicated evaluation_phase_runs ids of every phase this
     # pipeline run actually executed successfully before returning this

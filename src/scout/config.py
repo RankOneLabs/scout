@@ -49,6 +49,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bounded_float(
+    name: str, default: float, minimum: float, maximum: float
+) -> float:
+    value = _env_float(name, default)
+    if not minimum <= value <= maximum:
+        _env_errors.append(
+            f"{name}={value!r} must be >= {minimum} and <= {maximum}"
+        )
+        return default
+    return value
+
+
 def _env_int_list(name: str, sep: str = ",") -> list[int]:
     raw = os.getenv(name) or ""
     result: list[int] = []
@@ -179,6 +191,39 @@ TYPESAFE_CATALOGUE_PATH: str = (
 TYPESAFE_PLACEHOLDER_ANSWERS_PATH: str = os.getenv(
     "TYPESAFE_PLACEHOLDER_ANSWERS_PATH", ""
 ).strip()
+
+# --- Relevance classifier selection ---
+_relevance_classifier = os.getenv("RELEVANCE_CLASSIFIER", "llm").strip().lower()
+if _relevance_classifier not in {"llm", "zeroshot"}:
+    _env_errors.append("RELEVANCE_CLASSIFIER must be one of llm, zeroshot")
+    _relevance_classifier = "llm"
+RELEVANCE_CLASSIFIER: Literal["llm", "zeroshot"] = cast(
+    Literal["llm", "zeroshot"], _relevance_classifier
+)
+
+RELEVANCE_ZEROSHOT_CATALOGUE_PATH: str = os.getenv(
+    "RELEVANCE_ZEROSHOT_CATALOGUE_PATH", ""
+).strip()
+
+# These defaults are sourced from jig.jev.JevClient at the pinned 5fa9c01
+# revision. The config test compares them to JevClient's live signature so a
+# future jig bump cannot move either default without surfacing this coupling.
+_default_jev_model = "jev-latest"
+_default_jev_endpoint = "https://api.typesafe.ai/v1/systemone"
+RELEVANCE_JEV_MODEL: str = (
+    os.getenv("RELEVANCE_JEV_MODEL", "").strip() or _default_jev_model
+)
+RELEVANCE_JEV_ENDPOINT: str = (
+    os.getenv("RELEVANCE_JEV_ENDPOINT", "").strip().rstrip("/")
+    or _default_jev_endpoint
+)
+
+# Secret input for Jev. Never include this value in config errors, logs, or traces.
+TYPESAFE_API_KEY: str = os.getenv("TYPESAFE_API_KEY", "").strip()
+
+RELEVANCE_HOLDOUT_RATE: float = _env_bounded_float(
+    "RELEVANCE_HOLDOUT_RATE", 0.0, 0.0, 1.0
+)
 
 # --- Dossier grounding ---
 # Root path of the read-only dossier-source checkout.

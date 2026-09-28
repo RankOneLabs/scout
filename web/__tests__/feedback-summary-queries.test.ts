@@ -29,6 +29,7 @@ interface GradeSpec {
   projectKey?: string | null;
   hasDraft?: boolean;
   dimensions?: string[] | null;
+  relevanceClassifier?: "llm" | "zeroshot" | "human";
 }
 
 function insertGrade(db: Database.Database, spec: GradeSpec): number {
@@ -39,9 +40,17 @@ function insertGrade(db: Database.Database, spec: GradeSpec): number {
     `INSERT INTO posts (id, platform, platform_msg_id) VALUES (?, ?, ?)`
   ).run(postId, spec.platform, `msg-${postId}`);
   db.prepare(
-    `INSERT INTO evaluations (id, post_id, scan_id, relevant, score, project_key, posture, surface_status)
-     VALUES (?, ?, ?, ?, 0.5, ?, 'engage', 'surfaced')`
-  ).run(evalId, postId, spec.scanId ?? null, spec.relevant, spec.projectKey ?? null);
+    `INSERT INTO evaluations (id, post_id, scan_id, relevant, score, project_key, posture,
+       surface_status, relevance_classifier)
+     VALUES (?, ?, ?, ?, 0.5, ?, 'engage', 'surfaced', ?)`
+  ).run(
+    evalId,
+    postId,
+    spec.scanId ?? null,
+    spec.relevant,
+    spec.projectKey ?? null,
+    spec.relevanceClassifier ?? "llm"
+  );
   if (spec.hasDraft) {
     db.prepare(
       `INSERT INTO draft_comments (id, post_id, evaluation_id, project_key, posture)
@@ -94,7 +103,8 @@ beforeAll(() => {
     CREATE TABLE evaluations (
       id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL, scan_id INTEGER, relevant INTEGER NOT NULL,
       score REAL NOT NULL, project_key TEXT, posture TEXT, surface_status TEXT,
-      dossier_summary_id TEXT, dossier_revision TEXT
+      dossier_summary_id TEXT, dossier_revision TEXT,
+      relevance_classifier TEXT NOT NULL DEFAULT 'llm'
     );
     CREATE TABLE draft_comments (
       id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL, evaluation_id INTEGER NOT NULL,
@@ -188,6 +198,7 @@ beforeAll(() => {
   insertGrade(db, {
     platform: "discord", gradedAt: "2026-01-13T00:00:00.000Z", schemaVersion: 3, needsRegrade: 0,
     relevanceJudgment: "correct", relevant: 0, projectKey: "acme",
+    relevanceClassifier: "zeroshot",
   }); // R2: correct but not relevant (true negative) — not draft-quality
   insertGrade(db, {
     platform: "farcaster", gradedAt: "2026-01-14T00:00:00.000Z", schemaVersion: 3, needsRegrade: 0,
@@ -259,10 +270,10 @@ describe("getFeedbackSummary — relevance metrics", () => {
     const { getFeedbackSummary } = await import("@/lib/feedback-summary-queries");
     const summary = getFeedbackSummary(AS_OF, FROM, TO);
     expect(summary.relevance).toEqual({
-      correct: 6, // A, R1, R2, R7, R9, and the scan-700 coverage grade
+      correct: 5, // A, R1, R7, R9, and the scan-700 coverage grade; zero-shot R2 excluded
       false_positive: 1, // R3
       false_negative: 1, // R4
-      reviewed_model_negative: 2, // R2 (correct negative) and R4 (false negative)
+      reviewed_model_negative: 1, // R4; zero-shot R2 is excluded
       correct_relevant: 5, // every valid "correct" row except R2 (relevant=0)
       precision_denominator: 6, // correct_relevant(5) + false_positive(1)
       recall_denominator: 6, // correct_relevant(5) + false_negative(1)
