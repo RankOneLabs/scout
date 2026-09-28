@@ -745,7 +745,11 @@ def run_scan_loop(args: argparse.Namespace) -> None:
         cancel_scan_loop = task.cancel
 
         def _on_sigterm() -> None:
+            # Cancel once. A repeated SIGTERM would land a second cancellation
+            # on one of the cleanup's awaits and skip the lease release.
             nonlocal terminated
+            if terminated:
+                return
             terminated = True
             cancel_scan_loop()
 

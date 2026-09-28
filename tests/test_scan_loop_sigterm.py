@@ -13,7 +13,10 @@ import signal
 import subprocess
 import sys
 import textwrap
+import time
 
+# The fake loop's cleanup awaits before releasing, as main_loop's does (it
+# closes clients and stops the heartbeat before the release).
 _CHILD = textwrap.dedent(
     """
     import asyncio
@@ -26,6 +29,8 @@ _CHILD = textwrap.dedent(
             print("ready", flush=True)
             await asyncio.sleep(3600)
         finally:
+            print("cleaning up", flush=True)
+            await asyncio.sleep(0.5)
             print("lease released", flush=True)
 
 
@@ -35,8 +40,10 @@ _CHILD = textwrap.dedent(
     """
 )
 
+_CLEAN_EXIT = (0, ["cleaning", "up", "lease", "released", "exited", "cleanly"])
 
-def test_sigterm_runs_scan_loop_cleanup_and_exits_zero() -> None:
+
+def _terminate(signal_count: int) -> tuple[int, list[str], str]:
     child = subprocess.Popen(
         [sys.executable, "-c", _CHILD],
         stdout=subprocess.PIPE,
@@ -48,10 +55,26 @@ def test_sigterm_runs_scan_loop_cleanup_and_exits_zero() -> None:
         assert child.stdout is not None
         assert child.stdout.readline().strip() == "ready"
         child.send_signal(signal.SIGTERM)
+        output = []
+        if signal_count > 1:
+            output.append(child.stdout.readline())
+            for _ in range(signal_count - 1):
+                child.send_signal(signal.SIGTERM)
+                time.sleep(0.05)
         stdout, stderr = child.communicate(timeout=10)
     finally:
         if child.poll() is None:
             child.kill()
+    return child.returncode, "".join([*output, stdout]).split(), stderr
 
-    expected = (0, ["lease", "released", "exited", "cleanly"])
-    assert (child.returncode, stdout.split()) == expected, stderr
+
+def test_sigterm_runs_scan_loop_cleanup_and_exits_zero() -> None:
+    returncode, words, stderr = _terminate(signal_count=1)
+
+    assert (returncode, words) == _CLEAN_EXIT, stderr
+
+
+def test_repeated_sigterm_does_not_interrupt_cleanup() -> None:
+    returncode, words, stderr = _terminate(signal_count=3)
+
+    assert (returncode, words) == _CLEAN_EXIT, stderr
