@@ -221,7 +221,7 @@ async def test_agent_ops_dispatches_zeroshot_and_carries_whole_output(
     candidate = result.value
     assert seen_executor is not run_agent
     assert candidate.relevance_action == decision.action
-    assert candidate.relevance_classifier == "zeroshot:jev-latest"
+    assert candidate.relevance_classifier == "zeroshot"
     assert candidate.relevance_output is zeroshot_output
     assert candidate.model_dump()["relevance_output"]["answers"] == answers
     assert candidate.score == 1.0
@@ -259,7 +259,7 @@ async def test_unmeasured_project_uses_llm_when_classifier_is_zeroshot(
 
     assert isinstance(result, Ok)
     assert seen_executor is run_agent
-    assert result.value.relevance_classifier == "llm-model"
+    assert result.value.relevance_classifier == "llm"
     assert result.value.relevance_action == "drop"
     assert result.value.contributor_phase_run_ids == (9,)
 
@@ -317,7 +317,7 @@ async def test_zeroshot_dispatch_projects_state_and_returns_real_candidate(
     }
     assert result.value.relevant is False
     assert result.value.relevance_action == "review"
-    assert result.value.relevance_classifier == "zeroshot:jev-latest"
+    assert result.value.relevance_classifier == "zeroshot"
     assert result.value.score == 1.0
     assert result.value.structured_draft is None
     assert client.state == {

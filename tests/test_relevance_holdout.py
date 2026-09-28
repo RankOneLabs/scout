@@ -292,7 +292,7 @@ def test_held_evaluation_and_holdout_are_atomic_and_freeze_context(
         reason="in post",
         relevant_to=["agent-ops"],
         project_key="agent-ops",
-        relevance_classifier="zeroshot:test",
+        relevance_classifier="zeroshot",
         relevance_action="respond",
         held=True,
         contributor_phase_run_ids=(phase_run_id,),
@@ -315,12 +315,17 @@ def test_held_evaluation_and_holdout_are_atomic_and_freeze_context(
     holdout = in_memory_state.relevance_holdouts.get_for_evaluation(evaluation_id)
 
     evaluation = in_memory_state.conn.execute(
-        "SELECT relevant, surface_status FROM evaluations WHERE id = ?",
+        "SELECT relevant, surface_status, relevance_classifier, relevance_action "
+        "FROM evaluations WHERE id = ?",
         (evaluation_id,),
     ).fetchone()
     assert evaluation is not None
     assert holdout is not None
     assert (evaluation["relevant"], evaluation["surface_status"]) == (1, "not_relevant")
+    assert (evaluation["relevance_classifier"], evaluation["relevance_action"]) == (
+        "zeroshot",
+        "respond",
+    )
     assert holdout.held is True
     assert holdout.production_action == "respond"
     assert holdout.dossier_revision == "d" * 40
@@ -363,6 +368,7 @@ def test_failure_after_evaluation_write_rolls_back_both_rows_and_post_retries(
             post_id,
             scan_id,
             production_action="drop",
+            relevance_classifier="zeroshot",
             registry=_registry(),
             contributor_phase_run_ids=(phase_run_id,),
             keyword_route_id=None,

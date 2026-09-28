@@ -454,14 +454,13 @@ async def resolve_baseline(
                 f"{phase_run['status']!r}, not 'complete'"
             )
         classifier = classifier_of(phase_run["model"])
-        if isinstance(classifier, Ok) and classifier.value == "zeroshot":
+        if classifier == "zeroshot":
             raise BaselineResolutionError(
                 f"evaluation_phase_runs {phase_run_id} was produced by zero-shot and cannot be "
                 "replayed as an LLM baseline"
             )
-        # Historical opaque LLM fixture/alias names remain readable here: the
-        # trace's recorded model is independently checked below.  They are not
-        # admitted to newly selected relevance corpora, where no trace is read.
+        # Any non-zero-shot model identity is an LLM, including historical
+        # opaque aliases; the trace's recorded model is independently checked below.
         phase = phase_run["phase"]
         if phase not in PHASE_REPLAY_CONFIGS:
             raise BaselineResolutionError(f"unknown replayable phase: {phase!r}")

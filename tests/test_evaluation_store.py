@@ -96,6 +96,36 @@ class TestCritiqueFeedback:
         assert lessons == []
 
 class TestEvaluationPersistence:
+    def test_save_evaluation_enforces_and_persists_classifier_pair(
+        self, in_memory_state: StateManager
+    ) -> None:
+        scan_id = in_memory_state.start_scan()
+        msg = _make_discord_msg("classifier-pair")
+        post_id = in_memory_state.save_post(msg, scan_id)
+        result = _make_relevance(msg)
+
+        evaluation_id = in_memory_state.save_evaluation(result, post_id, scan_id)
+        row = in_memory_state.get_evaluation(evaluation_id)
+        assert row is not None
+        assert (row["relevance_classifier"], row["relevance_action"]) == ("llm", None)
+
+        with pytest.raises(ValueError, match="zeroshot evaluations require"):
+            in_memory_state.save_evaluation(
+                result,
+                post_id,
+                scan_id,
+                relevance_classifier="zeroshot",
+                relevance_action=None,
+            )
+        with pytest.raises(ValueError, match="llm evaluations require"):
+            in_memory_state.save_evaluation(
+                result,
+                post_id,
+                scan_id,
+                relevance_classifier="llm",
+                relevance_action="respond",
+            )
+
     def test_save_evaluation_persists_keyword_route_id(self, in_memory_state: StateManager) -> None:
         scan_id = in_memory_state.start_scan()
         now = datetime.now(UTC).isoformat()

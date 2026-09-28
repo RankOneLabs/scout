@@ -171,6 +171,10 @@ async def test_drop_persists_without_drafting_and_records_deltas(
         assert stored.release_action == "drop"
         target = state.get_evaluation(stored.target_evaluation_id or -1)
         assert target is not None
+        assert (target["relevance_classifier"], target["relevance_action"]) == (
+            "human",
+            "drop",
+        )
         assert target["reason"] == (
             "Blind-grading answer key released held evaluation #11 "
             "for project 'agent-ops' with action drop."
@@ -238,6 +242,8 @@ async def test_positive_release_runs_draft_classify_and_persist(
             project_key=decision.project_key,
             surface_status=decision.status,
             dossier_revision=context.dossier_revision,
+            relevance_classifier="human",
+            relevance_action=release_action,
         )
 
     persist_mock = Mock(side_effect=persist)
@@ -261,6 +267,10 @@ async def test_positive_release_runs_draft_classify_and_persist(
         assert stored.release_action == release_action
         target = state.get_evaluation(stored.target_evaluation_id or -1)
         assert target is not None
+        assert (target["relevance_classifier"], target["relevance_action"]) == (
+            "human",
+            release_action,
+        )
         assert target["reason"] == (
             f"Blind-grading answer key released held evaluation #11 "
             f"for project 'agent-ops' with action {release_action}."

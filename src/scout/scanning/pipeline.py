@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from jig import (
     AgentConfig,
@@ -279,7 +279,9 @@ async def score_and_draft_step(
         return relevance
     relevance_output = relevance.value.parsed
     contributor_ids = [relevance.value.phase_run_id]
-    relevance_classifier = relevance.value.model
+    relevance_classifier: Literal["llm", "zeroshot", "human"] = (
+        "zeroshot" if use_zeroshot else "llm"
+    )
     relevance_action: RelevanceAction = (
         relevance_output.action
         if isinstance(relevance_output, ZeroShotRelevanceOutput)
@@ -393,7 +395,7 @@ async def _draft_and_critic(
     dossier_summaries: Mapping[str, DossierSummary],
     execution: ScoutExecutionContext,
     relevance_output: RelevancePhaseOutput,
-    relevance_classifier: str,
+    relevance_classifier: Literal["llm", "zeroshot", "human"],
     relevance_action: RelevanceAction,
     contributor_ids: list[int],
 ) -> Result[ReplyCandidate, LLMError | ParseError]:

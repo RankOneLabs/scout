@@ -233,12 +233,7 @@ def load_relevance_population(
                 key=lambda phase: phase.id,
             )
             classifiers = tuple(classifier_of(phase.model) for phase in relevance_phases)
-            unknown = next((value.error for value in classifiers if isinstance(value, Err)), None)
-            if unknown is not None:
-                raise ValueError(
-                    f"Unknown relevance classifier identity {unknown.model!r} in frozen phase"
-                )
-            if any(value.value == "zeroshot" for value in classifiers if isinstance(value, Ok)):
+            if "zeroshot" in classifiers:
                 exclusions.append(
                     RelevanceSourceExclusion(
                         evaluation_id=member.evaluation_id,

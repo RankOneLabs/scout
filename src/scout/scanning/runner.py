@@ -583,7 +583,7 @@ class OutcomeDecision:
     terminal_reason: str | None
     structured_draft: StructuredDraftOutput | None
     relevance_output: RelevancePhaseOutput | None
-    relevance_classifier: str | None
+    relevance_classifier: Literal["llm", "zeroshot", "human"]
     relevance_action: Literal["respond", "review", "drop"] | None
     critique: CritiqueResult | None
     contributor_phase_run_ids: tuple[int, ...]
@@ -781,6 +781,14 @@ def persist_outcome(
     Invariant violations on a surfaced decision raise as programming errors
     — they are not converted to a retryable scoring failure.
     """
+    relevance_action = (
+        None if decision.relevance_classifier == "llm" else decision.relevance_action
+    )
+    if decision.relevance_classifier != "llm" and relevance_action is None:
+        raise ValueError(
+            f"{decision.relevance_classifier} outcome requires a relevance action"
+        )
+
     if decision.held:
         if decision.relevance_action is None:
             raise ValueError("held outcome requires its production relevance action")
@@ -791,6 +799,7 @@ def persist_outcome(
             context.post_id,
             context.scan_id,
             production_action=decision.relevance_action,
+            relevance_classifier=decision.relevance_classifier,
             registry=context.registry,
             contributor_phase_run_ids=decision.contributor_phase_run_ids,
             keyword_route_id=context.keyword_route_id,
@@ -827,6 +836,8 @@ def persist_outcome(
             dossier_summary_id=context.dossier_summary_id,
             surfaced_at=context.surfaced_at,
             allow_response_only_phase_runs=context.allow_response_only_phase_runs,
+            relevance_classifier=decision.relevance_classifier,
+            relevance_action=relevance_action,
         )
         return evaluation_id
 
@@ -845,6 +856,8 @@ def persist_outcome(
         critique=critique_pair if decision.status == "critic_rejected" else None,
         gate_violations=decision.gate_violations or None,
         allow_response_only_phase_runs=context.allow_response_only_phase_runs,
+        relevance_classifier=decision.relevance_classifier,
+        relevance_action=relevance_action,
     )
 
 
