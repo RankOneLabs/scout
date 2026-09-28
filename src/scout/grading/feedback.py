@@ -217,6 +217,9 @@ class GradePopulationRow:
     # it. Defaults to None so retained v1 population rows, which do not carry it,
     # still parse; snapshot selection restores it from the pinned revision payload.
     edited_text: str | None = None
+    # Retained/corpus fixtures created before classifier attribution represent
+    # the historical LLM population.
+    evaluation_relevance_classifier: str | None = "llm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +412,7 @@ SELECT
     e.post_id AS evaluation_post_id,
     e.scan_id AS evaluation_scan_id,
     e.relevant AS evaluation_relevant,
+    e.relevance_classifier AS evaluation_relevance_classifier,
     e.project_key AS evaluation_project_key,
     e.dossier_summary_id AS evaluation_dossier_summary_id,
     e.dossier_revision AS evaluation_dossier_revision,
@@ -522,6 +526,7 @@ def _materialize_grade_population(rows: Sequence[sqlite3.Row]) -> tuple[GradePop
                 evaluation_post_id=row["evaluation_post_id"],
                 evaluation_scan_id=row["evaluation_scan_id"],
                 evaluation_relevant=row["evaluation_relevant"],
+                evaluation_relevance_classifier=row["evaluation_relevance_classifier"],
                 evaluation_project_key=row["evaluation_project_key"],
                 evaluation_dossier_summary_id=row["evaluation_dossier_summary_id"],
                 evaluation_dossier_revision=row["evaluation_dossier_revision"],
@@ -715,7 +720,11 @@ def aggregate_phase_evidence(
 def _aggregate_relevance(
     projection: PhaseProjection, *, config: FeedbackPolicyConfig
 ) -> RelevanceAggregate:
-    rows = [r.row for r in projection.population]
+    rows = [
+        r.row
+        for r in projection.population
+        if r.row.evaluation_relevance_classifier == "llm"
+    ]
     correct = sum(1 for r in rows if r.relevance_judgment == "correct")
     fp = sum(1 for r in rows if r.relevance_judgment == "false_positive")
     fn = sum(1 for r in rows if r.relevance_judgment == "false_negative")
@@ -902,7 +911,7 @@ def _render_phase_section(
     config: FeedbackPolicyConfig,
 ) -> RenderedFeedbackSection:
     budget = config.token_budget(phase)
-    if aggregate.total_count == 0:
+    if aggregate.total_count == 0 and not phase_examples:
         summary = _canonical_json(
             {
                 "phase": phase,
@@ -1112,11 +1121,15 @@ def _build_structured_summary(
                 "false_positive_count": agg.false_positive_count,
                 "false_negative_count": agg.false_negative_count,
             },
-            "rates": {
-                "correct_rate": round(agg.correct_count / total, 4),
-                "false_positive_rate": round(agg.false_positive_count / total, 4),
-                "false_negative_rate": round(agg.false_negative_count / total, 4),
-            },
+            "rates": (
+                {
+                    "correct_rate": round(agg.correct_count / total, 4),
+                    "false_positive_rate": round(agg.false_positive_count / total, 4),
+                    "false_negative_rate": round(agg.false_negative_count / total, 4),
+                }
+                if total
+                else {}
+            ),
             "segments": [
                 {
                     "segment_type": s.segment_type,
@@ -1185,14 +1198,15 @@ def _render_prose(summary: Mapping[str, Any]) -> str:
     totals = summary["totals"]
     rates = summary["rates"]
     if phase == "relevance":
-        lines.append(
-            f"{totals['total_count']} graded: {totals['correct_count']} correct "
-            f"({_pct(rates['correct_rate'])}), "
-            f"{totals['false_positive_count']} false positives "
-            f"({_pct(rates['false_positive_rate'])}), "
-            f"{totals['false_negative_count']} false negatives "
-            f"({_pct(rates['false_negative_rate'])})."
-        )
+        if totals["total_count"]:
+            lines.append(
+                f"{totals['total_count']} graded: {totals['correct_count']} correct "
+                f"({_pct(rates['correct_rate'])}), "
+                f"{totals['false_positive_count']} false positives "
+                f"({_pct(rates['false_positive_rate'])}), "
+                f"{totals['false_negative_count']} false negatives "
+                f"({_pct(rates['false_negative_rate'])})."
+            )
         for segment in summary["segments"]:
             lines.append(
                 f"- {segment['segment_type']}:{segment['key']} "

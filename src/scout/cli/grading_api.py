@@ -330,13 +330,15 @@ def grade_endpoint(evaluation_id: int, request: Request) -> dict[str, Any]:
     coroutine back on the same event loop that dispatched this worker
     thread and waits for the result.
     """
-    from scout.grading.service import validate_grade_envelope
+    from scout.grading.service import evaluation_is_held, validate_grade_envelope
 
     state = _state_for_request()
     try:
         evaluation = state.get_evaluation(evaluation_id)
         if evaluation is None:
             raise HTTPException(status_code=404, detail=f"evaluation {evaluation_id} not found")
+        if evaluation_is_held(state.conn, evaluation_id):
+            raise HTTPException(status_code=409, detail="held evaluations cannot be graded")
 
         try:
             body = anyio.from_thread.run(request.json)
@@ -407,7 +409,7 @@ def promote_negative_grade_endpoint(evaluation_id: int, request: Request) -> dic
         NegativeCasePromotionError,
         promote_negative_case,
     )
-    from scout.grading.service import validate_grade_envelope
+    from scout.grading.service import evaluation_is_held, validate_grade_envelope
     from scout.replay.runtime import replay_runtime
 
     state = _state_for_request()
@@ -415,6 +417,8 @@ def promote_negative_grade_endpoint(evaluation_id: int, request: Request) -> dic
         evaluation = state.get_evaluation(evaluation_id)
         if evaluation is None:
             raise HTTPException(status_code=404, detail=f"evaluation {evaluation_id} not found")
+        if evaluation_is_held(state.conn, evaluation_id):
+            raise HTTPException(status_code=409, detail="held evaluations cannot be promoted")
         if bool(evaluation["relevant"]):
             raise HTTPException(
                 status_code=409,
