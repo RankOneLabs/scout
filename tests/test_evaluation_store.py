@@ -75,7 +75,9 @@ class TestCritiqueFeedback:
             reason="test",
             relevant_to=("gateway",),
         )
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         draft_id = in_memory_state.save_draft(
             post_id,
             eval_id,
@@ -104,7 +106,9 @@ class TestEvaluationPersistence:
         post_id = in_memory_state.save_post(msg, scan_id)
         result = _make_relevance(msg)
 
-        evaluation_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
+        evaluation_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         row = in_memory_state.get_evaluation(evaluation_id)
         assert row is not None
         assert (row["relevance_classifier"], row["relevance_action"]) == ("llm", None)
@@ -199,8 +203,20 @@ class TestGetLatestEvaluationId:
     ) -> None:
         scan_id = in_memory_state.start_scan()
         post_id = in_memory_state.save_post(sample_message, scan_id)
-        in_memory_state.save_evaluation(sample_relevance_result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
-        second_eval_id = in_memory_state.save_evaluation(sample_relevance_result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
+        in_memory_state.save_evaluation(
+            sample_relevance_result,
+            post_id,
+            scan_id,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
+        second_eval_id = in_memory_state.save_evaluation(
+            sample_relevance_result,
+            post_id,
+            scan_id,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
 
         assert in_memory_state.get_latest_evaluation_id(post_id, scan_id) == second_eval_id
 
@@ -367,7 +383,9 @@ class TestDossierGroundedFields:
         msg = _make_discord_msg()
         post_id = in_memory_state.save_post(msg, scan_id)
         result = _make_relevance(msg)
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
 
         structured = json.dumps(
             {"posture": "answer", "segments": [], "claims": [], "resources_used": []}
@@ -400,7 +418,9 @@ class TestDossierGroundedFields:
         msg = _make_discord_msg()
         post_id = in_memory_state.save_post(msg, scan_id)
         result = _make_relevance(msg)
-        eval_id = in_memory_state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
+        eval_id = in_memory_state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         draft_id = in_memory_state.save_draft(post_id, eval_id, "gateway", "Draft text", scan_id)
 
         event_id = in_memory_state.save_surfaced_event(
@@ -470,7 +490,9 @@ class TestMigration27FeedbackSnapshots:
             reason="relevant",
             relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id, relevance_classifier="llm", relevance_action=None)
+        eval_id = state.save_evaluation(
+            result, post_id, scan_id, relevance_classifier="llm", relevance_action=None
+        )
         state.save_grade(
             GradeRecord(
                 post_id=post_id,

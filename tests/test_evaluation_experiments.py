@@ -48,7 +48,7 @@ from scout.grading.snapshots import (
 )
 from scout.replay.reporting import ReportError, build_batch_report, render_markdown
 from scout.replay.tasks import RelevanceTask, load_relevance_population
-from scout.result import Err, Ok
+from scout.result import Ok
 from scout.scanning.schemas import RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.state import StateManager
 from scout.verifier import DRAFT_TEXT_ASSEMBLER_VERSION, assemble_draft_text

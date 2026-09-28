@@ -92,7 +92,7 @@ from scout.replay.tasks import (
     relevance_score,
 )
 from scout.resources import runtime_resource
-from scout.result import Err, Ok
+from scout.result import Err
 from scout.scanning.schemas import CritiquePhaseOutput, RelevancePhaseOutput, StructuredDraftOutput
 from scout.storage.evaluations import Experiment
 from scout.storage.experiment_plan import expected_experiment_pairs

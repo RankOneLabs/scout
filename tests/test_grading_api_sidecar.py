@@ -425,7 +425,14 @@ def _seed_evaluation(
             message=msg, relevant=relevant, score=0.9,
             reason="relevant", relevant_to=("gateway",),
         )
-        eval_id = state.save_evaluation(result, post_id, scan_id, posture=posture, relevance_classifier="llm", relevance_action=None)
+        eval_id = state.save_evaluation(
+            result,
+            post_id,
+            scan_id,
+            posture=posture,
+            relevance_classifier="llm",
+            relevance_action=None,
+        )
         state.commit()
     return scan_id, post_id, eval_id
 
