@@ -448,11 +448,11 @@ CREATE TABLE IF NOT EXISTS evaluations (
     dossier_summary_id TEXT,
     dossier_revision TEXT,
     relevance_classifier TEXT NOT NULL DEFAULT 'llm' CHECK(
-        relevance_classifier IN ('llm', 'zeroshot', 'human')
+        relevance_classifier IN ('llm','zeroshot','human')
     ),
     relevance_action TEXT CHECK(
         relevance_action IS NULL
-        OR relevance_action IN ('respond', 'review', 'drop')
+        OR relevance_action IN ('respond','review','drop')
     ) CHECK(
         (relevance_classifier = 'llm' AND relevance_action IS NULL)
         OR (relevance_classifier <> 'llm' AND relevance_action IS NOT NULL)
