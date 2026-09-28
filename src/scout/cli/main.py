@@ -22,7 +22,7 @@ from scout.paa.event_store import ScoutEventStore
 from scout.scanning.runner import main_loop, run_preflight
 from scout.storage.state import StateManager
 
-_HOLDOUT_RELEASE_COMMAND = "_release"[1:]
+_HOLDOUT_RELEASE_COMMAND = "release"
 
 logger = logging.getLogger("scout.cli")
 
@@ -318,7 +318,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Project to export with --all-evaluations",
     )
-    holdout_p = replay_sub.add_parser("holdout", help="Export or release Jev holdouts")
+    holdout_p = replay_sub.add_parser("holdout", help="Export or release zero-shot holdouts")
     holdout_sub = holdout_p.add_subparsers(dest="holdout_command", required=True)
     holdout_export_p = holdout_sub.add_parser(
         "export", help="Export held rows for blind grading"

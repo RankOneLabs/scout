@@ -1,4 +1,4 @@
-"""Shared types and routing constants for live Jev relevance."""
+"""Shared types and routing constants for live zero-shot relevance."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -7,13 +7,13 @@ from scout.scanning.schemas import RelevancePhaseOutput
 
 # The only projects with a measured v6 relevance catalogue.  Setup, live
 # dispatch, and holdout selection all import this single routing authority.
-JEV_PROJECT_KEYS = frozenset({"agent-ops", "agent-evals"})
+ZEROSHOT_PROJECT_KEYS = frozenset({"agent-ops", "agent-evals"})
 
 RelevanceAction = Literal["respond", "review", "drop"]
 
 
-class JevRelevanceOutput(RelevancePhaseOutput):
-    """Shared relevance fields plus the complete Jev routing evidence."""
+class ZeroShotRelevanceOutput(RelevancePhaseOutput):
+    """Shared relevance fields plus the complete zero-shot routing evidence."""
 
     action: RelevanceAction
     answers: dict[str, float]
@@ -23,8 +23,8 @@ class JevRelevanceOutput(RelevancePhaseOutput):
 
 
 @dataclass(frozen=True, slots=True)
-class JevRelevanceError(Exception):
-    """A retryable failure from the Jev relevance executor."""
+class ZeroShotRelevanceError(Exception):
+    """A retryable failure from the zero-shot relevance executor."""
 
     operation: str
     message_id: str
@@ -35,8 +35,8 @@ class JevRelevanceError(Exception):
 
 
 __all__ = [
-    "JEV_PROJECT_KEYS",
-    "JevRelevanceError",
-    "JevRelevanceOutput",
+    "ZEROSHOT_PROJECT_KEYS",
+    "ZeroShotRelevanceError",
+    "ZeroShotRelevanceOutput",
     "RelevanceAction",
 ]

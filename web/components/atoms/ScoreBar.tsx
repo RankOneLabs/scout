@@ -17,8 +17,8 @@ export type ScoreBarSelection =
 /** The one badge-versus-score selector used by every ScoreBar render site. */
 export function selectScoreBar(props: ScoreBarProps): ScoreBarSelection {
   if ("value" in props) return { kind: "distance", ...props };
-  if (props.relevancePresentation?.classifier === "jev") {
-    return { kind: "action", action: props.relevancePresentation.jev?.action ?? null };
+  if (props.relevancePresentation?.classifier === "zeroshot") {
+    return { kind: "action", action: props.relevancePresentation.zeroshot?.action ?? null };
   }
   if (props.relevancePresentation?.classifier === "unknown") {
     return { kind: "unknown", model: props.relevancePresentation.model };
@@ -42,7 +42,7 @@ export function ScoreBar(props: ScoreBarProps) {
     const colors = selected.action
       ? ACTION_COLORS[selected.action]
       : "border-gray-300 bg-gray-100 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300";
-    return <span aria-label={`Jev action: ${label}`} className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium uppercase ${colors}`}>{label}</span>;
+    return <span aria-label={`Zero-shot action: ${label}`} className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium uppercase ${colors}`}>{label}</span>;
   }
   if (selected.kind === "score") {
     const tier = classifyScore(selected.score);

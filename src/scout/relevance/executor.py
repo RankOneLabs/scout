@@ -1,4 +1,4 @@
-"""Jev relevance execution with Jig-compatible trace evidence."""
+"""Zero-shot relevance execution with Jig-compatible trace evidence."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ from jig.jev import JevClient, JevError, NoulAnswer, NoulQuestion
 from jig.jev.tracing import to_jig_usage
 
 import scout.config as _config
-from scout.relevance.classifier_identity import jev_classifier
+from scout.relevance.classifier_identity import zeroshot_classifier
 from scout.relevance.loader import RelevanceCatalogue
-from scout.relevance.models import JevRelevanceError, JevRelevanceOutput
-from scout.typesafe.routes import route
+from scout.relevance.models import ZeroShotRelevanceError, ZeroShotRelevanceOutput
+from scout.typesafe.routes import RouteDecision, route
 
 
 class PhaseTracer(Protocol):
@@ -60,18 +60,30 @@ class PhaseTracer(Protocol):
 def _config_snapshot(catalogue: RelevanceCatalogue, model: str) -> dict[str, Any]:
     """Return the literal replay fields required by resolve_baseline."""
     return {
-        "agent_name": "scout_relevance_jev",
+        "agent_name": "scout_relevance_zeroshot",
         "description": catalogue.document.description,
         "system_prompt": catalogue.document.description,
         "system_prompt_is_callable": False,
-        "output_schema": "scout.relevance.models:JevRelevanceOutput",
+        "output_schema": "scout.relevance.models:ZeroShotRelevanceOutput",
         "structured_output_mode": "native",
-        "model_id": jev_classifier(model),
+        "model_id": zeroshot_classifier(model),
     }
 
 
-def _reason(line: str, exclusion: str | None) -> str:
-    return f"{line}: {exclusion}" if line == "exclusion" and exclusion else line
+def _reason(decision: RouteDecision) -> str:
+    reasons = {
+        "exclusion": f"Zero-shot: excluded ({decision.exclusion}).",
+        "needs_thread": "Zero-shot: review; the post needs its thread for context.",
+        "respond": "Zero-shot: respond; answerable from the post and about agent work.",
+        "points_somewhere": (
+            "Zero-shot: review; the post points to something outside itself."
+        ),
+        "otherwise": "Zero-shot: no respond or review signal.",
+    }
+    reason = reasons[decision.line]
+    if decision.margin:
+        reason += f" Close call on {', '.join(decision.margin)}; sent to review."
+    return reason
 
 
 def _redact_api_key(value: str | None) -> str | None:
@@ -83,7 +95,7 @@ def _redact_api_key(value: str | None) -> str | None:
 
 
 def _structured_output_envelope(
-    output: JevRelevanceOutput,
+    output: ZeroShotRelevanceOutput,
 ) -> tuple[str, dict[str, Any]]:
     """Build the complete structured-output evidence emitted by Jig."""
     rendered = output.model_dump_json()
@@ -105,22 +117,22 @@ def _structured_output_envelope(
     }
 
 
-async def run_jev_relevance(
-    config: AgentConfig[JevRelevanceOutput],
+async def run_zeroshot_relevance(
+    config: AgentConfig[ZeroShotRelevanceOutput],
     input_text: str,
     *,
     client: JevClient,
     catalogue: RelevanceCatalogue,
     questions: Sequence[NoulQuestion],
-    jev_state: dict[str, Any],
+    zeroshot_state: dict[str, Any],
     project_key: str,
     message_id: str,
-) -> AgentResult[JevRelevanceOutput]:
+) -> AgentResult[ZeroShotRelevanceOutput]:
     """Evaluate one routed post and return a run_agent-shaped phase result."""
     tracer: PhaseTracer = config.tracer
     started = time.monotonic()
     root = tracer.start_trace(
-        "scout_relevance_jev",
+        "scout_relevance_zeroshot",
         {
             "input": input_text,
             "config": _config_snapshot(catalogue, client.model),
@@ -133,14 +145,14 @@ async def run_jev_relevance(
         SpanKind.PROVIDER_CALL,
         "jev.call",
         input={
-            "state": jev_state,
+            "state": zeroshot_state,
             "question_ids": [question.id for question in questions],
         },
         metadata=child_metadata,
     )
 
     try:
-        result = await client.evaluate(jev_state, questions)
+        result = await client.evaluate(zeroshot_state, questions)
         # Jig's SQLite and stdout tracers retain this mapping by reference and
         # serialize it at flush. PhaseTracer deliberately requires that Jig
         # behavior because its interface has no metadata-update operation.
@@ -162,20 +174,21 @@ async def run_jev_relevance(
         answers: dict[str, float] = {}
         for question_id, answer in result.answers.items():
             if not isinstance(answer, NoulAnswer):
-                raise JevRelevanceError(
+                raise ZeroShotRelevanceError(
                     operation="relevance",
                     message_id=message_id,
                     detail=f"Jev returned a non-noul answer for {question_id!r}",
                 )
             answers[answer.question_id] = answer.noul
         decision = route(answers)
-        # A review decision is deliberately withheld from automatic drafting.
-        # The action and project stay on the candidate for later inspection.
+        # Review means a human needs more context; drafting before that review would
+        # turn uncertainty into an automatic response. The action and project stay
+        # on the candidate for later inspection.
         relevant = decision.action == "respond"
-        output = JevRelevanceOutput(
+        output = ZeroShotRelevanceOutput(
             relevant=relevant,
             score=1.0,
-            reason=_reason(decision.line, decision.exclusion),
+            reason=_reason(decision),
             relevant_to=[project_key] if relevant else [],
             action=decision.action,
             answers=answers,
@@ -214,7 +227,7 @@ async def run_jev_relevance(
         tracer.end_span(child.id, error=error_detail)
         tracer.end_span(root.id, error=error_detail)
         await tracer.flush()
-        raise JevRelevanceError(
+        raise ZeroShotRelevanceError(
             operation="relevance",
             message_id=message_id,
             detail=error_detail,
@@ -229,4 +242,4 @@ async def run_jev_relevance(
         raise
 
 
-__all__ = ["PhaseTracer", "run_jev_relevance"]
+__all__ = ["PhaseTracer", "run_zeroshot_relevance"]

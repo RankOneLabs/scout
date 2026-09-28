@@ -1,4 +1,4 @@
-"""Acquire the scan-scoped resources needed by Jev relevance."""
+"""Acquire the scan-scoped resources needed by zero-shot relevance."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from jig.jev import JevClient, NoulQuestion
 import scout.config as _config
 from scout.registry import ProjectTarget, RuntimeRegistry
 from scout.relevance.loader import RelevanceCatalogue, load_catalogue
-from scout.relevance.models import JEV_PROJECT_KEYS
+from scout.relevance.models import ZEROSHOT_PROJECT_KEYS
 from scout.result import Err, Ok, Result
 from scout.typesafe.catalogue import CatalogueError
 
 
 @dataclass(frozen=True, slots=True)
-class JevScanContext:
+class ZeroShotScanContext:
     """Immutable configuration and the one provider client owned by a scan."""
 
     catalogue: RelevanceCatalogue
@@ -27,7 +27,7 @@ class JevScanContext:
 
 
 @dataclass(frozen=True, slots=True)
-class JevSetupError:
+class ZeroShotSetupError:
     """A setup refusal with enough context to identify the failed entity."""
 
     operation: str
@@ -35,16 +35,16 @@ class JevSetupError:
     detail: str
 
 
-def setup_jev_scan(
+def setup_zeroshot_scan(
     registry: RuntimeRegistry,
-) -> Result[JevScanContext, JevSetupError]:
-    """Load and validate all Jev resources before a scan fetches any posts."""
-    catalogue_path = _config.RELEVANCE_JEV_CATALOGUE_PATH
+) -> Result[ZeroShotScanContext, ZeroShotSetupError]:
+    """Load and validate all zero-shot resources before a scan fetches any posts."""
+    catalogue_path = _config.RELEVANCE_ZEROSHOT_CATALOGUE_PATH
     if not catalogue_path:
         return Err(
-            JevSetupError(
+            ZeroShotSetupError(
                 operation="load_relevance_catalogue",
-                entity="RELEVANCE_JEV_CATALOGUE_PATH",
+                entity="RELEVANCE_ZEROSHOT_CATALOGUE_PATH",
                 detail="catalogue path is empty",
             )
         )
@@ -53,7 +53,7 @@ def setup_jev_scan(
         catalogue = load_catalogue(catalogue_path)
     except CatalogueError as exc:
         return Err(
-            JevSetupError(
+            ZeroShotSetupError(
                 operation="load_relevance_catalogue",
                 entity=catalogue_path,
                 detail=str(exc),
@@ -63,12 +63,12 @@ def setup_jev_scan(
     routed_project_keys = frozenset(
         route.project_key
         for route in registry.keywords
-        if route.project_key in JEV_PROJECT_KEYS
+        if route.project_key in ZEROSHOT_PROJECT_KEYS
     )
     for project_key in sorted(routed_project_keys):
         if project_key not in registry.projects:
             return Err(
-                JevSetupError(
+                ZeroShotSetupError(
                     operation="resolve_relevance_project",
                     entity=project_key,
                     detail=f"active keyword routes reference missing project {project_key!r}",
@@ -86,7 +86,7 @@ def setup_jev_scan(
         )
     except (TypeError, ValueError) as exc:
         return Err(
-            JevSetupError(
+            ZeroShotSetupError(
                 operation="open_jev_client",
                 entity=_config.RELEVANCE_JEV_MODEL,
                 detail=str(exc),
@@ -94,7 +94,7 @@ def setup_jev_scan(
         )
 
     return Ok(
-        JevScanContext(
+        ZeroShotScanContext(
             catalogue=catalogue,
             questions=catalogue.questions,
             client=client,
@@ -103,4 +103,4 @@ def setup_jev_scan(
     )
 
 
-__all__ = ["JevScanContext", "JevSetupError", "setup_jev_scan"]
+__all__ = ["ZeroShotScanContext", "ZeroShotSetupError", "setup_zeroshot_scan"]

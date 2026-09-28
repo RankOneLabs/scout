@@ -238,7 +238,7 @@ def load_relevance_population(
                 raise ValueError(
                     f"Unknown relevance classifier identity {unknown.model!r} in frozen phase"
                 )
-            if any(value.value == "jev" for value in classifiers if isinstance(value, Ok)):
+            if any(value.value == "zeroshot" for value in classifiers if isinstance(value, Ok)):
                 exclusions.append(
                     RelevanceSourceExclusion(
                         evaluation_id=member.evaluation_id,

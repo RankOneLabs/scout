@@ -49,12 +49,12 @@ function makeEvaluation(overrides: Partial<ReviewEvaluation> = {}): ReviewEvalua
 }
 
 describe("EvaluationCard", () => {
-  it("renders Jev exclusion detail and the empty-margin fallback", () => {
+  it("renders zero-shot exclusion detail and the empty-margin fallback", () => {
     const evaluation = makeEvaluation({
       relevance_presentation: {
-        classifier: "jev",
-        model: "jev:jev-latest",
-        jev: {
+        classifier: "zeroshot",
+        model: "zeroshot:jev-latest",
+        zeroshot: {
           action: "drop",
           line: "exclusion",
           exclusion: "hype",
@@ -70,11 +70,11 @@ describe("EvaluationCard", () => {
       React.createElement(EvaluationCard, { evaluation })
     );
 
-    expect(getByRole("button", { name: /Jev action: drop/i })).toBeTruthy();
+    expect(getByRole("button", { name: /Zero-shot action: drop/i })).toBeTruthy();
     expect(queryByText("80%")).toBeNull();
     fireEvent.click(getByRole("button", { name: /re: alice/i }));
 
-    expect(getByText("Jev route detail")).toBeTruthy();
+    expect(getByText("Zero-shot route detail")).toBeTruthy();
     expect(getByText("exclusion", { selector: "dd" })).toBeTruthy();
     expect(getByText("hype")).toBeTruthy();
     expect(getByText("None")).toBeTruthy();

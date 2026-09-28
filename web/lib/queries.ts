@@ -58,7 +58,7 @@ function parseStringList(raw: string | null): string[] {
 
 const ROUTE_ACTIONS = new Set<RouteAction>(["respond", "review", "drop"]);
 
-function parseJevEvidence(raw: string | null): RelevancePresentation["jev"] {
+function parseZeroShotEvidence(raw: string | null): RelevancePresentation["zeroshot"] {
   if (raw === null) return null;
   try {
     const envelope: unknown = JSON.parse(raw);
@@ -99,7 +99,7 @@ function parseJevEvidence(raw: string | null): RelevancePresentation["jev"] {
 }
 
 function relevanceClassifier(model: string): RelevancePresentation["classifier"] {
-  if (/^jev:[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(model)) return "jev";
+  if (/^zeroshot:[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(model)) return "zeroshot";
   if (
     /^(?:(?:dispatch|ollama)\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*|openrouter\/[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9][a-zA-Z0-9._:-]*)$/.test(model)
   ) {
@@ -156,23 +156,23 @@ export function getRelevancePresentations(
     trace_id: string;
   }>;
 
-  const jevRows = rows.filter((row) => relevanceClassifier(row.model) === "jev");
+  const zeroshotRows = rows.filter((row) => relevanceClassifier(row.model) === "zeroshot");
   const traceOutputs = new Map<string, string | null>();
-  if (jevRows.length > 0) {
+  if (zeroshotRows.length > 0) {
     try {
       const traces = getTracesDb().prepare(
         `SELECT trace_id, output
          FROM spans
          WHERE parent_id IS NULL
            AND trace_id IN (SELECT value FROM json_each(?))`
-      ).all(JSON.stringify(jevRows.map((row) => row.trace_id))) as Array<{
+      ).all(JSON.stringify(zeroshotRows.map((row) => row.trace_id))) as Array<{
         trace_id: string;
         output: string | null;
       }>;
       for (const trace of traces) traceOutputs.set(trace.trace_id, trace.output);
     } catch {
       // The classifier identity still renders honestly when a historical or
-      // unavailable trace database cannot supply the detailed Jev evidence.
+      // unavailable trace database cannot supply the detailed zero-shot evidence.
     }
   }
 
@@ -181,7 +181,7 @@ export function getRelevancePresentations(
     presentations.set(row.evaluation_id, {
       classifier,
       model: row.model,
-      jev: classifier === "jev" ? parseJevEvidence(traceOutputs.get(row.trace_id) ?? null) : null,
+      zeroshot: classifier === "zeroshot" ? parseZeroShotEvidence(traceOutputs.get(row.trace_id) ?? null) : null,
     });
   }
   return presentations;
@@ -193,10 +193,10 @@ function matchesPostRelevanceFilters(
   presentations: ReadonlyMap<number, RelevancePresentation>
 ): boolean {
   const presentation = row.eval_id === null ? undefined : presentations.get(row.eval_id);
-  if (presentation?.classifier === "jev") {
+  if (presentation?.classifier === "zeroshot") {
     return (
       filters?.action === undefined ||
-      (presentation.jev !== null && filters.action.includes(presentation.jev.action))
+      (presentation.zeroshot !== null && filters.action.includes(presentation.zeroshot.action))
     );
   }
   if (presentation?.classifier === "unknown") return true;
@@ -1579,7 +1579,7 @@ export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
   });
   return evaluations.sort((left, right) => {
     const rank = (evaluation: ReviewEvaluation): number => {
-      if (evaluation.relevance_presentation?.classifier === "jev") return 1;
+      if (evaluation.relevance_presentation?.classifier === "zeroshot") return 1;
       if (evaluation.relevance_presentation?.classifier === "unknown") return 2;
       return 0;
     };

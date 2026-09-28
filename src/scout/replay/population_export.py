@@ -14,6 +14,7 @@ from scout.grading.relevance_targets import (
     project_relevance_target_source,
 )
 from scout.grading.snapshots import FrozenGradeInput
+from scout.relevance.binding import population_export_record_fields
 from scout.result import Err
 from scout.scanning.author_class import handle_from_post_url
 
@@ -46,16 +47,19 @@ def record_from_held_row(row: Mapping[str, Any]) -> PopulationExportRecord:
         raise ValueError(
             f"population export evaluation {row['evaluation_id']} decision must be boolean"
         )
+    state_source = {
+        "platform": row["platform"],
+        "channel_name": row["channel"],
+        "url": row["url"],
+        "content": row["text"],
+        "parent_author_name": row["parent_author_name"],
+        "parent_text": row["parent_text"],
+        "author_name": row["author_name"],
+        "author_handle": handle_from_post_url(row["platform"], row["url"]),
+    }
     return PopulationExportRecord(
         evaluation_id=row["evaluation_id"],
-        platform=row["platform"],
-        channel=row["channel"],
-        url=row["url"],
-        text=row["text"],
-        parent_author_name=row["parent_author_name"],
-        parent_text=row["parent_text"],
-        author_name=row["author_name"],
-        author_handle=handle_from_post_url(row["platform"], row["url"]),
+        **population_export_record_fields(state_source),
         snapshot_id=None,
         human_label=None,
         production_score=row["production_score"],

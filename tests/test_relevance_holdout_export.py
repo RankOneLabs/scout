@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from scout.relevance.binding import bind_state
+from scout.relevance.binding import bind_state, population_export_state_source
 from scout.relevance.holdout_export import export_holdouts
 from scout.storage.state import StateManager
 
@@ -169,4 +169,11 @@ def test_export_record_rebuilds_the_live_declared_state(tmp_path: Path) -> None:
         export_holdouts(state, tmp_path)
         exported = json.loads((tmp_path / "agent-ops.jsonl").read_text())
 
-    assert bind_state(declared, exported, project) == expected
+    assert bind_state(declared, population_export_state_source(exported), project) == expected
+
+
+def test_bind_state_raises_when_a_bound_source_is_missing() -> None:
+    declared = {"post": ("platform", "text")}
+
+    with pytest.raises(KeyError, match="content"):
+        bind_state(declared, {"platform": "bluesky"}, {})

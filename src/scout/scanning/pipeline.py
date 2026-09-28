@@ -24,14 +24,14 @@ import scout.config as _config
 from scout.dossiers.resolver import DossierSummary
 from scout.errors import LLMError, ParseError
 from scout.relevance.binding import RelevancePostStateSource
-from scout.relevance.executor import PhaseTracer, run_jev_relevance
+from scout.relevance.executor import PhaseTracer, run_zeroshot_relevance
 from scout.relevance.models import (
-    JEV_PROJECT_KEYS,
-    JevRelevanceError,
-    JevRelevanceOutput,
+    ZEROSHOT_PROJECT_KEYS,
     RelevanceAction,
+    ZeroShotRelevanceError,
+    ZeroShotRelevanceOutput,
 )
-from scout.relevance.setup import JevScanContext
+from scout.relevance.setup import ZeroShotScanContext
 from scout.result import Err, Ok, Result
 from scout.scanning.agent import (
     ScoutExecutionContext,
@@ -209,24 +209,27 @@ async def score_and_draft_step(
         formatted_input = format_message_input(msg)
         project_key = None
 
-    use_jev = _config.RELEVANCE_CLASSIFIER == "jev" and project_key in JEV_PROJECT_KEYS
+    use_zeroshot = (
+        _config.RELEVANCE_CLASSIFIER == "zeroshot"
+        and project_key in ZEROSHOT_PROJECT_KEYS
+    )
     executor: Callable[
         [AgentConfig[RelevancePhaseOutput], str],
         Awaitable[AgentResult[RelevancePhaseOutput]],
     ] = run_agent
-    if use_jev:
-        jev_context: JevScanContext | None = ctx.get("jev_context")
+    if use_zeroshot:
+        zeroshot_context: ZeroShotScanContext | None = ctx.get("zeroshot_context")
         target = (
-            jev_context.projects.get(project_key)
-            if jev_context is not None and project_key is not None
+            zeroshot_context.projects.get(project_key)
+            if zeroshot_context is not None and project_key is not None
             else None
         )
-        if jev_context is None or target is None or project_key is None:
+        if zeroshot_context is None or target is None or project_key is None:
             return Err(
                 LLMError(
                     operation="relevance",
                     message_id=msg.platform_id,
-                    detail=f"Jev relevance context is missing project {project_key!r}",
+                    detail=f"Zero-shot relevance context is missing project {project_key!r}",
                 )
             )
         source: RelevancePostStateSource = {
@@ -239,24 +242,24 @@ async def score_and_draft_step(
             "author_name": msg.author.name,
             "author_handle": msg.author.handle,
         }
-        jev_state = build_state(source, target, jev_context.catalogue)
+        zeroshot_state = build_state(source, target, zeroshot_context.catalogue)
 
-        async def _execute_jev(
+        async def _execute_zeroshot(
             config: AgentConfig[RelevancePhaseOutput], text: str
         ) -> AgentResult[RelevancePhaseOutput]:
-            result = await run_jev_relevance(
-                cast(AgentConfig[JevRelevanceOutput], config),
+            result = await run_zeroshot_relevance(
+                cast(AgentConfig[ZeroShotRelevanceOutput], config),
                 text,
-                client=jev_context.client,
-                catalogue=jev_context.catalogue,
-                questions=jev_context.questions,
-                jev_state=jev_state,
+                client=zeroshot_context.client,
+                catalogue=zeroshot_context.catalogue,
+                questions=zeroshot_context.questions,
+                zeroshot_state=zeroshot_state,
                 project_key=project_key,
                 message_id=msg.platform_id,
             )
             return cast(AgentResult[RelevancePhaseOutput], result)
 
-        executor = _execute_jev
+        executor = _execute_zeroshot
 
     relevance: Result[PhaseExecution[RelevancePhaseOutput], LLMError | ParseError] = (
         await _run_phase(
@@ -279,7 +282,7 @@ async def score_and_draft_step(
     relevance_classifier = relevance.value.model
     relevance_action: RelevanceAction = (
         relevance_output.action
-        if isinstance(relevance_output, JevRelevanceOutput)
+        if isinstance(relevance_output, ZeroShotRelevanceOutput)
         else (
             "respond"
             if relevance_output.relevant
@@ -292,7 +295,7 @@ async def score_and_draft_step(
         "holdout_draw"
     )
     if holdout_draw is not None and holdout_draw(
-        "jev" if use_jev else "llm", project_key, relevance_action
+        "zeroshot" if use_zeroshot else "llm", project_key, relevance_action
     ):
         return Ok(
             ReplyCandidate(
@@ -352,6 +355,7 @@ async def draft_and_critic_step(
     dossier_summaries: Mapping[str, DossierSummary] = ctx.get("dossier_summaries", {})
     execution: ScoutExecutionContext = ctx["execution_context"]
     relevance_output: RelevancePhaseOutput = ctx["relevance_output"]
+    relevance_action = cast(RelevanceAction, ctx.get("relevance_action", "respond"))
     if not relevance_output.relevant:
         raise ValueError("draft_and_critic_step requires a relevant human override")
 
@@ -375,7 +379,7 @@ async def draft_and_critic_step(
         execution=execution,
         relevance_output=relevance_output,
         relevance_classifier="human",
-        relevance_action="respond",
+        relevance_action=relevance_action,
         contributor_ids=[],
     )
 
@@ -552,7 +556,7 @@ async def _run_phase[T](
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(_cleanup()), timeout=5.0)
         raise
-    except JevRelevanceError as e:
+    except ZeroShotRelevanceError as e:
         logger.error(
             "%s phase failed for message %s: %s", phase, message_id, e.detail
         )

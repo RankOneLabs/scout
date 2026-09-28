@@ -88,10 +88,10 @@ from scout.platforms.discord import DiscordScanner
 from scout.platforms.farcaster import FarcasterScanner
 from scout.prompts import prompt_source_report
 from scout.registry import ProjectTarget, RuntimeRegistry
-from scout.relevance.classifier_identity import jev_classifier
+from scout.relevance.classifier_identity import zeroshot_classifier
 from scout.relevance.holdout import RandomSource, draw_relevance_holdout
-from scout.relevance.models import JEV_PROJECT_KEYS
-from scout.relevance.setup import JevScanContext, setup_jev_scan
+from scout.relevance.models import ZEROSHOT_PROJECT_KEYS
+from scout.relevance.setup import ZeroShotScanContext, setup_zeroshot_scan
 from scout.result import Err, Ok
 from scout.scanning import coverage as coverage_lifecycle
 from scout.scanning import lease as lease_lifecycle
@@ -898,7 +898,7 @@ async def score_messages(
     dossier_summaries: dict[str, DossierSummary] | None = None,
     dossier_revision: str | None = None,
     lease_check: Callable[[], None] | None = None,
-    jev_context: JevScanContext | None = None,
+    zeroshot_context: ZeroShotScanContext | None = None,
     runtime_registry: RuntimeRegistry | None = None,
     holdout_rng: RandomSource | None = None,
 ) -> tuple[str, int, bool, list[PlatformFetchFailure]]:
@@ -1130,11 +1130,11 @@ async def score_messages(
             relevance=PhaseRunIdentity(
                 snapshot_phase_id=phase_run_identity["relevance"].snapshot_phase_id,
                 model=(
-                    jev_classifier(jev_context.client.model)
-                    if _config.RELEVANCE_CLASSIFIER == "jev"
+                    zeroshot_classifier(zeroshot_context.client.model)
+                    if _config.RELEVANCE_CLASSIFIER == "zeroshot"
                     and routed.keyword_route is not None
-                    and routed.keyword_route.project_key in JEV_PROJECT_KEYS
-                    and jev_context is not None
+                    and routed.keyword_route.project_key in ZEROSHOT_PROJECT_KEYS
+                    and zeroshot_context is not None
                     else phase_run_identity["relevance"].model
                 ),
             ),
@@ -1169,7 +1169,7 @@ async def score_messages(
                     "phase_configs": phase_configs,
                     "dossier_summaries": _dossiers,
                     "execution_context": execution_context,
-                    "jev_context": jev_context,
+                    "zeroshot_context": zeroshot_context,
                     "holdout_draw": lambda classifier, project_key, action: (
                         draw_relevance_holdout(
                             classifier=classifier,
@@ -1518,7 +1518,7 @@ async def main_loop(args: argparse.Namespace) -> None:
     mode_names = list(MODES.keys()) if args.mode == "both" else [args.mode]
     tracer: SQLiteTracer | None = None
     feedback: SQLiteFeedbackLoop | None = None
-    jev_context: JevScanContext | None = None
+    zeroshot_context: ZeroShotScanContext | None = None
     owner_id = lease_lifecycle.generate_owner_id()
     with StateManager(db_path=DB_PATH) as state:
         # Heartbeat renewals run on their own connection so they can never
@@ -1562,15 +1562,15 @@ async def main_loop(args: argparse.Namespace) -> None:
                 active_overflow = 0
                 try:
                     registry = state.load_runtime_registry()
-                    if _config.RELEVANCE_CLASSIFIER == "jev":
-                        setup_result = setup_jev_scan(registry)
+                    if _config.RELEVANCE_CLASSIFIER == "zeroshot":
+                        setup_result = setup_zeroshot_scan(registry)
                         if isinstance(setup_result, Err):
                             setup_error = setup_result.error
                             raise RuntimeError(
                                 f"{setup_error.operation} failed for "
                                 f"{setup_error.entity!r}: {setup_error.detail}"
                             )
-                        jev_context = setup_result.value
+                        zeroshot_context = setup_result.value
                     search_queries = build_search_queries(registry.keywords)
                     log_prompt_diagnostics(registry, mode_names)
 
@@ -1595,9 +1595,9 @@ async def main_loop(args: argparse.Namespace) -> None:
                             "Sleeping %d hours before retrying dossier readiness...",
                             SCAN_INTERVAL_HOURS,
                         )
-                        if jev_context is not None:
-                            await jev_context.client.aclose()
-                            jev_context = None
+                        if zeroshot_context is not None:
+                            await zeroshot_context.client.aclose()
+                            zeroshot_context = None
                         await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
                         continue
 
@@ -2014,7 +2014,7 @@ async def main_loop(args: argparse.Namespace) -> None:
                                 dossier_summaries=_dossier_summaries,
                                 dossier_revision=_dossier_revision,
                                 lease_check=lease_handle.check,
-                                jev_context=jev_context,
+                                zeroshot_context=zeroshot_context,
                                 runtime_registry=registry,
                             )
 
@@ -2136,16 +2136,16 @@ async def main_loop(args: argparse.Namespace) -> None:
                 if not args.continuous:
                     break
 
-                if jev_context is not None:
-                    await jev_context.client.aclose()
-                    jev_context = None
+                if zeroshot_context is not None:
+                    await zeroshot_context.client.aclose()
+                    zeroshot_context = None
 
                 logger.info("Sleeping %d hours until next scan...", SCAN_INTERVAL_HOURS)
                 await asyncio.sleep(SCAN_INTERVAL_HOURS * 3600)
 
         finally:
-            if jev_context is not None:
-                await jev_context.client.aclose()
+            if zeroshot_context is not None:
+                await zeroshot_context.client.aclose()
             if feedback is not None:
                 await feedback.close()
             if tracer is not None:
