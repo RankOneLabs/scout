@@ -39,7 +39,7 @@ from scout.scanning.runner import (
 )
 from scout.scanning.schemas import RelevancePhaseOutput, ReplyCandidate
 from scout.storage.relevance_holdouts import RelevanceHoldout, registry_state
-from scout.storage.state import StateManager
+from scout.storage.state import StateManager, SurfaceRateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -453,6 +453,7 @@ async def _release_one(
             surfaced_at=message.created_at.isoformat(),
             allow_response_only_phase_runs=True,
         )
+        surfaced = decision.status == "surfaced"
         with state.db.begin_immediate():
             if action == "drop":
                 target_evaluation_id = state.save_evaluation(
@@ -470,7 +471,14 @@ async def _release_one(
                     relevance_action=action,
                 )
             else:
-                target_evaluation_id = persist_outcome(state, decision, context)
+                try:
+                    target_evaluation_id = persist_outcome(state, decision, context)
+                except SurfaceRateLimitedError as rate_limited:
+                    # The author-rate gate wrote its gate_blocked evaluation
+                    # inside this transaction; release onto that outcome, as
+                    # the scan runner does, rather than rolling it back.
+                    target_evaluation_id = rate_limited.persisted_evaluation_id
+                    surfaced = False
             state.relevance_holdouts.complete_release(
                 claim.id,
                 claim_token=claim.claim_token,
@@ -480,7 +488,7 @@ async def _release_one(
                 provenance=asdict(provenance),
             )
         state.complete_scan(
-            scan_id, messages_scanned=1, relevant_found=int(decision.status == "surfaced")
+            scan_id, messages_scanned=1, relevant_found=int(surfaced)
         )
         return True
     except Exception as exc:

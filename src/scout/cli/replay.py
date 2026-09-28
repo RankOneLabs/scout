@@ -66,7 +66,6 @@ def export_holdout_batch(args: argparse.Namespace) -> None:
 def release_holdout_batch_cli(args: argparse.Namespace) -> None:
     """Apply a complete blind-grading answer key to one exported batch."""
     from scout.relevance.holdout_release import (
-        HoldoutReleaseError,
         load_answer_key,
         release_holdout_batch,
     )
@@ -89,7 +88,9 @@ def release_holdout_batch_cli(args: argparse.Namespace) -> None:
 
     try:
         asyncio.run(_run())
-    except (OSError, ValueError, HoldoutReleaseError) as exc:
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        # HoldoutReleaseError is a RuntimeError; so is claim_release's
+        # already-claimed refusal, which fires before a release can wrap it.
         print(f"error: could not release holdouts: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 

@@ -548,8 +548,20 @@ export function getLatestProbeRun(environment: string): SourceProbeRun | null {
   return { ...row, passed: row.passed === null ? null : row.passed === 1 };
 }
 
+/** Databases before the classifier migration lack these columns; every row there is an LLM row. */
+function hasRelevanceClassifierColumns(db: ReturnType<typeof getDb>): boolean {
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>).map(
+      (column) => column.name
+    )
+  );
+  return columns.has("relevance_classifier") && columns.has("relevance_action");
+}
+
 export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
   const db = getDb();
+  const hasClassifier = hasRelevanceClassifierColumns(db);
+  const nonLlmRow = hasClassifier ? "e.relevance_classifier <> 'llm' OR " : "";
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
@@ -567,14 +579,15 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
   }
   const limit = filters?.limit ?? DEFAULT_PAGE_SIZE;
   if (filters?.score_min !== undefined) {
-    conditions.push("(e.id IS NULL OR e.relevance_classifier <> 'llm' OR e.score >= ?)");
+    conditions.push(`(e.id IS NULL OR ${nonLlmRow}e.score >= ?)`);
     params.push(filters.score_min);
   }
   if (filters?.score_max !== undefined) {
-    conditions.push("(e.id IS NULL OR e.relevance_classifier <> 'llm' OR e.score <= ?)");
+    conditions.push(`(e.id IS NULL OR ${nonLlmRow}e.score <= ?)`);
     params.push(filters.score_max);
   }
-  if (filters?.action !== undefined) {
+  // The action filter only narrows non-LLM rows, and an unmigrated database has none.
+  if (filters?.action !== undefined && hasClassifier) {
     conditions.push(`(e.id IS NULL OR e.relevance_classifier = 'llm' OR e.relevance_action IN (${filters.action.map(() => "?").join(",")}))`);
     params.push(...filters.action);
   }

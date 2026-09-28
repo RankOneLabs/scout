@@ -54,11 +54,20 @@ def _render_manifest(
     return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
+_MANIFEST_NAME = "batch.json"
+
+
+def _publication_order(name: str) -> tuple[bool, str]:
+    """Replace the manifest last, so it changes only after every file it lists has."""
+    return (name == _MANIFEST_NAME, name)
+
+
 def _write_files(output_dir: Path, payloads: dict[str, bytes]) -> tuple[Path, ...]:
     output_dir.mkdir(parents=True, exist_ok=True)
     staged: list[tuple[Path, Path]] = []
     try:
-        for name, payload in sorted(payloads.items()):
+        for name in sorted(payloads, key=_publication_order):
+            payload = payloads[name]
             descriptor, temporary = tempfile.mkstemp(prefix=f".{name}.", dir=output_dir)
             temporary_path = Path(temporary)
             with os.fdopen(descriptor, "wb") as handle:
@@ -112,7 +121,7 @@ def export_holdouts(
             f"{project_key}.jsonl": render_population_jsonl(records)
             for project_key, records in grouped_records.items()
         }
-        payloads["batch.json"] = _render_manifest(
+        payloads[_MANIFEST_NAME] = _render_manifest(
             batch_id, exported_at, dict(project_evaluations)
         )
         files = writer(output_dir, payloads)

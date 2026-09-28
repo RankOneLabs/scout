@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from scout.relevance import holdout_export
 from scout.relevance.binding import bind_state, population_export_state_source
 from scout.relevance.holdout_export import export_holdouts
 from scout.storage.state import StateManager
@@ -141,6 +142,29 @@ def test_failed_file_write_does_not_mark_rows_exported(tmp_path: Path) -> None:
             "SELECT batch_id, exported_at FROM relevance_holdouts"
         ).fetchone()
         assert tuple(row) == (None, None)
+
+
+def test_failed_file_replace_leaves_the_previous_manifest_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with StateManager(db_path=":memory:") as state:
+        _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="respond")
+        export_holdouts(state, tmp_path)
+        previous_manifest = (tmp_path / "batch.json").read_bytes()
+        _seed_holdout(state, evaluation_id=22, project_key="zeta-ops", action="drop")
+
+        real_replace = holdout_export.os.replace
+
+        def fail_on_zeta(source: str | Path, destination: str | Path) -> None:
+            if Path(destination).name == "zeta-ops.jsonl":
+                raise OSError("simulated replace failure")
+            real_replace(source, destination)
+
+        monkeypatch.setattr(holdout_export.os, "replace", fail_on_zeta)
+        with pytest.raises(OSError, match="simulated replace failure"):
+            export_holdouts(state, tmp_path)
+
+        assert (tmp_path / "batch.json").read_bytes() == previous_manifest
 
 
 def test_export_record_rebuilds_the_live_declared_state(tmp_path: Path) -> None:

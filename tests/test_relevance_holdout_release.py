@@ -21,7 +21,7 @@ from scout.relevance.holdout_release import (
 )
 from scout.result import Ok
 from scout.scanning.schemas import ReplyCandidate
-from scout.storage.state import StateManager
+from scout.storage.state import StateManager, SurfaceRateLimitedError
 from tests.test_relevance_holdout_export import _seed_holdout
 
 
@@ -67,6 +67,22 @@ def test_argparse_wires_holdout_release(monkeypatch: pytest.MonkeyPatch) -> None
         "batch-1",
         "labels.json",
     )
+
+
+def test_release_cli_reports_an_already_claimed_holdout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scout.cli.replay import release_holdout_batch_cli
+
+    def claimed(_path):
+        raise RuntimeError("holdout 1 is already claimed")
+
+    monkeypatch.setattr(release, "load_answer_key", claimed)
+    with pytest.raises(SystemExit) as exited:
+        release_holdout_batch_cli(SimpleNamespace(answer_key="key.csv", batch="batch-1"))
+
+    assert exited.value.code == 1
+    assert "could not release holdouts: holdout 1 is already claimed" in capsys.readouterr().err
 
 
 def test_loads_categorical_assay_labels(tmp_path) -> None:
@@ -292,6 +308,86 @@ async def test_positive_release_runs_draft_classify_and_persist(
 
     draft_mock.assert_awaited_once()
     classify_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_release_keeps_the_gate_blocked_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def prepare(**kwargs):
+        registry = kwargs["state"].load_runtime_registry()
+        return release._ResponseFlow(
+            registry=registry,
+            route=registry.keywords[0],
+            dossiers={},
+            dossier_revision="release-revision",
+            phase_configs=SimpleNamespace(),
+            execution=SimpleNamespace(),
+        )
+
+    async def draft(context):
+        relevance = context["relevance_output"]
+        return Ok(
+            ReplyCandidate(
+                relevant=False,
+                score=0.0,
+                reason=relevance.reason,
+                relevant_to=["agent-ops"],
+                project_key="agent-ops",
+                relevance_classifier="human",
+                relevance_action=context["relevance_action"],
+            )
+        )
+
+    def rate_limited_persist(state, decision, context):
+        # persist_surfaced_outcome's contract: the losing gate_blocked
+        # evaluation is written under the caller's lock, then the error names it.
+        with state.db.begin_immediate():
+            evaluation_id = state.save_evaluation(
+                decision.evaluation,
+                context.post_id,
+                context.scan_id,
+                keyword_route_id=context.keyword_route_id,
+                project_key=decision.project_key,
+                posture=decision.posture,
+                surface_status="gate_blocked",
+                failure_reason=None,
+                dossier_revision=context.dossier_revision,
+                dossier_summary_id=context.dossier_summary_id,
+                relevance_classifier="human",
+                relevance_action=decision.relevance_action,
+            )
+        raise SurfaceRateLimitedError(
+            "author", 3, 3, persisted_evaluation_id=evaluation_id, gate_block_ids=()
+        )
+
+    monkeypatch.setattr(release, "_prepare_response_flow", prepare)
+    monkeypatch.setattr(release, "draft_and_critic_step", AsyncMock(side_effect=draft))
+    monkeypatch.setattr(release, "persist_outcome", rate_limited_persist)
+
+    with StateManager(db_path=":memory:") as state:
+        _seed_holdout(state, evaluation_id=11, project_key="agent-ops", action="drop")
+        _seed_holdout(state, evaluation_id=12, project_key="agent-ops", action="drop")
+        state.upsert_project(
+            "agent-ops", "Agent Ops", "Operations", "https://example.test"
+        )
+        state.upsert_keyword("agent-ops", "agent")
+        batch_id = _batch(state, 11, 12)
+
+        result = await release_holdout_batch(
+            state=state,
+            tracer=Mock(),
+            feedback=Mock(),
+            batch_id=batch_id,
+            answers=(_answer(11, "respond"), _answer(12, "respond")),
+        )
+
+        assert result.released == 2
+        for evaluation_id in (11, 12):
+            stored = state.relevance_holdouts.get_for_evaluation(evaluation_id)
+            assert stored is not None and stored.status == "released"
+            target = state.get_evaluation(stored.target_evaluation_id or -1)
+            assert target is not None and target["surface_status"] == "gate_blocked"
 
 
 def test_prepare_response_flow_resolves_live_io_and_phase_identity(

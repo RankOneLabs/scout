@@ -111,3 +111,12 @@ describe("getEvaluationsByScan author classification", () => {
     expect(byPost.get(3)).toBeNull();
   });
 });
+
+describe("getPosts on a database before the classifier migration", () => {
+  it("still filters by score and ignores the zero-shot action filter", async () => {
+    const { getPosts } = await import("@/lib/queries");
+    expect(getPosts({ scan_id: 7, score_min: 0.8 }).data.map((post) => post.id)).toEqual([2, 1]);
+    expect(getPosts({ scan_id: 7, score_max: 0.75 }).data.map((post) => post.id)).toEqual([3]);
+    expect(getPosts({ scan_id: 7, action: ["drop"] }).data.map((post) => post.id)).toEqual([3, 2, 1]);
+  });
+});

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from scout.typesafe.routes import ROUTED, route
 
 
@@ -48,3 +50,9 @@ def test_margin_overrides_the_path() -> None:
 def test_margin_only_counts_consulted_features() -> None:
     decision = route(_answers(excl_hardware=0.9, points_somewhere=0.5))
     assert decision.action == "drop"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.1, 1.1, True])
+def test_a_noul_that_is_not_a_probability_is_refused(value: float) -> None:
+    with pytest.raises(ValueError, match="needs_thread"):
+        route(_answers(needs_thread=value))

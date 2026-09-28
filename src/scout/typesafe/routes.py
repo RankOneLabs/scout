@@ -43,9 +43,14 @@ DEFAULT = Thresholds()
 
 def _noul(answers: Mapping[str, float], name: str) -> float:
     value = answers.get(name)
-    if not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"missing noul for {name}")
-    return float(value)
+    # A NaN fails every threshold comparison and would silently route to drop;
+    # the range check rejects it along with infinities and out-of-range values.
+    result = float(value)
+    if not 0.0 <= result <= 1.0:
+        raise ValueError(f"noul for {name} out of range: {value!r}")
+    return result
 
 
 def route(answers: Mapping[str, float], t: Thresholds = DEFAULT) -> RouteDecision:
