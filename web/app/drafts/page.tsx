@@ -3,12 +3,13 @@
 import { useState, useCallback, useMemo } from "react";
 import { useDrafts } from "@/hooks/use-drafts";
 import { useNegativeGradingCases } from "@/hooks/use-negative-grading-cases";
+import { useReviewGradingCases } from "@/hooks/use-review-grading-cases";
 import { DraftList } from "@/components/organisms/DraftList";
 import { NegativeCaseList } from "@/components/organisms/NegativeCaseList";
 import { overlayGradesByEvaluation } from "@/lib/grade-overlay";
 import type { DraftWithGrade, Grade } from "@/types/schema";
 
-type GradingView = "drafts" | "negative-cases";
+type GradingView = "drafts" | "negative-cases" | "review-cases";
 
 function DraftGradingSection() {
   const {
@@ -120,6 +121,29 @@ function NegativeCaseGradingSection() {
   );
 }
 
+function ReviewCaseGradingSection() {
+  const { evaluations, loading, error, hasMore, loadMore, isLoadingMore } =
+    useReviewGradingCases();
+  const [reviewedIds, setReviewedIds] = useState<Set<number>>(() => new Set());
+  const visibleEvaluations = useMemo(
+    () => evaluations.filter((evaluation) => !reviewedIds.has(evaluation.id)),
+    [evaluations, reviewedIds]
+  );
+  const handleGradeUpdate = useCallback((evaluationId: number, grade: Grade) => {
+    if (grade.evaluation_id === evaluationId) {
+      setReviewedIds((previous) => new Set(previous).add(evaluationId));
+    }
+  }, []);
+
+  if (loading) {
+    return <div className="flex h-64 items-center justify-center"><p className="text-sm text-gray-600 dark:text-gray-500">Loading review queue...</p></div>;
+  }
+  return <div className="space-y-6">
+    {error && <div className="rounded-lg border border-red-300 bg-red-100 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">Failed to load review queue: {error}</div>}
+    <NegativeCaseList evaluations={visibleEvaluations} reviewedThisSession={reviewedIds.size} onGradeUpdate={handleGradeUpdate} hasMore={hasMore} onLoadMore={loadMore} isLoadingMore={isLoadingMore} variant="review" />
+  </div>;
+}
+
 export default function GradingPage() {
   const [view, setView] = useState<GradingView>("drafts");
 
@@ -152,10 +176,22 @@ export default function GradingPage() {
           >
             Negative Cases
           </button>
+          <button
+            type="button"
+            aria-pressed={view === "review-cases"}
+            onClick={() => setView("review-cases")}
+            className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+              view === "review-cases"
+                ? "border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/20 dark:text-blue-300"
+                : "border-gray-300 bg-gray-50 text-gray-600 hover:border-gray-400 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400 dark:hover:border-gray-600 dark:hover:text-gray-200"
+            }`}
+          >
+            Review Queue
+          </button>
         </div>
       </div>
 
-      {view === "drafts" ? <DraftGradingSection /> : <NegativeCaseGradingSection />}
+      {view === "drafts" ? <DraftGradingSection /> : view === "negative-cases" ? <NegativeCaseGradingSection /> : <ReviewCaseGradingSection />}
     </div>
   );
 }

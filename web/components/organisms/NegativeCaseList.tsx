@@ -10,6 +10,7 @@ interface NegativeCaseListProps {
   hasMore: boolean;
   onLoadMore: () => void;
   isLoadingMore: boolean;
+  variant?: "negative" | "review";
 }
 
 export function NegativeCaseList({
@@ -19,14 +20,16 @@ export function NegativeCaseList({
   hasMore,
   onLoadMore,
   isLoadingMore,
+  variant = "negative",
 }: NegativeCaseListProps) {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
-        <h2 className="text-sm font-medium text-gray-800 dark:text-gray-200">Model-negative cases needing review</h2>
+        <h2 className="text-sm font-medium text-gray-800 dark:text-gray-200">{variant === "review" ? "Zero-shot review queue" : "Model-negative cases needing review"}</h2>
         <p className="mt-1 text-xs text-gray-600 dark:text-gray-500">
-          Recent cases appear first. Choose No when Scout was right to skip the post, or Yes to
-          record a false negative and send it through the normal draft-and-critic response flow.
+          {variant === "review"
+            ? "Recent review routes appear first. Drop confirms the route; Respond records a false negative and generates a response draft."
+            : "Recent cases appear first. Choose No when Scout was right to skip the post, or Yes to record a false negative and send it through the normal draft-and-critic response flow."}
         </p>
         {reviewedThisSession > 0 && (
           <p className="mt-2 text-xs text-green-600 dark:text-green-400">
@@ -37,7 +40,7 @@ export function NegativeCaseList({
 
       {evaluations.length === 0 ? (
         <p className="py-8 text-center text-sm text-gray-600 dark:text-gray-500">
-          No negative cases need review in this page of the queue.
+          {variant === "review" ? "No zero-shot review cases are waiting." : "No negative cases need review in this page of the queue."}
         </p>
       ) : (
         <div className="space-y-3">

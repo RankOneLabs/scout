@@ -44,11 +44,30 @@ function makeEvaluation(overrides: Partial<ReviewEvaluation> = {}): ReviewEvalua
     critique: null,
     gate_violations: [],
     grade: null,
+    held: false,
     ...overrides,
   };
 }
 
 describe("EvaluationCard", () => {
+  it("renders a human action badge and hides grade controls for held rows", () => {
+    const evaluation = makeEvaluation({
+      held: true,
+      relevance_presentation: {
+        classifier: "human",
+        model: "human",
+        action: "respond",
+        zeroshot: null,
+      },
+    });
+    const { getByRole, queryByText } = render(
+      React.createElement(EvaluationCard, { evaluation })
+    );
+    expect(getByRole("button", { name: /Human action: respond/i })).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: /re: alice/i }));
+    expect(queryByText("Should this post have been surfaced?")).toBeNull();
+  });
+
   it("renders zero-shot exclusion detail and the empty-margin fallback", () => {
     const evaluation = makeEvaluation({
       relevance_presentation: {

@@ -98,25 +98,6 @@ function parseZeroShotEvidence(raw: string | null): RelevancePresentation["zeros
   }
 }
 
-function relevanceClassifier(model: string): RelevancePresentation["classifier"] {
-  if (/^zeroshot:[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(model)) return "zeroshot";
-  if (
-    /^(?:(?:dispatch|ollama)\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*|openrouter\/[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9][a-zA-Z0-9._:-]*)$/.test(model)
-  ) {
-    return "llm";
-  }
-  if (!/^[a-z0-9][a-z0-9._:-]*$/.test(model)) return "unknown";
-  if (
-    /^claude-.+$/.test(model) ||
-    /^(?:gpt|chatgpt)-.+$/.test(model) ||
-    /^o[134](?:-.+)?$/.test(model) ||
-    /^gemini-.+$/.test(model)
-  ) {
-    return "llm";
-  }
-  return "unknown";
-}
-
 /**
  * The only query that resolves an evaluation's relevance classifier. The
  * phase-run join is kept here so every row surface uses the same latest
@@ -128,13 +109,18 @@ export function getRelevancePresentations(
   const presentations = new Map<number, RelevancePresentation>();
   if (evaluationIds.length === 0) return presentations;
   const db = getDb();
+  const evaluationColumns = new Set(
+    (db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>).map(
+      (column) => column.name
+    )
+  );
+  const hasClassifierColumns =
+    evaluationColumns.has("relevance_classifier") &&
+    evaluationColumns.has("relevance_action");
   const hasPhaseRuns = db
     .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evaluation_phase_runs'")
     .get();
-  if (!hasPhaseRuns) return presentations;
-
-  const rows = db.prepare(
-    `WITH ranked_relevance_runs AS (
+  const rankedRuns = hasPhaseRuns ? `WITH ranked_relevance_runs AS (
        SELECT evaluation_id, model, trace_id,
               ROW_NUMBER() OVER (
                 PARTITION BY evaluation_id ORDER BY created_at DESC, id DESC
@@ -145,18 +131,30 @@ export function getRelevancePresentations(
          AND evaluation_id IN (
            SELECT CAST(value AS INTEGER) FROM json_each(?)
          )
-     )
-     SELECT e.id AS evaluation_id, relevance.model, relevance.trace_id
+     )` : "";
+  const runJoin = hasPhaseRuns
+    ? "LEFT JOIN ranked_relevance_runs relevance ON relevance.evaluation_id = e.id AND relevance.recency = 1"
+    : "";
+  const evaluationIdsJson = JSON.stringify(evaluationIds);
+  const rows = db.prepare(
+    `${rankedRuns}
+     SELECT e.id AS evaluation_id,
+            ${hasClassifierColumns ? "e.relevance_classifier" : "'llm'"} AS classifier,
+            ${hasClassifierColumns ? "e.relevance_action" : "NULL"} AS action,
+            ${hasPhaseRuns ? "relevance.model" : "NULL"} AS model,
+            ${hasPhaseRuns ? "relevance.trace_id" : "NULL"} AS trace_id
      FROM evaluations e
-     JOIN ranked_relevance_runs relevance
-       ON relevance.evaluation_id = e.id AND relevance.recency = 1`
-  ).all(JSON.stringify(evaluationIds)) as Array<{
+     ${runJoin}
+     WHERE e.id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`
+  ).all(...(hasPhaseRuns ? [evaluationIdsJson, evaluationIdsJson] : [evaluationIdsJson])) as Array<{
     evaluation_id: number;
-    model: string;
-    trace_id: string;
+    classifier: RelevancePresentation["classifier"];
+    action: RouteAction | null;
+    model: string | null;
+    trace_id: string | null;
   }>;
 
-  const zeroshotRows = rows.filter((row) => relevanceClassifier(row.model) === "zeroshot");
+  const zeroshotRows = rows.filter((row) => row.classifier === "zeroshot" && row.trace_id !== null);
   const traceOutputs = new Map<string, string | null>();
   if (zeroshotRows.length > 0) {
     try {
@@ -177,34 +175,15 @@ export function getRelevancePresentations(
   }
 
   for (const row of rows) {
-    const classifier = relevanceClassifier(row.model);
+    const classifier = row.classifier;
     presentations.set(row.evaluation_id, {
       classifier,
-      model: row.model,
-      zeroshot: classifier === "zeroshot" ? parseZeroShotEvidence(traceOutputs.get(row.trace_id) ?? null) : null,
+      model: row.model ?? classifier,
+      action: row.action,
+      zeroshot: classifier === "zeroshot" ? parseZeroShotEvidence(traceOutputs.get(row.trace_id ?? "") ?? null) : null,
     });
   }
   return presentations;
-}
-
-function matchesPostRelevanceFilters(
-  row: { eval_id: number | null; score: number | null },
-  filters: PostFilters | undefined,
-  presentations: ReadonlyMap<number, RelevancePresentation>
-): boolean {
-  const presentation = row.eval_id === null ? undefined : presentations.get(row.eval_id);
-  if (presentation?.classifier === "zeroshot") {
-    return (
-      filters?.action === undefined ||
-      (presentation.zeroshot !== null && filters.action.includes(presentation.zeroshot.action))
-    );
-  }
-  if (presentation?.classifier === "unknown") return true;
-  if (row.score === null) return filters?.score_min === undefined && filters?.score_max === undefined;
-  return (
-    (filters?.score_min === undefined || row.score >= filters.score_min) &&
-    (filters?.score_max === undefined || row.score <= filters.score_max)
-  );
 }
 
 const MATCH_TYPES: readonly MatchedRoute["match_type"][] = [
@@ -586,10 +565,22 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     params.push(filters.scan_id);
   }
   const limit = filters?.limit ?? DEFAULT_PAGE_SIZE;
-  const relevanceFiltering =
-    filters?.score_min !== undefined ||
-    filters?.score_max !== undefined ||
-    filters?.action !== undefined;
+  if (filters?.score_min !== undefined) {
+    conditions.push("(e.id IS NULL OR e.relevance_classifier <> 'llm' OR e.score >= ?)");
+    params.push(filters.score_min);
+  }
+  if (filters?.score_max !== undefined) {
+    conditions.push("(e.id IS NULL OR e.relevance_classifier <> 'llm' OR e.score <= ?)");
+    params.push(filters.score_max);
+  }
+  if (filters?.action !== undefined) {
+    conditions.push(`(e.id IS NULL OR e.relevance_classifier = 'llm' OR e.relevance_action IN (${filters.action.map(() => "?").join(",")}))`);
+    params.push(...filters.action);
+  }
+  if (filters?.before_id !== undefined) {
+    conditions.push("p.id < ?");
+    params.push(filters.before_id);
+  }
 
   interface PostEvalRow {
     id: number;
@@ -630,16 +621,8 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
     resolved_critique_prompt: string | null;
   }
 
-  const fetchRows = (beforeId: number | undefined): PostEvalRow[] => {
-    const batchConditions = [...conditions];
-    const batchParams = [...params];
-    if (beforeId !== undefined) {
-      batchConditions.push("p.id < ?");
-      batchParams.push(beforeId);
-    }
-    const where =
-      batchConditions.length > 0 ? `WHERE ${batchConditions.join(" AND ")}` : "";
-    return db
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const rows = db
       .prepare(
         `SELECT
           p.*,
@@ -672,35 +655,12 @@ export function getPosts(filters?: PostFilters): Paginated<PostWithEvaluation> {
         ORDER BY p.id DESC
         LIMIT ?`
       )
-      .all(...batchParams, limit + 1) as PostEvalRow[];
-  };
-
-  const matchingRows: PostEvalRow[] = [];
-  const presentations = new Map<number, RelevancePresentation>();
-  let cursor = filters?.before_id;
-  while (matchingRows.length <= limit) {
-    const batch = fetchRows(cursor);
-    const batchPresentations = getRelevancePresentations(
-      batch.flatMap((row) => (row.eval_id === null ? [] : [row.eval_id]))
-    );
-    const matches = relevanceFiltering
-      ? batch.filter((row) => matchesPostRelevanceFilters(row, filters, batchPresentations))
-      : batch;
-    for (const row of matches) {
-      if (row.eval_id === null) continue;
-      const presentation = batchPresentations.get(row.eval_id);
-      if (presentation) presentations.set(row.eval_id, presentation);
-    }
-    matchingRows.push(...matches);
-
-    if (!relevanceFiltering || matchingRows.length > limit || batch.length < limit + 1) break;
-    const nextCursor = batch.at(-1)?.id;
-    if (nextCursor === undefined || (cursor !== undefined && nextCursor >= cursor)) break;
-    cursor = nextCursor;
-  }
-
-  const has_more = matchingRows.length > limit;
-  const data = (has_more ? matchingRows.slice(0, limit) : matchingRows).map((row) => {
+      .all(...params, limit + 1) as PostEvalRow[];
+  const presentations = getRelevancePresentations(
+    rows.flatMap((row) => (row.eval_id === null ? [] : [row.eval_id]))
+  );
+  const has_more = rows.length > limit;
+  const data = (has_more ? rows.slice(0, limit) : rows).map((row) => {
     const parentCtx = toSourceParent(row);
     return {
       id: row.id,
@@ -918,6 +878,22 @@ export interface GradeableEvaluation {
   scan_id: number | null;
   posture: string | null;
   relevant: number;
+}
+
+export function isEvaluationHeld(evaluationId: number): boolean {
+  let db: ReturnType<typeof getDb>;
+  try {
+    db = getDb();
+  } catch {
+    return false;
+  }
+  const hasTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'relevance_holdouts'"
+  ).get();
+  if (!hasTable) return false;
+  return db.prepare(
+    "SELECT 1 FROM relevance_holdouts WHERE evaluation_id = ? AND held = 1"
+  ).get(evaluationId) !== undefined;
 }
 
 export function getEvaluationById(evaluationId: number): GradeableEvaluation | null {
@@ -1355,6 +1331,7 @@ function getReviewEvaluations({
     shadow_status: ShadowRelevanceRunRow["status"] | null;
     shadow_error_detail: string | null;
     shadow_created_at: string | null;
+    held: number;
   }
 
   const authorClassificationSelect = tableNames.has("author_classifications")
@@ -1426,7 +1403,10 @@ function getReviewEvaluations({
         pr.body AS resolved_respond_prompt,
         pc.body AS resolved_critique_prompt,
         ${authorClassificationSelect},
-        ${shadowSelect}
+        ${shadowSelect},
+        ${tableNames.has("relevance_holdouts")
+          ? "EXISTS (SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = e.id AND h.held = 1)"
+          : "0"} AS held
       FROM evaluations e
       JOIN posts p ON p.id = e.post_id
       ${authorClassificationJoin}
@@ -1565,6 +1545,7 @@ function getReviewEvaluations({
       },
       gate_violations: violationsByEvaluation.get(row.id) ?? [],
       grade: gradesByEvaluation.get(row.id) ?? null,
+      held: toBool(row.held),
       ...(hasShadowRelevance ? { shadow_relevance: shadowRelevance } : {}),
       relevance_presentation: presentations.get(row.id) ?? null,
     };
@@ -1572,29 +1553,49 @@ function getReviewEvaluations({
 }
 
 export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
-  const evaluations = getReviewEvaluations({
+  const db = getDb();
+  const hasClassifier = (
+    db.prepare("PRAGMA table_info(evaluations)").all() as Array<{ name: string }>
+  ).some((column) => column.name === "relevance_classifier");
+  return getReviewEvaluations({
     whereClause: "e.scan_id = ?",
     params: [scanId],
-    orderBy: "e.id DESC",
+    orderBy: hasClassifier
+      ? `CASE e.relevance_classifier
+          WHEN 'zeroshot' THEN 0 WHEN 'human' THEN 1 WHEN 'llm' THEN 2 ELSE 3 END,
+          CASE WHEN e.relevance_classifier = 'llm' THEN e.score END DESC,
+          e.id DESC`
+      : "e.score DESC, e.id DESC",
   });
-  return evaluations.sort((left, right) => {
-    const rank = (evaluation: ReviewEvaluation): number => {
-      if (evaluation.relevance_presentation?.classifier === "zeroshot") return 1;
-      if (evaluation.relevance_presentation?.classifier === "unknown") return 2;
-      return 0;
-    };
-    const leftRank = rank(left);
-    const rightRank = rank(right);
-    if (leftRank !== rightRank) return leftRank - rightRank;
-    if (leftRank !== 0) return right.id - left.id;
-    return right.score - left.score || right.id - left.id;
+}
+
+export function getZeroShotReviewCases(
+  filters: NegativeGradingFilters = {}
+): Paginated<ReviewEvaluation> {
+  const conditions = [
+    "e.relevance_classifier = 'zeroshot'",
+    "e.relevance_action = 'review'",
+    "e.scan_id IS NOT NULL",
+    "NOT EXISTS (SELECT 1 FROM grades g WHERE g.evaluation_id = e.id AND g.schema_version = 3 AND g.needs_regrade = 0)",
+    "NOT EXISTS (SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = e.id AND h.held = 1)",
+  ];
+  const params: Array<string | number> = [];
+  if (filters.before_id !== undefined) {
+    conditions.push("e.id < ?");
+    params.push(filters.before_id);
+  }
+  const limit = filters.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = getReviewEvaluations({
+    whereClause: conditions.join(" AND "), params, orderBy: "e.id DESC", limit: limit + 1,
   });
+  return { data: rows.slice(0, limit), has_more: rows.length > limit };
 }
 
 export function getNegativeGradingCases(
   filters: NegativeGradingFilters = {}
 ): Paginated<ReviewEvaluation> {
   const conditions = [
+    "e.relevance_classifier = 'llm'",
     "e.relevant = 0",
     "e.surface_status = 'not_relevant'",
     "e.scan_id IS NOT NULL",

@@ -38,6 +38,63 @@ function makeGrade(overrides: Partial<Grade> = {}): Grade {
 }
 
 describe("GradeControls", () => {
+  it("uses Respond and Drop payloads for a zero-shot review row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makeGrade({ action_judgment: "accept" }),
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const props = {
+      postId: 1,
+      scanId: 2,
+      evaluationId: 10,
+      predictedRelevant: false,
+      existingGrade: null,
+      draftComment: undefined,
+      relevanceClassifier: "zeroshot" as const,
+      relevanceAction: "review" as const,
+    };
+    const drop = render(React.createElement(GradeControls, props));
+    fireEvent.click(drop.getByRole("button", { name: "Drop" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/grades/10",
+      expect.objectContaining({
+        body: JSON.stringify({ relevance_judgment: "correct", action_judgment: "accept" }),
+      })
+    ));
+    drop.unmount();
+
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makeGrade({
+        relevance_judgment: "false_negative",
+        action_judgment: "fail",
+        dimensions: ["usefulness"],
+        failure_note: "This route needs a response",
+      }),
+    } as Response);
+    const respond = render(React.createElement(GradeControls, props));
+    fireEvent.click(respond.getByRole("button", { name: "Respond" }));
+    fireEvent.click(respond.getByRole("button", { name: "Usefulness" }));
+    fireEvent.change(respond.getByPlaceholderText("Failure note..."), {
+      target: { value: "This route needs a response" },
+    });
+    fireEvent.click(respond.getByRole("button", { name: "Save & generate draft" }));
+    expect(respond.getByText("generating response draft...")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/grades/10/promote",
+      expect.objectContaining({
+        body: JSON.stringify({
+          relevance_judgment: "false_negative",
+          action_judgment: "fail",
+          dimensions: ["usefulness"],
+          failure_note: "This route needs a response",
+        }),
+      })
+    ));
+  });
+
   it("keeps fail save disabled until selected causal details are complete", () => {
     const { getByRole, getByPlaceholderText, getByText, queryByText } = render(
       React.createElement(GradeControls, {

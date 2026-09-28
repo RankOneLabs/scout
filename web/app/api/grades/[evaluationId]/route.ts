@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getEvaluationById, getGradeByEvaluationId } from "@/lib/queries";
+import { getEvaluationById, getGradeByEvaluationId, isEvaluationHeld } from "@/lib/queries";
 import { callSidecar, parseObjectBody } from "@/lib/sidecar-bridge";
 import { validateGradeEnvelope } from "@/lib/grade-validation";
 import { parseIdParam } from "@/lib/route-utils";
@@ -23,6 +23,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const evaluation = getEvaluationById(evaluationId);
   if (evaluation === null) {
     return NextResponse.json({ errors: [`Evaluation ${evaluationId} not found`] }, { status: 404 });
+  }
+  if (isEvaluationHeld(evaluationId)) {
+    return NextResponse.json({ errors: ["held evaluations cannot be graded"] }, { status: 409 });
   }
 
   const parsed = await parseObjectBody(request);
