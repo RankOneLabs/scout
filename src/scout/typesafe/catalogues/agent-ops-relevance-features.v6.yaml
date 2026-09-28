@@ -1,0 +1,263 @@
+id: agent-ops-relevance-features-v6
+decide: agent_ops_route/v1
+description: >-
+  v5 plus one exclusion, `excl_benchmark`, from the round 5 misses: posts that
+  report benchmark or leaderboard scores and little else. Its text is
+  `excl_benchmark__scores` from catalogues/variants/round5-benchmark.yaml with
+  one sentence added to the true case: a link to the source does not change it.
+  Posts about eval quality or running benchmarks stay in. Everything else is v5.
+state:
+  post: [platform, channel, url, text]
+  parent_context_only: [author_name, text]
+  author: [name, handle]
+  project: [key, name, description]
+questions:
+  excl_non_english:
+    type: noul
+    instructions: Is the post's text mainly in a language other than English?
+    criteria:
+      true:
+        what: The post's text is mainly in a language other than English.
+        examples:
+          - Un hilo sobre cómo desplegamos agentes en producción
+          - 本番環境でエージェントを運用した話
+      false:
+        what: >-
+          English text, including English text quoting a foreign phrase, or English
+          text containing code, identifiers, or non-English product names.
+  excl_coding_assistant:
+    type: noul
+    instructions: >-
+      Is the post's actual subject personal productivity with a coding assistant?
+      Judge the subject, not a matching word.
+    criteria:
+      true:
+        what: >-
+          Personal productivity with a coding assistant — how well it writes,
+          completes or refactors code for the author at their keyboard.
+        examples:
+          - Copilot saved me two hours refactoring this module
+          - Comparing Cursor and Windsurf for day-to-day editing
+      false:
+        what: >-
+          Anything else, including operating an agent that runs unattended, even
+          when that agent writes code.
+  excl_hardware:
+    type: noul
+    instructions: >-
+      Is the post's actual subject chips, GPUs, devices or datacenter hardware?
+      Judge the subject, not a matching word.
+    criteria:
+      true:
+        what: Chips, GPUs, devices or datacenter hardware as the post's subject.
+        examples:
+          - The new accelerator ships with 192GB of memory
+          - Benchmarks across two GPU generations
+      false:
+        what: >-
+          Anything else, including the cost or capacity of running a workload,
+          which is an operations topic.
+  excl_funding_or_market:
+    type: noul
+    instructions: >-
+      Is the post's actual subject funding, valuations, acquisitions, share prices
+      or market size? Judge the subject, not a matching word.
+    criteria:
+      true:
+        what: >-
+          Funding rounds, valuations, acquisitions, share prices, or market-size
+          commentary.
+        examples:
+          - Series B closed at a $2B valuation
+          - The agent tooling market will be worth $40B by 2030
+      false:
+        what: >-
+          Anything else, including what it costs to run a workload, which is an
+          operations topic rather than market news.
+  excl_event_promo:
+    type: noul
+    instructions: Does the post exist to get people to attend, watch or sign up for an event?
+    criteria:
+      true:
+        what: >-
+          The post exists to get people to attend, watch or sign up: a conference,
+          meetup, webinar, livestream, workshop or course. Dates, tickets,
+          registration links, "join us", "come say hi". This holds even when the
+          event's topic is agent work.
+        examples:
+          - Join our webinar on agent reliability, Thursday 2pm
+          - Early-bird tickets close Friday
+          #: Borderline: the topic is on target, but the post only asks you to come.
+          - Giving a talk on how we eval our agents at the meetup Thursday, come say hi
+      false:
+        what: >-
+          Anything else, including a post that states what was said or found at an
+          event, such as a recap, slides or a recording with the claim in the post.
+          A passing mention of an event is not promotion either.
+  excl_hype:
+    type: noul
+    instructions: >-
+      Is the post selling something — a mood, a product, a company, a launch, a
+      trend — rather than saying something about how agent work is done?
+    criteria:
+      true:
+        what: >-
+          Promotion or cheerleading with nothing a practitioner could test against
+          their own work. Enthusiasm, slogans and predictions; product, model or
+          company announcements, feature lists and release notes; launch and
+          funding-style headlines; listicles and roundups; contest and award
+          congratulations; "the future is X" framing pieces; "X is so much better
+          than Y" with nothing behind it. Numbers and feature names do not rescue
+          it: a benchmark score in a launch post is still the launch.
+        examples:
+          - Agents are going to change everything
+          - "Relay 3.1 ships: parallel tool calls, a TypeScript client and SSO"
+          - The 7 best agent frameworks to try this year
+          - Northwind unveils autonomous agents for supply chain teams
+          - "Our new model hits 71% on the agent leaderboard — try it today"
+          - Why agent swarms are the next platform shift (read more)
+      false:
+        what: >-
+          The post says something about doing the work: a lesson, a tradeoff, a
+          failure and its cause, a measurement with what it shows, a criticism of a
+          practice, or a concrete question to other practitioners. Mentioning or
+          linking a product does not make it promotion if the post's own point is
+          about using, running or evaluating it. A plain link to a paper or writeup
+          with its title is not promotion either; it is a pointer.
+        examples:
+          - we swapped the vendor's orchestrator for a queue and our stuck runs dropped
+          - the new SDK's retry default will double-charge you on non-idempotent tools
+          - is anyone gating agent deploys on offline evals, or just vibes?
+          - "Measuring tool-call drift across model upgrades — arxiv.org/abs/0000.00000"
+  excl_benchmark:
+    type: noul
+    instructions: >-
+      Is the post mainly reporting benchmark or leaderboard scores (which model,
+      agent or product got what number) with nothing about how the result was
+      reached or what a practitioner should do with it?
+    criteria:
+      true:
+        what: >-
+          Score reports: X hit 65% on SWE-bench and Y hit 72%; a leaderboard move;
+          before-and-after numbers for a model, agent or add-on; a score offered as
+          proof of a new standard of reliability, capability or progress. A
+          description of the benchmark, a percentage change or "this is a big
+          deal" does not change it, and neither does a link to the source.
+        examples:
+          - Kestrel-2 scores 61% on SWE-bench Verified, up from 54%. The gap to the frontier is closing.
+          - "New #1 on the agent leaderboard: 78.4% on TerminalBench"
+          - "Ran our agent on 50 WebArena tasks: 31 solved alone, 36 with our planner plugin"
+          - "This is what a new standard for agent reliability looks like: 90% on tau-bench"
+      false:
+        what: >-
+          The post says something a practitioner could use beyond the number: how
+          the evaluation was set up and what it got wrong, a failure it exposed, a
+          tradeoff it shows, how to run or read the benchmark in your own work, or
+          a question about method. A paper link with its title is a pointer, not a
+          score report.
+        examples:
+          - our pass rate jumped 12 points when we fixed the grader timeout, not the agent. Check your harness before trusting deltas.
+          - we stopped gating releases on tau-bench pass@1; it hides flaky tool calls and pass^k catches them
+          - anyone found a way to run SWE-bench without the Docker images eating 200GB?
+  answerable_from_post:
+    type: noul
+    instructions: >-
+      Is there enough in the post's own words to write a pointed reply to, without
+      opening any link, image or parent? Judge the text that is there, not the
+      post's framing of itself as a signpost. Whether the topic is agent work is a
+      separate question; answer this one either way.
+    criteria:
+      true:
+        what: >-
+          The post's own words state a specific claim, number, mechanism, failure,
+          tradeoff or practice — or ask a concrete question — such that you could
+          write a pointed reply without opening any link, image or parent. A link
+          does not stop this: a post that states a claim and links to the writeup
+          counts, because the reply answers the claim and nobody expects the
+          responder to have read the article. The test is "is there enough here to
+          respond to without opening the link", not "is the bulk of the
+          information behind the link". An announcement whose description of the
+          thing it links lists real mechanisms, or a headline that states its
+          claim before promising the detail, counts.
+        examples:
+          - we cut stalled runs from 8% to 1% by lowering the tool timeout — writeup here
+          - new paper — agents degrade after about 40 turns of context
+          - how are people handling secret rotation for long-lived agent sessions?
+          - >-
+            found a great library for agent checkpointing — durable state,
+            replayable steps, and a review queue between runs. link below
+          - >-
+            Retries Make Idempotency Bugs Worse: agents that retry a half-applied
+            write corrupt state silently. three invariants that catch it
+      false:
+        what: >-
+          A post whose only specific content is the title of the thing it links to,
+          or a post with no claim at all — an announcement with no claim, a status
+          update, a bare agreement, a bare link.
+        examples:
+          - great writeup on agent reliability
+          - LangChain v2 is out now
+          - agreed, this matches what we saw
+  about_agent_work:
+    type: noul
+    instructions: >-
+      Would a reply to this post be about agent work — a reply someone working on
+      agents in production would post under it? Answer this whatever the post's
+      level of detail.
+    criteria:
+      true:
+        what: >-
+          The post is about building, running, evaluating or operating agents, so
+          the reply you would write under it is about agent work.
+        examples:
+          - we cut stalled runs from 8% to 1% by lowering the tool timeout — writeup here
+          - how are people handling secret rotation for long-lived agent sessions?
+      false:
+        what: >-
+          The post is about something else entirely. A post can be detailed,
+          correct and completely answerable and still be a thread about attention
+          variants or a job ad, and there is no reply about agent work to post
+          under it. It does not matter how much it says.
+        examples:
+          - a detailed thread on attention variants, with no agent work in it
+  points_somewhere:
+    type: noul
+    instructions: >-
+      Does the post point to something — an article, paper, repo or writeup —
+      about building, running or evaluating agent systems, that a practitioner
+      would want to open before replying?
+    criteria:
+      true:
+        what: >-
+          It points at material about agent systems themselves: research papers
+          presenting an agent system, benchmark or evaluation method; engineering
+          writeups and guides on reliability, observability, security, cost or
+          orchestration; an essay or thread on practice. The post may give only a
+          title or a question.
+        examples:
+          - "Measuring tool-call drift across model upgrades — arxiv.org/abs/0000.00000"
+          - How do teams checkpoint long-running agents? — example.dev/guide
+          - great writeup on agent reliability
+      false:
+        what: >-
+          Nothing to open, or what it points at is not material about agent
+          systems: a news story, a product or pricing page, a launch or model
+          release announcement, a capability headline, a directory listing, or
+          something where "agent" means something else (economics, sales, crypto).
+        examples:
+          - "BREAKING: data leak at a major code host — full story at news.example"
+          - "Try Beacon free for 14 days: beacon.example/pricing"
+          - a new open model tops the agent leaderboard — read the announcement
+          - day 3 of building my agent
+  needs_thread:
+    type: noul
+    instructions: Is the conversation above this post needed to judge it?
+    criteria:
+      true:
+        what: >-
+          The post is a reply whose meaning depends on the conversation above it,
+          and what is shown is not enough to judge it.
+      false:
+        what: >-
+          The post can be judged from what is shown, including a reply whose parent
+          is shown or whose own words stand alone.

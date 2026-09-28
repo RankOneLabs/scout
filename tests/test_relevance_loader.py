@@ -170,3 +170,14 @@ def test_refuses_missing_required_key(missing: str) -> None:
 
     with pytest.raises(CatalogueError, match=f"missing {missing}"):
         load_catalogue_bytes(_source(raw))
+
+
+def test_bundled_production_catalogue_loads_for_routed_relevance() -> None:
+    catalogue = load_catalogue(
+        Path("src/scout/typesafe/catalogues/agent-ops-relevance-features.v6.yaml")
+    )
+
+    assert catalogue.id == "agent-ops-relevance-features-v6"
+    assert catalogue.file_sha256 == (
+        "a3e5ae3ce947ad87d58d078d9e2ce8e00edc040d64d72a28a762fcfff978246f"
+    )
