@@ -37,7 +37,6 @@ from scout.dossiers.resolver import (
     DossierSummary,
     ResolutionMetadata,
 )
-from scout.grading.artifacts import ArtifactError
 from scout.grading.assistance_scope import read_assistance_bundle
 from scout.grading.assistance_store import load_corpus_snapshot
 from scout.grading.correction import ReplyCorrectionGrader, normalized_edit_distance
@@ -526,7 +525,7 @@ class TestRelevanceBatch:
         )
         assert len(loaded.value.cases) == 1
 
-    async def test_loader_refuses_unknown_frozen_relevance_model(
+    async def test_loader_accepts_custom_llm_alias_in_frozen_relevance_model(
         self,
         state,
         tracer,
@@ -535,18 +534,19 @@ class TestRelevanceBatch:
         tmp_path,
     ) -> None:
         task = await _seed_relevance_task(state, tracer, feedback, monkeypatch, tmp_path)
-        rewritten, _evaluation_id = _rewrite_frozen_relevance_model(
+        rewritten, evaluation_id = _rewrite_frozen_relevance_model(
             state, task, monkeypatch, "opaque-historical-alias"
         )
 
         loaded = load_relevance_population(state, rewritten)
 
-        assert isinstance(loaded, Err)
-        assert isinstance(loaded.error, ArtifactError)
-        assert loaded.error.operation == "relevance_population"
-        assert loaded.error.detail == (
-            "Unknown relevance classifier identity 'opaque-historical-alias' in frozen phase"
+        assert isinstance(loaded, Ok)
+        custom_case = next(
+            case for case in loaded.value.cases
+            if case.target.evaluation_id == evaluation_id
         )
+        assert custom_case.phase_run.model == "opaque-historical-alias"
+        assert loaded.value.exclusions == ()
 
     async def test_verified_critic_rejection_preserves_human_target_and_phase_baseline(
         self, state, tracer, feedback, monkeypatch, tmp_path,
