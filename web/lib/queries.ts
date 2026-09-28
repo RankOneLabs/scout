@@ -31,6 +31,7 @@ import {
   type RouteAction,
 } from "@/types/schema";
 import { getGradeRevisionMetaBatch } from "@/lib/feedback-queries";
+import { HUMAN_GRADE_SCHEMA_VERSION } from "@/lib/feedback-grade-queries";
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -1572,13 +1573,21 @@ export function getEvaluationsByScan(scanId: number): ReviewEvaluation[] {
 export function getZeroShotReviewCases(
   filters: NegativeGradingFilters = {}
 ): Paginated<ReviewEvaluation> {
+  const db = getDb();
+  const hasHoldouts = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'relevance_holdouts'"
+  ).get() !== undefined;
   const conditions = [
     "e.relevance_classifier = 'zeroshot'",
     "e.relevance_action = 'review'",
     "e.scan_id IS NOT NULL",
-    "NOT EXISTS (SELECT 1 FROM grades g WHERE g.evaluation_id = e.id AND g.schema_version = 3 AND g.needs_regrade = 0)",
-    "NOT EXISTS (SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = e.id AND h.held = 1)",
+    `NOT EXISTS (SELECT 1 FROM grades g WHERE g.evaluation_id = e.id AND g.schema_version = ${HUMAN_GRADE_SCHEMA_VERSION} AND g.needs_regrade = 0)`,
   ];
+  if (hasHoldouts) {
+    conditions.push(
+      "NOT EXISTS (SELECT 1 FROM relevance_holdouts h WHERE h.evaluation_id = e.id AND h.held = 1)"
+    );
+  }
   const params: Array<string | number> = [];
   if (filters.before_id !== undefined) {
     conditions.push("e.id < ?");

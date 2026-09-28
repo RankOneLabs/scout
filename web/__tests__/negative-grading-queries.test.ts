@@ -225,4 +225,20 @@ describe("zero-shot review grading queue", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ data: [{ id: 9 }], has_more: false });
   });
+
+  it("still reads review cases when the holdout table is absent", async () => {
+    const db = new Database(dbPath);
+    db.exec("DROP TABLE relevance_holdouts");
+    try {
+      const { getZeroShotReviewCases } = await import("@/lib/queries");
+      expect(getZeroShotReviewCases({ limit: 10 }).data.map((row) => row.id)).toEqual([10, 9]);
+    } finally {
+      db.exec(`CREATE TABLE relevance_holdouts (
+        id INTEGER PRIMARY KEY, evaluation_id INTEGER NOT NULL UNIQUE,
+        production_action TEXT NOT NULL, held INTEGER NOT NULL
+      )`);
+      db.prepare("INSERT INTO relevance_holdouts VALUES (1, 10, 'review', 1)").run();
+      db.close();
+    }
+  });
 });
