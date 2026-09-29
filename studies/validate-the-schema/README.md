@@ -1,14 +1,12 @@
 # Validate the schema, not just the model
 
-Scout finds social posts about AI agents and drafts replies to them. Before it drafts
-anything, it classifies each post for reply relevance: whether the post is worth replying to.
-That classification decides whether Scout responds, flags the post for review, or drops it.
-To measure how well it makes that call, I need a set of correct answers, and I wrote those
-answers myself. The labels on this page are my attempts to pin down what reply relevance
-means.
+Scout finds social posts about AI agents and drafts replies to them. Its relevance decision
+determines whether a post gets a response, goes to review or is dropped. Evaluating that
+decision required a reference set with human labels, so I built one from Scout's production
+feed.
 
-I didn't know the right labels up front. Before scoring the model, I tested my labels and my
-own consistency as a grader. Then I used the revised rubric to compare classifiers on fresh
+The initial label schema was provisional, so I tested both the labels and my own repeatability
+before comparing models. I then used the revised rubric to compare classifiers on fresh
 posts, refine a zero-shot classifier built with JEV, and integrate it into Scout.
 
 *Updated September 29, 2026.*
@@ -111,16 +109,16 @@ independently scored features and applying a fixed policy over those scores.
 
 The features came from the grading failures above. Separating exclusion from substance
 helped, and link handling needed an explicit rule. I also separated missing thread context
-from a post that simply lacked substance. The questions ask:
+from a post that simply lacked substance. The resulting features were:
 
-- Does an exclusion apply?
-- Does the post need its thread to make sense?
-- Is there enough in the post itself to answer?
-- Is it about agent work?
-- Does it point to useful material elsewhere?
+- Exclusion categories.
+- Missing thread context.
+- Enough substance in the post itself to answer.
+- Relevance to agent work.
+- Pointers to useful material elsewhere.
 
-The policy returns respond, review or drop, sending close calls to review. I fixed the
-thresholds before evaluation and evaluated the classifier and decision policy as one system.
+The policy returns respond, review or drop, sending close calls to review. Thresholds were
+fixed before evaluation; the results below treat the classifier and policy as one system.
 
 ## Comparing the models on fresh posts
 
@@ -157,8 +155,8 @@ still needs independent grading and production holdouts.
 
 One remaining error pattern was benchmark posts that reported scores without enough method
 or analysis to support a reply. I tested a narrow exclusion for those score reports and a
-broader benchmark exclusion on the 190 scored posts. The narrow rule had better keep/drop
-agreement and became the additional v6 feature.
+broader benchmark exclusion on the 190 scored posts. The narrow rule outperformed the
+broader rule on keep/drop agreement and became the additional v6 feature.
 
 Replaying the v5 scores with that feature corrected three actions and introduced no
 additional drops of posts I wanted kept. The seven existing false drops remained. This was
