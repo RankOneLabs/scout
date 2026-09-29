@@ -1,19 +1,20 @@
 # Validate the schema, not just the model
 
-Scout finds social posts about AI agents and drafts replies to them. Before it drafts
-anything, it classifies each post for reply relevance: whether the post is worth replying to.
-That classification decides whether Scout responds, flags the post for review, or drops it.
-To measure how well it makes that call, I need a set of correct answers, and I wrote those
-answers myself. The labels on this page are my attempts to pin down what reply relevance
-means.
+Scout finds social posts about AI agents and drafts replies to them. Its relevance decision
+determines whether a post gets a response, goes to review or is dropped. Evaluating that
+decision required a reference set with human labels, so I built one from Scout's production
+feed.
 
-I didn't know the right labels up front. Before scoring the model, I tested my labels and my
-own consistency as a grader.
+The initial label schema was provisional, so I tested both the labels and my own repeatability
+before comparing models. I then used the revised rubric to compare classifiers on fresh
+posts, refine a zero-shot classifier built with JEV, and integrate it into Scout.
+
+*Updated September 29, 2026.*
 
 ## What I did
 
 I took 79 real posts from Scout's production feed and graded them over three rounds. Each
-round tested the labels, and what it found shaped the next one.
+round tested the label schema and informed the next revision.
 
 1. **Old labels, graded twice.** I graded 30 of the posts with my first label set, then
    graded them again later, unmarked and in a different order among all 79.
@@ -24,7 +25,7 @@ round tested the labels, and what it found shaped the next one.
 3. **New labels, graded twice.** I graded all 79 again with the same new labels, so the only
    thing that could change was me. My bar was 72 of 79 matching decisions (91%).
 
-## Results
+## Results from testing the labels
 
 ![How often my labels matched across three grading rounds](chart.svg)
 
@@ -43,7 +44,7 @@ round tested the labels, and what it found shaped the next one.
 | 3 | Substance (not excluded) | 44/51 | 86% |
 | 3 | Final action | 68/79 | 86% |
 
-**I still didn't agree with myself enough.** In round 3, 64 of 79 decisions matched (81%),
+**Repeat agreement remained below the target.** In round 3, 64 of 79 decisions matched (81%),
 short of my 72 bar. 15 decisions changed, and 11 of those changed what Scout would actually
 do with the post. The strict 64 is the result. For context, six of the changes were substance
 calls where my new note named my earlier answer as the close runner-up. Counting those six as
@@ -51,7 +52,7 @@ matches gives 70 of 79 (89%), still two short of the bar.
 
 ## The disagreements were the useful part
 
-Reading the disagreements showed why each label was unstable and what to change.
+The disagreement cases exposed which distinctions were unstable and why.
 
 **The content band was asking two questions.** In round 1, exclusion held up (27 of 30),
 but the content band matched only 19 of 30 (63%). Six of the 11 misses were two rungs
@@ -69,9 +70,9 @@ from those answers in code.
 
 Round 2 showed why the steps help. The direct decision matched the computed one only 59% of
 the time. Of 12 posts that moved from review to respond, I had already marked 7 as
-substantive the first time. What I hadn't made explicit was that enough substance in the
-post itself was sufficient to respond, even when it included a link. The new labels made
-that rule explicit, and I stopped grading the decision directly.
+substantive the first time. The original schema had no explicit rule that enough substance
+in the post warranted a response, even with a link. The revision encoded that rule and
+replaced direct action grading with a computed decision.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
@@ -90,23 +91,95 @@ An LLM read the notes for me and sorted each changed decision by whether a note 
 and which answer the note named as runner-up. Keeping those notes let me use an LLM to analyze
 distinctions that the class labels alone would have lost.
 
-Grading by hand early is how I found out which labels were broken.
+Manual grading exposed the schema failures before model comparison.
 
-## What changed in how I grade
+## Revising the decision schema
 
 - Each label asks one question: exclusion first, then substance. Respond, review or drop is
   computed from them in code instead of graded directly, and the content band is gone.
-- Model results against these labels will be reported next to my own agreement on the same
-  measure: 81% for the complete decision, 86% for the final action. My labels aren't yet a
-  stable ground truth.
+- My repeat agreement was 81% for the complete decision and 86% for the final action.
+  My labels aren't yet a stable ground truth. Those measurements used earlier posts and
+  definitions; they provide context for the model experiments, not a performance ceiling.
 
-## Next steps
+## Turning the rubric into a classifier
 
-- **Fix exclusions first.** They account for every unexplained change that altered the
-  action. Tighten the category definitions and require a note on every exclusion call.
-- **Add a "need the thread" option.** On three posts, my notes said I couldn't judge
-  without the surrounding conversation.
-- **Retest** after those changes.
-- **Bring in a second grader** on a sample. Retesting myself only shows whether I'm
-  consistent.
-- **Then score the model**, with the grader's agreement shown next to the result.
+JEV is a newer zero-shot classifier that returns probabilities over bounded answer choices.
+I used it as the classification layer, decomposing Scout's relevance decision into
+independently scored features and applying a fixed policy over those scores.
+
+The feature set came directly from the grading failures above. Separating exclusion from
+substance improved consistency, and link handling needed an explicit rule. I also separated
+missing thread context from a post that simply lacked substance. The resulting features were:
+
+- Exclusion categories.
+- Missing thread context.
+- Enough substance in the post itself to answer.
+- Relevance to agent work.
+- Pointers to useful material elsewhere.
+
+The policy returns respond, review or drop, sending close calls to review. Thresholds were
+fixed before evaluation; the results below treat the classifier and policy as one system.
+
+## Comparing the models on fresh posts
+
+I graded two fresh batches blind, with production decisions and model answers hidden:
+90 posts in round 4 and 100 in round 5, drawn from agent-ops and agent-evals.
+
+I compared three paths: Scout's existing relevance prompt, Gemini 2.5 Flash answering the
+new feature questions, and JEV answering the same questions. Because production had no
+review state, the shared comparison is **keep or drop**, with respond and review both
+counting as keep. Exact action agreement is reported for the arms using feature questions.
+
+| Round | Classifier | Keep or drop agreement | Exact action agreement |
+| --- | --- | ---: | ---: |
+| 4 | Production | 51/90 (57%) | — |
+| 4 | Gemini, v4 features | 62/90 (69%) | 51/90 (57%) |
+| 4 | JEV, v4 features | 57/90 (63%) | 52/90 (58%) |
+| 5 | Production | 64/100 (64%) | — |
+| 5 | Gemini, v5 features | 58/100 (58%) | 52/100 (52%) |
+| 5 | JEV, v5 features | 77/100 (77%) | 71/100 (71%) |
+
+In round 4, Gemini had higher keep/drop agreement than JEV v4. The misses exposed two
+problems in the feature definitions: the hype exclusion was too narrow, and the pointer
+question treated product and news links as useful material. I revised both for v5 and
+tested the changes on round 4 as development data.
+
+I froze v5 before grading round 5. On 100 fresh posts, JEV v5 matched my keep/drop labels on
+77%, versus 64% for production. Exact action agreement was 71%.
+
+JEV v5 dropped 3 of the 47 posts I wanted kept and kept 20 of the 53 I wanted dropped.
+These results are against one reviewer's rubric on two recent batches; broader validity
+still needs independent grading and production holdouts.
+
+## The benchmark experiment and v6
+
+One remaining error pattern was benchmark posts that reported scores without enough method
+or analysis to support a reply. I tested a narrow exclusion for those score reports and a
+broader benchmark exclusion on the 190 scored posts. The narrow rule matched 148/190
+keep/drop labels versus 147/190 for the broader rule, a gain of one match. It became the
+additional v6 feature.
+
+Replaying the v5 scores with that feature corrected three actions and introduced no
+additional drops of posts I wanted kept. The seven existing false drops remained. This was
+development on previously inspected data; the final v6 wording also includes one
+clarification about source links that has not been separately measured.
+
+## Bringing v6 into Scout
+
+Scout now uses v6 for agent-ops and agent-evals. Respond proceeds to drafting, review pauses
+for a human decision, and drop stops the post. Scout records the feature scores and decision
+path separately from any later human decision. Other projects remain on the existing LLM
+relevance path.
+
+I also added configurable random holdouts, including dropped posts, so future production
+runs can be graded blind. The results above are still offline experiments; the holdout
+mechanism has not yet produced a production result.
+
+## What comes next
+
+- Measure v6 on fresh production holdouts, with the catalogue frozen before grading.
+- Retest the current human rubric and bring in a second grader on a sample.
+- Inspect the remaining false drops and unwanted keeps, preserving notes on close calls.
+
+The primary optimization target was the decision decomposition: clearer features, an explicit
+policy, and model selection on fresh posts.
