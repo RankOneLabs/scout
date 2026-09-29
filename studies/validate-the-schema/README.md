@@ -14,7 +14,7 @@ posts, refine a zero-shot classifier built with JEV, and integrate it into Scout
 ## What I did
 
 I took 79 real posts from Scout's production feed and graded them over three rounds. Each
-round tested the labels, and what it found shaped the next one.
+round tested the label schema and informed the next revision.
 
 1. **Old labels, graded twice.** I graded 30 of the posts with my first label set, then
    graded them again later, unmarked and in a different order among all 79.
@@ -52,7 +52,7 @@ matches gives 70 of 79 (89%), still two short of the bar.
 
 ## The disagreements were the useful part
 
-Reading the disagreements showed why each label was unstable and what to change.
+The disagreement cases exposed which distinctions were unstable and why.
 
 **The content band was asking two questions.** In round 1, exclusion held up (27 of 30),
 but the content band matched only 19 of 30 (63%). Six of the 11 misses were two rungs
@@ -108,8 +108,8 @@ I used it as the classification layer, decomposing Scout's relevance decision in
 independently scored features and applying a fixed policy over those scores.
 
 The feature set came directly from the grading failures above. Separating exclusion from
-substance helped, and link handling needed an explicit rule. I also separated missing thread
-context from a post that simply lacked substance. The resulting features were:
+substance improved consistency, and link handling needed an explicit rule. I also separated
+missing thread context from a post that simply lacked substance. The resulting features were:
 
 - Exclusion categories.
 - Missing thread context.
@@ -155,8 +155,9 @@ still needs independent grading and production holdouts.
 
 One remaining error pattern was benchmark posts that reported scores without enough method
 or analysis to support a reply. I tested a narrow exclusion for those score reports and a
-broader benchmark exclusion on the 190 scored posts. The narrow rule outperformed the
-broader rule on keep/drop agreement and became the additional v6 feature.
+broader benchmark exclusion on the 190 scored posts. The narrow rule matched 148/190
+keep/drop labels versus 147/190 for the broader rule, a gain of one match. It became the
+additional v6 feature.
 
 Replaying the v5 scores with that feature corrected three actions and introduced no
 additional drops of posts I wanted kept. The seven existing false drops remained. This was
@@ -180,5 +181,5 @@ mechanism has not yet produced a production result.
 - Retest the current human rubric and bring in a second grader on a sample.
 - Inspect the remaining false drops and unwanted keeps, preserving notes on close calls.
 
-The useful optimization target was the decision decomposition: clearer features, an explicit
+The primary optimization target was the decision decomposition: clearer features, an explicit
 policy, and model selection on fresh posts.
