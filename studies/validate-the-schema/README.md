@@ -44,7 +44,7 @@ round tested the labels, and what it found shaped the next one.
 | 3 | Substance (not excluded) | 44/51 | 86% |
 | 3 | Final action | 68/79 | 86% |
 
-**I still didn't agree with myself enough.** In round 3, 64 of 79 decisions matched (81%),
+**Repeat agreement remained below the target.** In round 3, 64 of 79 decisions matched (81%),
 short of my 72 bar. 15 decisions changed, and 11 of those changed what Scout would actually
 do with the post. The strict 64 is the result. For context, six of the changes were substance
 calls where my new note named my earlier answer as the close runner-up. Counting those six as
@@ -70,9 +70,9 @@ from those answers in code.
 
 Round 2 showed why the steps help. The direct decision matched the computed one only 59% of
 the time. Of 12 posts that moved from review to respond, I had already marked 7 as
-substantive the first time. What I hadn't made explicit was that enough substance in the
-post itself was sufficient to respond, even when it included a link. The new labels made
-that rule explicit, and I stopped grading the decision directly.
+substantive the first time. The original schema had no explicit rule that enough substance
+in the post warranted a response, even with a link. The revision encoded that rule and
+replaced direct action grading with a computed decision.
 
 **Definitions drift while you grade.** 13 of the 18 changed exclusion calls in round 2
 moved the same way, toward excluding. My working meaning of "substance" shifted too, from
@@ -91,9 +91,9 @@ An LLM read the notes for me and sorted each changed decision by whether a note 
 and which answer the note named as runner-up. Keeping those notes let me use an LLM to analyze
 distinctions that the class labels alone would have lost.
 
-Grading by hand early is how I found out which labels were broken.
+Manual grading exposed the schema failures before model comparison.
 
-## What changed in how I grade
+## Revising the decision schema
 
 - Each label asks one question: exclusion first, then substance. Respond, review or drop is
   computed from them in code instead of graded directly, and the content band is gone.
@@ -107,9 +107,9 @@ JEV is a newer zero-shot classifier that returns probabilities over bounded answ
 I used it as the classification layer, decomposing Scout's relevance decision into
 independently scored features and applying a fixed policy over those scores.
 
-The features came from the grading failures above. Separating exclusion from substance
-helped, and link handling needed an explicit rule. I also separated missing thread context
-from a post that simply lacked substance. The resulting features were:
+The feature set came directly from the grading failures above. Separating exclusion from
+substance helped, and link handling needed an explicit rule. I also separated missing thread
+context from a post that simply lacked substance. The resulting features were:
 
 - Exclusion categories.
 - Missing thread context.
@@ -139,7 +139,7 @@ counting as keep. Exact action agreement is reported for the arms using feature 
 | 5 | Gemini, v5 features | 58/100 (58%) | 52/100 (52%) |
 | 5 | JEV, v5 features | 77/100 (77%) | 71/100 (71%) |
 
-JEV v4 did not lead round 4; Gemini had better keep/drop agreement. The misses exposed two
+In round 4, Gemini had higher keep/drop agreement than JEV v4. The misses exposed two
 problems in the feature definitions: the hype exclusion was too narrow, and the pointer
 question treated product and news links as useful material. I revised both for v5 and
 tested the changes on round 4 as development data.
