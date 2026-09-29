@@ -11,8 +11,7 @@ I didn't know the right labels up front. Before scoring the model, I tested my l
 own consistency as a grader. Then I used the revised rubric to compare classifiers on fresh
 posts, refine a zero-shot classifier built with JEV, and integrate it into Scout.
 
-*Updated September 29, 2026. The [supporting data](data/) includes the earlier label
-comparisons and the new model experiments.*
+*Updated September 29, 2026.*
 
 ## What I did
 
@@ -139,17 +138,14 @@ counting as keep. Exact action agreement is reported for the arms using feature 
 | 4 | Production | 51/90 (57%) | — |
 | 4 | Gemini, v4 features | 62/90 (69%) | 51/90 (57%) |
 | 4 | JEV, v4 features | 57/90 (63%) | 52/90 (58%) |
-| 4 | JEV, v5 features, after iteration | 68/90 (76%) | 62/90 (69%) |
 | 5 | Production | 64/100 (64%) | — |
-| 5 | Gemini, v4 features | 58/100 (58%) | 53/100 (53%) |
 | 5 | Gemini, v5 features | 58/100 (58%) | 52/100 (52%) |
-| 5 | JEV, v4 features | 59/100 (59%) | 55/100 (55%) |
 | 5 | JEV, v5 features | 77/100 (77%) | 71/100 (71%) |
 
 JEV v4 did not lead round 4; Gemini had better keep/drop agreement. The misses exposed two
 problems in the feature definitions: the hype exclusion was too narrow, and the pointer
-question treated product and news links as useful material. I revised both for v5. Its
-round-4 score is development performance on cases I had already seen.
+question treated product and news links as useful material. I revised both for v5 and
+tested the changes on round 4 as development data.
 
 **I froze v5 before round 5.** On 100 fresh posts, JEV v5 matched my keep/drop labels on
 77%, versus 64% for production. Exact action agreement was 71%.
@@ -193,9 +189,3 @@ experiments; the holdout mechanism has not yet produced a new production result.
 - Inspect the remaining false drops and unwanted keeps, preserving notes on close calls.
 
 The main lesson was to stabilize the decision schema before optimizing the classifier.
-
-## Supporting data
-
-The [supporting data](data/) contains label comparisons, feature scores, per-post decisions,
-aggregate results and verification instructions. It also carries the sampling details,
-thresholds and benchmark replay method.
