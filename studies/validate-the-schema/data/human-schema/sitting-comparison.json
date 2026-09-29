@@ -1,0 +1,750 @@
+{
+  "definitions": {
+    "population": "The same 79 evaluation_id values in the September 19 census and September 20 substance sitting.",
+    "sept19_band_values": [
+      "out_of_scope",
+      "building",
+      "pointer",
+      "substantive"
+    ],
+    "exclusion_values": [
+      "coding_assistant",
+      "event_promo",
+      "funding_or_market",
+      "hardware",
+      "hype",
+      "non_english",
+      "none"
+    ],
+    "sept19_disposition_values": [
+      "drop",
+      "respond",
+      "review"
+    ],
+    "sept20_substance_values": [
+      "in_post",
+      "pointer",
+      "none"
+    ],
+    "unasked_substance": null,
+    "route_mapping": {
+      "excluded": "drop",
+      "in_post": "respond",
+      "pointer": "review",
+      "none": "drop"
+    }
+  },
+  "rows": [
+    {
+      "evaluation_id": 45433,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 45439,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 45443,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 46102,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "coding_assistant",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 46865,
+      "sept19_exclusion": "hype",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "none",
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 46877,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47054,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47067,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47090,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47133,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47138,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47151,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47159,
+      "sept19_exclusion": "none",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47200,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47204,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47209,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47212,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47263,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47267,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47281,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47301,
+      "sept19_exclusion": "hype",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47319,
+      "sept19_exclusion": "non_english",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "non_english",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47320,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47357,
+      "sept19_exclusion": "non_english",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "non_english",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47386,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47390,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47392,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47395,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47396,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47397,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "none",
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47399,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47403,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47406,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47411,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47416,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47432,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47447,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47458,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47461,
+      "sept19_exclusion": "non_english",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "non_english",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47477,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "none",
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47481,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47554,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47559,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 47629,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47726,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 47737,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 47753,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48124,
+      "sept19_exclusion": "none",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "coding_assistant",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48293,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48303,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48349,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 48355,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 48396,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48718,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "coding_assistant",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48720,
+      "sept19_exclusion": "hype",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48741,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "none",
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48742,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 48765,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48782,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48789,
+      "sept19_exclusion": "coding_assistant",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48793,
+      "sept19_exclusion": "hype",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48807,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48820,
+      "sept19_exclusion": "hardware",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hardware",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48844,
+      "sept19_exclusion": "none",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "none",
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48856,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48859,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48860,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48866,
+      "sept19_exclusion": "none",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48891,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48905,
+      "sept19_exclusion": "event_promo",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48917,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48921,
+      "sept19_exclusion": "non_english",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "non_english",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48922,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "respond",
+      "sept20_exclusion": "none",
+      "sept20_substance": "in_post",
+      "derived_route": "respond"
+    },
+    {
+      "evaluation_id": 48927,
+      "sept19_exclusion": "hype",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "funding_or_market",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48931,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48934,
+      "sept19_exclusion": "event_promo",
+      "sept19_band": "out_of_scope",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "event_promo",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48936,
+      "sept19_exclusion": "hype",
+      "sept19_band": "building",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "hype",
+      "sept20_substance": null,
+      "derived_route": "drop"
+    },
+    {
+      "evaluation_id": 48944,
+      "sept19_exclusion": "none",
+      "sept19_band": "pointer",
+      "sept19_disposition": "drop",
+      "sept20_exclusion": "none",
+      "sept20_substance": "pointer",
+      "derived_route": "review"
+    },
+    {
+      "evaluation_id": 48954,
+      "sept19_exclusion": "none",
+      "sept19_band": "substantive",
+      "sept19_disposition": "review",
+      "sept20_exclusion": "none",
+      "sept20_substance": "none",
+      "derived_route": "drop"
+    }
+  ]
+}

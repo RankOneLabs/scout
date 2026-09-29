@@ -1,0 +1,94 @@
+{
+  "format": "scout.relevance-study-provenance/v1",
+  "derived_on": "2026-09-29",
+  "source_receipts_commit": "7c70c0793f4745428f567e75439fc731bb06782a",
+  "route_source_commit": "365f832af6e7f4fc309cc72546766fcbfe070eb8",
+  "route_source": "src/scout/typesafe/routes.py",
+  "route_source_sha256": "5851f73b94894e86372b712c0515fc6843c29a110de989690735598f8c87aa42",
+  "thresholds": {
+    "features": 0.5,
+    "review_margin": 0.1
+  },
+  "sources": [
+    {
+      "role": "human-schema/preregistration.json",
+      "sha256": "c253841f8b66097a5932505d5a44add2ba1cf3cfb410b741674e5f392393b9c3"
+    },
+    {
+      "role": "human-schema/sitting-comparison.json",
+      "sha256": "73796a63970f25def9073fe115c8095629d0156d870146c51d571e67668fb71e"
+    },
+    {
+      "role": "human-schema/grading-round-comparison.json",
+      "sha256": "97608e2ea6c18368e1d3831683c77e3905420b5e0efe824f0d327f53f92494c6"
+    },
+    {
+      "role": "human-schema/summary.json",
+      "sha256": "87dcb2f3e02d468552290e3ac2618aae8fd63257ddedd687447f9f2050d92b12"
+    },
+    {
+      "role": "round1/first-report",
+      "sha256": "0b8c28953e51d476ba0f49a0bbeef47fcb278b1e3f50351e796435fd0358e679"
+    },
+    {
+      "role": "round1/second-report",
+      "sha256": "c9d3a81d1b4e3ccfdee411c2bd2ff6c0b45e60eff705e3955664f02fc22b4034"
+    },
+    {
+      "role": "round4/arms.json",
+      "sha256": "9ac6479fad9562fb79c3aaa1fc01433f40cc4529da58da986a61ada7cc6fb90b"
+    },
+    {
+      "role": "round4/arms-v5.json",
+      "sha256": "9b0dd5baa063f323ce3817a8e4beb71ca36f70ad9ce4b4e6108b1feff8796fbc"
+    },
+    {
+      "role": "round4/benchmark-answers",
+      "sha256": "15b7e8cb511f2661a29e7d8f2793cf265826a621db54478de8b88c9587410491"
+    },
+    {
+      "role": "round4/packet/packet.json",
+      "sha256": "f76cacef0c7b6fbd0b0e72a456fbaf7b3c1d379e3daf52c61c99bfa5a668cdd0"
+    },
+    {
+      "role": "round4/packet/labels.json",
+      "sha256": "187b06599a08f6590ee93d70a4a0bc69dc4717e752077e4f31d0c9f3f79fbebf"
+    },
+    {
+      "role": "round4/packet/answer-key-private.json",
+      "sha256": "92ecbea4dec4c6707349ddd6b68b7314adbf8ef2feb61bc4b6cc4b659b13973e"
+    },
+    {
+      "role": "round4/packet/PLAN.md",
+      "sha256": "02c0bd3afca36d720ba3de1e68c2414cf41084ed9665c87219abf454928ddb2b"
+    },
+    {
+      "role": "round5/arms-v4.json",
+      "sha256": "c2ed1fae730e3302a02aeebeb2c95d3db4ac6035dfc2953cde66b390b27f9671"
+    },
+    {
+      "role": "round5/arms-v5.json",
+      "sha256": "c0221a86ba33e07e3f6977d9f1502c2a3d60aa5da02ec39fc785636d38284fce"
+    },
+    {
+      "role": "round5/benchmark-answers",
+      "sha256": "d89aea5e797af283946d9a66a1476a3d7520a644d3afa9b347a9b3f75d9a6301"
+    },
+    {
+      "role": "round5/packet/packet.json",
+      "sha256": "82c4c8bd5a266a56e4d7315493b301b0d02d194a5fa206ae941cecfe96749d81"
+    },
+    {
+      "role": "round5/packet/labels.json",
+      "sha256": "30883170e63b3581f9cb26c983c914be5329e79e7950b8ced3e75fbda1c0f490"
+    },
+    {
+      "role": "round5/packet/answer-key-private.json",
+      "sha256": "036ba29daef783e0551f95252d83e05c78cda07b84907084e8b3261d68cfc66e"
+    },
+    {
+      "role": "round5/packet/PLAN.md",
+      "sha256": "03e4febe278e147ac36af08e1e15da88618d3a4d994255bfdefa5d176a5b4815"
+    }
+  ]
+}
