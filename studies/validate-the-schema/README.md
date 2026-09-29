@@ -105,8 +105,9 @@ Grading by hand early is how I found out which labels were broken.
 
 ## Turning the rubric into a classifier
 
-I used JEV as the zero-shot classification layer and decomposed the relevance decision
-into independently scored features. Code applies a fixed decision policy over those scores.
+JEV is a newer zero-shot classifier that returns probabilities over bounded answer choices.
+I used it as the classification layer, decomposing Scout's relevance decision into
+independently scored features and applying a fixed policy over those scores.
 
 The features came from the grading failures above. Separating exclusion from substance
 helped, and link handling needed an explicit rule. I also separated missing thread context
