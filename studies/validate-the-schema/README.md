@@ -105,10 +105,8 @@ Grading by hand early is how I found out which labels were broken.
 
 ## Turning the rubric into a classifier
 
-JEV is a zero-shot classifier: give it a classification question and a bounded answer set,
-and it returns a probability for each answer. I turned the revised rubric into a set of
-features, each answering one question independently. Code combines those answers into the
-final action.
+I used JEV as the zero-shot classification layer and decomposed the relevance decision
+into independently scored features. Code applies a fixed decision policy over those scores.
 
 The features came from the grading failures above. Separating exclusion from substance
 helped, and link handling needed an explicit rule. I also separated missing thread context
@@ -120,9 +118,8 @@ from a post that simply lacked substance. The questions ask:
 - Is it about agent work?
 - Does it point to useful material elsewhere?
 
-A fixed rule turns those scores into respond, review or drop; close calls go to review.
-I fixed the thresholds before evaluation rather than fitting them to the labels. So the
-results below measure the classifier and decision rule as one system.
+The policy returns respond, review or drop, sending close calls to review. I fixed the
+thresholds before evaluation and evaluated the classifier and decision policy as one system.
 
 ## Comparing the models on fresh posts
 
@@ -151,9 +148,9 @@ tested the changes on round 4 as development data.
 I froze v5 before grading round 5. On 100 fresh posts, JEV v5 matched my keep/drop labels on
 77%, versus 64% for production. Exact action agreement was 71%.
 
-The errors still mattered. JEV v5 dropped 3 of the 47 posts I wanted kept and kept 20 of the
-53 I wanted dropped. This is agreement with one reviewer's labels on two recent batches,
-not proof that the labels are correct or that the result generalizes to every Scout project.
+JEV v5 dropped 3 of the 47 posts I wanted kept and kept 20 of the 53 I wanted dropped.
+These results are against one reviewer's rubric on two recent batches; broader validity
+still needs independent grading and production holdouts.
 
 ## The benchmark experiment and v6
 
@@ -184,4 +181,5 @@ mechanism has not yet produced a production result.
 - Retest the current human rubric and bring in a second grader on a sample.
 - Inspect the remaining false drops and unwanted keeps, preserving notes on close calls.
 
-The classifier got better after the grading failures made the decision schema more explicit.
+The useful optimization target was the decision decomposition: clearer features, an explicit
+policy, and model selection on fresh posts.
