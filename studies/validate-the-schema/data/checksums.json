@@ -1,0 +1,14 @@
+{
+  "README.md": "02fea13608a8c7970c6f5d766e9a7705a5b0292028dbde8dd074e1b591a64ee9",
+  "decisions.csv": "c986a5d7f1f9e64f3fba97b57fb0f93d52d312fb99836a0e4d83af7e6efefb75",
+  "human-schema/grading-round-comparison.json": "97608e2ea6c18368e1d3831683c77e3905420b5e0efe824f0d327f53f92494c6",
+  "human-schema/preregistration.json": "c253841f8b66097a5932505d5a44add2ba1cf3cfb410b741674e5f392393b9c3",
+  "human-schema/round1.json": "6e3caa2373ae66b95899495a1b07e22103a2378eb991f5a3a7b6edf6ace593f7",
+  "human-schema/sitting-comparison.json": "73796a63970f25def9073fe115c8095629d0156d870146c51d571e67668fb71e",
+  "human-schema/summary.json": "87dcb2f3e02d468552290e3ac2618aae8fd63257ddedd687447f9f2050d92b12",
+  "provenance.json": "b9275589be3ee1d8705a42f43fdaeb055d03951bdca387c1f1634e273eb3b3db",
+  "results.json": "fba4aba0f9445a3ca08f852edde4e38ed0f0acac4abeade9e4bd032258c0c40b",
+  "round4.json": "5a348b603f106c24e516ddc499fb7284900e85c3f9e92f37a94239b920174523",
+  "round5.json": "b2fc39cead36785dd5a50fa8c0ff19ca0aa7d4d7c0c6b9275363c10527467f62",
+  "verify.py": "144b5d8a88d178ae34b30ac1729fae330c3c21f2008f7e6733283fd22673fafc"
+}
