@@ -106,33 +106,33 @@ Grading by hand early is how I found out which labels were broken.
 
 ## Turning the rubric into a classifier
 
-The next experiment made the questions executable. JEV scores each feature: exclusion
-categories, whether the post needs its thread, whether there is enough in the post to answer,
-whether it concerns agent work, and whether it points to useful material elsewhere. It
-scores all the features; code then combines them into a decision.
+JEV is a zero-shot classifier: give it a question and a set of possible answers, and it
+returns a probability for each. I turned the revised rubric into a set of features, each
+answering one question independently. Code combines those answers into the final action.
 
-The decision checks exclusions first, then missing thread context, then whether the post
-is answerable and about agent work, then whether it points elsewhere. The feature thresholds
-are 0.5. If a feature consulted along that path is within 0.1 of its threshold, the final
-action is review. These thresholds were fixed, not fitted to the labels.
+The features came from the grading failures above. Separating exclusion from substance
+helped, and link handling needed an explicit rule. I also separated missing thread context
+from a post that simply lacked substance. The questions ask:
 
-This evaluates **JEV's feature scores and the decision rule together**. It also makes the
-reason for a decision inspectable: an exclusion, missing context, enough substance in the
-post, a pointer, or a close call.
+- Does an exclusion apply?
+- Does the post need its thread to make sense?
+- Is there enough in the post itself to answer?
+- Is it about agent work?
+- Does it point to useful material elsewhere?
+
+A fixed rule turns those scores into respond, review or drop; close calls go to review.
+I fixed the thresholds before evaluation rather than fitting them to the labels. The
+experiments measure agreement for the feature scores and decision rule together.
 
 ## Comparing the models on fresh posts
 
-I graded two more batches blind, with production decisions and model answers hidden. Each
-selected the 65 most recent agent-ops posts and 35 most recent agent-evals posts outside the
-earlier grading rounds. Round 4 selected 100 posts but had 10 repeated texts, leaving 90
-scored cases. Round 5 filtered repeats during selection and scored all 100. The form included
-"need the thread"; no submitted label in either batch selected it.
+I graded two fresh batches blind, with production decisions and model answers hidden:
+90 posts in round 4 and 100 in round 5, drawn from agent-ops and agent-evals.
 
-I compared Scout's production relevance prompt with JEV and a Gemini 2.5 Flash arm answering
-the feature questions under the same decision rule. Production also used Gemini 2.5 Flash,
-but with its existing relevance prompt and cutoff. It had no review state, so the shared
-comparison is **keep or drop**: respond and review both count as keep. Exact action agreement
-also distinguishes respond from review.
+I compared three paths: Scout's existing relevance prompt, Gemini 2.5 Flash answering the
+new feature questions, and JEV answering the same questions. Because production had no
+review state, the shared comparison is **keep or drop**, with respond and review both
+counting as keep. Exact action agreement is reported for the arms using feature questions.
 
 | Round | Classifier | Keep or drop agreement | Exact action agreement |
 | --- | --- | ---: | ---: |
@@ -146,67 +146,45 @@ also distinguishes respond from review.
 | 5 | JEV, v4 features | 59/100 (59%) | 55/100 (55%) |
 | 5 | JEV, v5 features | 77/100 (77%) | 71/100 (71%) |
 
-JEV v4 did not win the first comparison: Gemini's feature arm had better keep/drop agreement
-in round 4. Inspecting the misses led to two changes for v5: widen the hype exclusion to
-include promotion, and make the pointer question distinguish useful agent material from
-news or product pages. The v5 result on round 4 is development on cases I had already seen.
+JEV v4 did not lead round 4; Gemini had better keep/drop agreement. The misses exposed two
+problems in the feature definitions: the hype exclusion was too narrow, and the pointer
+question treated product and news links as useful material. I revised both for v5. Its
+round-4 score is development performance on cases I had already seen.
 
-**Round 5 tested that revision on fresh posts.** V5 was frozen before the batch was seen,
-and the human form used the revised exclusion definition. JEV v5 agreed on keep/drop for
-77 of 100 posts, versus production's 64: a 13 percentage point improvement on the same
-cases. Exact action agreement was 71%. The gain was present in both projects: keep/drop
-agreement was 51/65 (78%) for agent-ops and 26/35 (74%) for agent-evals.
+**I froze v5 before round 5.** On 100 fresh posts, JEV v5 matched my keep/drop labels on
+77%, versus 64% for production. Exact action agreement was 71%.
 
 The errors still mattered. JEV v5 dropped 3 of the 47 posts I wanted kept and kept 20 of the
 53 I wanted dropped. This is agreement with one reviewer's labels on two recent batches,
 not proof that the labels are correct or that the result generalizes to every Scout project.
 
-[Aggregate results](data/results.json) · [Decisions as CSV](data/decisions.csv) ·
-[Round 4 feature scores](data/round4.json) · [Round 5 feature scores](data/round5.json)
-
 ## The benchmark experiment and v6
 
-Some remaining misses were posts that reported benchmark scores without enough method,
-failure analysis or practical detail to reply to. I tested a narrow exclusion for those
-score reports, alongside a broader benchmark exclusion, on the 190 scored posts from
-rounds 4 and 5. The narrow version became the additional feature in v6.
+One remaining error pattern was benchmark posts that reported scores without enough method
+or analysis to support a reply. I tested a narrow exclusion for those score reports and a
+broader benchmark exclusion on the 190 scored posts. I chose the narrow rule as the extra
+v6 feature.
 
-Replaying the stored v5 answers with that tested feature added gives:
+Replaying the v5 scores with that feature corrected three actions and introduced no
+additional drops of posts I wanted kept. The seven existing false drops remained. This was
+development on previously inspected data; the final v6 wording also includes one
+clarification about source links that has not been separately measured.
 
 | Batch | Keep or drop, v5 → benchmark replay | Exact action, v5 → benchmark replay |
 | --- | ---: | ---: |
 | Round 4, 90 posts | 68/90 → 70/90 (78%) | 62/90 → 64/90 (71%) |
 | Round 5, 100 posts | 77/100 → 78/100 (78%) | 71/100 → 72/100 (72%) |
 
-The narrow feature scored at least 0.5 on six posts, all of which I had labelled drop.
-Adding it corrected three final actions: two reviews in round 4 and one response in round 5
-became drops. It introduced **no additional drops of posts I wanted kept**. The existing
-four misses of kept posts in round 4 and three in round 5 remained; the classifier did not
-have perfect recall.
-
-This was a refinement after inspecting the labels, not a fresh validation batch. The numbers
-above combine recorded v5 feature scores with the separately tested benchmark score. The
-final v6 catalogue adds one clarification to that question: a link to the source does not
-change a score-only exclusion. That final wording was not separately measured in these
-stored answers. The [supporting data](data/) identifies the replay explicitly so it can be
-distinguished from the original model runs.
-
 ## Bringing v6 into Scout
 
-Scout now has the v6 classifier integrated for agent-ops and agent-evals. The classifier is
-called zero-shot in Scout; JEV is the provider. Its recorded action controls what happens
-next: respond proceeds to drafting and critique, review waits for human inspection without
-a draft, and drop stops. A human can resolve a review as respond or drop; respond creates a
-draft through the existing promotion flow.
+Scout now uses v6 for agent-ops and agent-evals. Respond proceeds to drafting, review pauses
+for a human decision, and drop stops the post. Scout records the feature scores and decision
+path separately from any later human decision. Other projects remain on the existing LLM
+relevance path.
 
-Scout records the feature probabilities and decision path, along with the classifier and
-action. Human decisions are recorded separately from model decisions. Other projects retain
-the LLM relevance path until they have their own graded evidence.
-
-The integration also supports randomly holding posts at decision time, including drops,
-for blind grading in Assay. That can measure missed opportunities as well as unwanted
-responses. Sampling is configurable and defaults to off; building the mechanism is separate
-from collecting a new production result. The figures here are the offline experiments.
+I also added configurable random holdouts, including dropped posts, so future production
+runs can be graded blind. Sampling defaults to off. The results above are offline
+experiments; the holdout mechanism has not yet produced a new production result.
 
 ## What comes next
 
@@ -214,13 +192,10 @@ from collecting a new production result. The figures here are the offline experi
 - Retest the current human rubric and bring in a second grader on a sample.
 - Inspect the remaining false drops and unwanted keeps, preserving notes on close calls.
 
-The useful progression was from testing my labels, to making the questions explicit, to
-testing the resulting decisions on fresh posts, and then carrying that same decision rule
-into Scout.
+The main lesson was to stabilize the decision schema before optimizing the classifier.
 
 ## Supporting data
 
-The [public data bundle](data/) contains the earlier label comparisons, structured human
-labels and model feature scores for the new rounds, per-post decisions, aggregate results,
-source hashes, and a verification command. It supports the tables without publishing post
-text, author identities, original URLs, private notes or the private feature catalogue.
+The [supporting data](data/) contains label comparisons, feature scores, per-post decisions,
+aggregate results and verification instructions. It also carries the sampling details,
+thresholds and benchmark replay method.
