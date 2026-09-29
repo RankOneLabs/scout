@@ -105,9 +105,10 @@ Grading by hand early is how I found out which labels were broken.
 
 ## Turning the rubric into a classifier
 
-JEV is a zero-shot classifier: give it a question and a set of possible answers, and it
-returns a probability for each. I turned the revised rubric into a set of features, each
-answering one question independently. Code combines those answers into the final action.
+JEV is a zero-shot classifier: give it a classification question and a bounded answer set,
+and it returns a probability for each answer. I turned the revised rubric into a set of
+features, each answering one question independently. Code combines those answers into the
+final action.
 
 The features came from the grading failures above. Separating exclusion from substance
 helped, and link handling needed an explicit rule. I also separated missing thread context
@@ -120,8 +121,8 @@ from a post that simply lacked substance. The questions ask:
 - Does it point to useful material elsewhere?
 
 A fixed rule turns those scores into respond, review or drop; close calls go to review.
-I fixed the thresholds before evaluation rather than fitting them to the labels. The
-experiments measure agreement for the feature scores and decision rule together.
+I fixed the thresholds before evaluation rather than fitting them to the labels. So the
+results below measure the classifier and decision rule as one system.
 
 ## Comparing the models on fresh posts
 
@@ -147,7 +148,7 @@ problems in the feature definitions: the hype exclusion was too narrow, and the 
 question treated product and news links as useful material. I revised both for v5 and
 tested the changes on round 4 as development data.
 
-**I froze v5 before round 5.** On 100 fresh posts, JEV v5 matched my keep/drop labels on
+I froze v5 before grading round 5. On 100 fresh posts, JEV v5 matched my keep/drop labels on
 77%, versus 64% for production. Exact action agreement was 71%.
 
 The errors still mattered. JEV v5 dropped 3 of the 47 posts I wanted kept and kept 20 of the
@@ -158,18 +159,13 @@ not proof that the labels are correct or that the result generalizes to every Sc
 
 One remaining error pattern was benchmark posts that reported scores without enough method
 or analysis to support a reply. I tested a narrow exclusion for those score reports and a
-broader benchmark exclusion on the 190 scored posts. I chose the narrow rule as the extra
-v6 feature.
+broader benchmark exclusion on the 190 scored posts. The narrow rule had better keep/drop
+agreement and became the additional v6 feature.
 
 Replaying the v5 scores with that feature corrected three actions and introduced no
 additional drops of posts I wanted kept. The seven existing false drops remained. This was
 development on previously inspected data; the final v6 wording also includes one
 clarification about source links that has not been separately measured.
-
-| Batch | Keep or drop, v5 → benchmark replay | Exact action, v5 → benchmark replay |
-| --- | ---: | ---: |
-| Round 4, 90 posts | 68/90 → 70/90 (78%) | 62/90 → 64/90 (71%) |
-| Round 5, 100 posts | 77/100 → 78/100 (78%) | 71/100 → 72/100 (72%) |
 
 ## Bringing v6 into Scout
 
@@ -179,8 +175,8 @@ path separately from any later human decision. Other projects remain on the exis
 relevance path.
 
 I also added configurable random holdouts, including dropped posts, so future production
-runs can be graded blind. Sampling defaults to off. The results above are offline
-experiments; the holdout mechanism has not yet produced a new production result.
+runs can be graded blind. The results above are still offline experiments; the holdout
+mechanism has not yet produced a production result.
 
 ## What comes next
 
@@ -188,4 +184,4 @@ experiments; the holdout mechanism has not yet produced a new production result.
 - Retest the current human rubric and bring in a second grader on a sample.
 - Inspect the remaining false drops and unwanted keeps, preserving notes on close calls.
 
-The main lesson was to stabilize the decision schema before optimizing the classifier.
+The classifier got better after the grading failures made the decision schema more explicit.
