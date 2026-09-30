@@ -3,8 +3,6 @@
 Scout's classifier decides whether a post about AI agents gets a response, goes to review
 or is dropped. Model comparison first required a consistent decision rubric.
 
-*Updated September 29, 2026.*
-
 ## Start with the rubric
 
 I built a human reference set from 79 production posts. Three rounds tested repeatability,
