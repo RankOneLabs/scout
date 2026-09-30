@@ -48,16 +48,18 @@ runner-up. Labels alone would have lost that distinction.
 
 ## Separate feature judgments from policy
 
-I replaced the bundled grades with independently scored features: exclusion categories,
+I replaced the bundled grades with independently scored questions: exclusion categories,
 missing thread context, enough substance in the post, relevance to agent work, and
-pointers to useful material elsewhere. Missing context stayed distinct from insufficient
-substance.
+pointers to useful material elsewhere. That decomposition makes the task suitable for
+zero-shot classification: each feature can be scored directly from its definition without
+training a task-specific model first.
 
-JEV returned probabilities over bounded answer choices using zero-shot classification. A
-fixed policy mapped those scores to respond, review or drop, sending close calls to
-review. Keeping scores separate from policy helps locate errors in feature judgments or
-action mapping. Thresholds were fixed before evaluation; results assess classifier and
-policy together.
+I used JEV for those feature scores. It returns probabilities over bounded answer choices,
+and a fixed policy maps those scores to respond, review or drop, sending close calls to
+review. Keeping feature scores separate from policy makes failures easier to locate:
+either the classifier misjudged a feature, or the policy mapped otherwise reasonable
+scores to the wrong action. Thresholds were fixed before evaluation, so the results below
+measure the classifier and policy as one system.
 
 ## Compare classifiers on fresh data
 
@@ -93,11 +95,10 @@ needs fresh validation; a source-link clarification remains separately unmeasure
 
 ## Keep the loop alive in production
 
-Scout now routes agent-ops and agent-evals through v6: respond drafts, review pauses for a
-human, drop stops processing. Other projects retain the existing relevance path. Scout
-records feature scores and policy decisions separately from human decisions. Configurable
-random holdouts include dropped posts so false drops can surface in blind grading.
-Reported results remain offline; production holdouts have not yet produced a result.
+The revised classifier is deployed in Scout, which records feature scores and policy
+decisions separately from later human decisions. Random holdouts include dropped posts
+so false drops can surface in blind grading. Reported results remain offline; production
+holdouts have not yet produced a result.
 
 - Validate v6 on fresh holdouts with the catalogue frozen.
 - Retest rubric repeatability and add a second grader.
