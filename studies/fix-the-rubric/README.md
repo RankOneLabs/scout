@@ -1,18 +1,15 @@
 # Before you optimize the classifier, fix the rubric
 
-Scout uses a classifier to decide whether a social post about AI agents should get a
-response, go to review or be dropped. Improving that classifier turned out to require more
-than swapping models: the decision itself first had to be made explicit enough to evaluate.
+Scout's classifier decides whether a post about AI agents gets a response, goes to review
+or is dropped. Model comparison first required a consistent decision rubric.
 
 *Updated September 29, 2026.*
 
-## Check the reference labels before comparing models
+## Start with the rubric
 
-I graded 79 production posts over three rounds: 30 with the original labels twice, then all
-79 with revised labels, then all 79 again without another schema change. The first repeat
-grading hid earlier answers. My repeat-agreement target for the revised schema was 72/79
-(91%); [supporting data](supporting-data.md) records the full setup, results and comparison
-limits.
+I built a human reference set from 79 production posts. Three rounds tested repeatability,
+a redesign, then repeatability again; [supporting data](supporting-data.md) covers the
+setup and limits. My target was 72/79 (91%).
 
 | Round | What matched | Matched | % |
 | --- | --- | ---: | ---: |
@@ -24,59 +21,53 @@ limits.
 | 3 | Exclusion category | 71/79 | 90% |
 | 3 | Final action | 68/79 | 86% |
 
-**Strict repeat agreement was 64/79 (81%).** Of 15 changed decisions, 11 changed Scout's
-action. Counting six close substance calls as matches gave 70/79 (89%), still two short of
-the target. These labels weren't yet stable ground truth; measurements on earlier posts
-and definitions provide context for the model experiments, not a performance ceiling.
+**Strict repeat agreement was 64/79 (81%).** Eleven of 15 changes affected Scout's action.
+Allowing six close calls gave 70/79 (89%), still below target. Earlier labels weren't
+stable ground truth or a ceiling for later model performance.
 
-## Inspect what disagreement reveals
+## Use disagreement to find schema failures
 
 **The content band bundled two judgments.** It matched only 19/30 times (63%), with six of
 the 11 misses two rungs apart. The bottom rungs asked about the post's subject; the top
-rungs asked how much substance it contained. Every grade forced both judgments onto one
-scale, while exclusion alone was more repeatable at 27/30 (90%).
+rungs asked about substance. Both judgments competed on one scale.
 
-**Direct action grading hid a policy rule.** Grading respond, review or drop meant weighing
-everything at once. In round 2, those answers matched the action computed from separate
-labels only 59% of the time. Of 12 posts moving from review to respond, I had already marked
-7 as substantive. The missing rule was that enough substance in the post warrants a
-response even when it includes a link; substance behind a link requires review because the
-destination may or may not support a reply.
+**Direct action grading hid a policy rule.** Direct respond, review or drop grades matched
+the action computed from separate labels only 59% of the time. Of 12 posts moving from
+review to respond, I had already marked 7 as substantive. The missing rule: enough
+substance in the post warrants a response even with a link; substance behind a link
+requires review because the destination may not support a reply.
 
 **Definitions drift while you grade.** In round 2, 13 of 18 changed exclusion calls moved
-toward excluding. My meaning of substance also shifted from "where does most of the
+toward excluding. My definition of substance shifted from "where does most of the
 information live?" to "is there enough here to write a real reply without opening the
-link?" I kept the second definition because it addressed the product decision.
+link?" The second addressed the product decision.
 
 **Notes separated close calls from unexplained reversals.** All seven substance changes in
 round 3 had notes; six named my earlier answer as runner-up, sometimes with a split like
-"60/40, in the post vs. not enough." Seven of eight exclusion changes had no note, including
-all four that changed the action. An LLM sorted the notes by whether they explained a change
-and named the earlier answer. Labels alone would have lost that distinction.
+"60/40, in the post vs. not enough." Seven of eight exclusion changes had no note,
+including all four that changed the action. An LLM sorted the notes by explanation and
+runner-up. Labels alone would have lost that distinction.
 
-## Decompose the decision, then apply policy
+## Separate feature judgments from policy
 
-I replaced the content band and direct action grading with separate exclusion and substance
-judgments. For the classifier, I extended that decomposition into independently scored
-features: exclusion categories, missing thread context, enough substance in the post,
-relevance to agent work, and pointers to useful material elsewhere. Missing thread context
-needed to remain distinct from a post that simply lacked substance.
+I replaced the bundled grades with independently scored features: exclusion categories,
+missing thread context, enough substance in the post, relevance to agent work, and
+pointers to useful material elsewhere. Missing context stayed distinct from insufficient
+substance.
 
-For feature scoring, I used JEV, a zero-shot classifier returning probabilities over bounded
-answer choices. The same feature questions could also be answered by another model.
+JEV returned probabilities over bounded answer choices using zero-shot classification. A
+fixed policy mapped those scores to respond, review or drop, sending close calls to
+review. Keeping scores separate from policy helps locate errors in feature judgments or
+action mapping. Thresholds were fixed before evaluation; results assess classifier and
+policy together.
 
-A fixed policy maps scores to respond, review or drop, sending close calls to review.
-Keeping scores separate from policy makes errors easier to locate: a feature may be
-misjudged, or the mapping to actions may need revision. Thresholds were fixed before
-evaluation; the reported results assess classifier and policy together.
+## Compare classifiers on fresh data
 
-## Compare models and iterate from errors
-
-I graded two fresh batches with production and model answers hidden: 90 posts in round 4
-and 100 in round 5. I compared Scout's existing relevance prompt with Gemini 2.5 Flash and
-JEV answering the same feature questions.
-Production had no review state, so the shared comparison is **keep or drop**, with respond
-and review both counting as keep; exact action agreement applies to the feature-based arms.
+I graded 90 fresh posts in round 4 and 100 in round 5 with production and model answers
+hidden. I compared Scout's existing relevance prompt with Gemini 2.5 Flash and JEV
+answering the same feature questions. Production had no review state, so **keep or drop**
+is the shared comparison: respond and review both count as keep. Exact action agreement
+applies to the feature-based arms.
 
 | Round | Classifier | Keep or drop agreement | Exact action agreement |
 | --- | --- | ---: | ---: |
@@ -87,41 +78,33 @@ and review both counting as keep; exact action agreement applies to the feature-
 | 5 | Gemini, v5 features | 58/100 (58%) | 52/100 (52%) |
 | 5 | JEV, v5 features | 77/100 (77%) | 71/100 (71%) |
 
-Gemini had higher keep/drop agreement than JEV v4 in round 4. Error inspection exposed two
-definition problems: the hype exclusion was too narrow, and the pointer question counted
-product and news links as useful material. I revised both for v5, using round 4 as
-development data.
+## Iterate from observed errors
 
-I froze v5 before grading round 5. On those 100 fresh posts, JEV matched 77% of my keep/drop
-labels versus production's 64%, with 71% exact action agreement. It dropped 3 of the 47
-posts I wanted kept and kept 20 of the 53 I wanted dropped. These are results against one
-reviewer's rubric on two recent batches; independent grading and production holdouts are
-still needed.
+Gemini beat JEV v4 on keep/drop agreement in round 4. The misses exposed two definition
+problems: the hype exclusion was too narrow, and the pointer question counted product and
+news links as useful material. I revised both for v5, making round 4 development data.
 
-### A further refinement needs fresh validation
+I froze v5 before grading round 5. On that fresh batch, JEV beat production on keep/drop
+agreement. It dropped 3 of the 47 posts I wanted kept and kept 20 of the 53 I wanted
+dropped. Results cover one reviewer and two recent batches.
 
-Benchmark score reports without enough method or analysis remained an error pattern. A
-narrow exclusion performed slightly better than a broader rule on development data and
-became a v6 feature. Replaying v5 scores corrected three actions with no additional false
-drops, leaving the seven existing false drops. These [development results](supporting-data.md#benchmark-refinement)
-still need fresh validation; a source-link clarification in the final v6 wording has not
-been separately measured.
+A narrow exclusion for benchmark score reports lacking method or analysis became v6 after
+a slight development-data gain. Replaying v5 scores corrected three actions without adding
+false drops; seven remained. The [refinement](supporting-data.md#benchmark-refinement)
+needs fresh validation; a source-link clarification remains separately unmeasured.
 
-## Keep the evaluation loop open in production
+## Keep the loop alive in production
 
-Scout now uses v6 for agent-ops and agent-evals: respond proceeds to drafting, review pauses
-for a human, and drop stops the post; other projects retain the existing LLM relevance path.
-It records feature scores and the decision path separately from later human decisions. I
-added configurable random holdouts, including dropped posts, for blind grading—otherwise
-false drops would escape review. The reported results remain offline experiments; the
-holdout mechanism has not yet produced a production result.
+Scout now routes agent-ops and agent-evals through v6: respond drafts, review pauses for a
+human, drop stops processing. Other projects retain the existing relevance path. Scout
+records feature scores and policy decisions separately from human decisions. Configurable
+random holdouts include dropped posts so false drops can surface in blind grading.
+Reported results remain offline; production holdouts have not yet produced a result.
 
-## What comes next
+- Validate v6 on fresh holdouts with the catalogue frozen.
+- Retest rubric repeatability and add a second grader.
+- Inspect remaining errors, preserving notes on close calls.
 
-- Measure v6 on fresh production holdouts, with the catalogue frozen before grading.
-- Retest the current human rubric and bring in a second grader on a sample.
-- Inspect remaining false drops and unwanted keeps, preserving notes on close calls.
-
-The model was only one optimization surface. Starting from the product decision, testing
-the labels, separating features from policy, and validating changes on fresh data made the
+The model was only one optimization surface. Start from the product decision, test the
+labels, separate features from policy, and validate changes on fresh data to make the
 classifier easier to debug and improve.
