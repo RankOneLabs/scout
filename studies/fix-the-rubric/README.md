@@ -60,8 +60,8 @@ pointers to useful material elsewhere. The core design is zero-shot classificati
 each feature can be scored from its definition alone, without task-specific training data.
 New or revised features change behavior through definition edits without retraining.
 
-I used JEV for those feature scores. It returns probabilities over bounded answer choices,
-and a fixed policy maps those scores to respond, review or drop, sending close calls to
+I used JEV for those feature scores, and a fixed policy maps those scores to respond,
+review or drop, sending close calls to
 review. Keeping feature scores separate from policy makes failures easier to locate:
 either the classifier misjudged a feature, or the policy mapped otherwise reasonable
 scores to the wrong action. Thresholds were fixed before evaluation, so the results below
