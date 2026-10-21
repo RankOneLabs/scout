@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 import subprocess
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -302,6 +302,19 @@ def test_audit_proves_dossier_readiness_approval_and_replay_through_real_export(
     project_key = "gateway"
     summary_id = "gateway-dossier"
     question_text = "Which authentication flow does your team already use?"
+    summary_path = content_repo / index["entries"][summary_id]["path"]
+    reviewed = date.fromisoformat(
+        yaml.safe_load(summary_path.read_text())["dossier"]["last_reviewed"]
+    )
+
+    class FixtureDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return reviewed + timedelta(days=1)
+
+    # This immutable fixture is historical; keep its age stable while testing
+    # the production freshness check rather than the wall clock.
+    monkeypatch.setattr("scout.dossiers.resolver.date", FixtureDate)
     structured = StructuredDraftOutput(
         posture="ask",
         segments=[QuestionSegment(type="question", text=question_text)],

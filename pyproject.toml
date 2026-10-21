@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml>=6.0",
     "jsonschema>=4.23",
     "scikit-learn>=1.9.0",
+    "scipy>=1.18.1",
     "numpy>=2.4.3",
     "threadpoolctl>=3.6.0",
 ]
@@ -85,6 +86,10 @@ ignore_missing_imports = true
 # Scout payloads; application code remains strict.
 [[tool.mypy.overrides]]
 module = ["sklearn.*", "threadpoolctl"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

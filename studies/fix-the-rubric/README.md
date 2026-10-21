@@ -4,6 +4,10 @@ I rebuilt Scout's classifier for social posts about AI agents as zero-shot featu
 plus a fixed policy that maps scores to respond, review or drop. On a blind 100-post
 holdout, keep/drop agreement rose from 64% (production) to 77% with JEV v5,
 TypeSafe's classifier that returns probabilities over bounded answer choices.
+On the same 100 posts, JEV was right where production was wrong on 26 posts and the
+reverse on 13 (exact McNemar p = 0.0533; paired difference 13.0 points, 95% CI 1.0 to
+25.0), although the exact test does not reach the 0.05 threshold while the 95%
+interval excludes zero.
 The revised classifier runs in production with random holdouts, including dropped posts.
 
 ## I measured rubric repeatability before comparing classifiers
@@ -75,14 +79,18 @@ answering the same feature questions. Production had no review state, so **keep 
 is the shared comparison: respond and review both count as keep. Exact action agreement
 applies to the feature-based arms.
 
-| Round | Classifier | Keep or drop agreement | Exact action agreement |
+| Round | Classifier | Keep or drop agreement (95% Wilson CI) | Exact action agreement (95% Wilson CI) |
 | --- | --- | ---: | ---: |
-| 4 | Production | 51/90 (57%) | — |
-| 4 | Gemini, v4 features | 62/90 (69%) | 51/90 (57%) |
-| 4 | JEV, v4 features | 57/90 (63%) | 52/90 (58%) |
-| 5 | Production | 64/100 (64%) | — |
-| 5 | Gemini, v5 features | 58/100 (58%) | 52/100 (52%) |
-| 5 | JEV, v5 features | 77/100 (77%) | 71/100 (71%) |
+| 4 | Production | 51/90 (57%, 46 to 66) | — |
+| 4 | Gemini, v4 features | 62/90 (69%, 59 to 78) | 51/90 (57%, 46 to 66) |
+| 4 | JEV, v4 features | 57/90 (63%, 53 to 73) | 52/90 (58%, 48 to 68) |
+| 5 | Production | 64/100 (64%, 54 to 73) | — |
+| 5 | Gemini, v5 features | 58/100 (58%, 48 to 67) | 52/100 (52%, 42 to 62) |
+| 5 | JEV, v5 features | 77/100 (77%, 68 to 84) | 71/100 (71%, 62 to 79) |
+
+The pre-declared primary comparison is round 5 JEV v5 vs production on keep/drop; all
+other comparisons are exploratory with no multiple-comparison correction, and round 4
+is development data for v5.
 
 ## v5 broadened the hype exclusion and narrowed useful pointers
 
