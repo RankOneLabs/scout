@@ -32,7 +32,8 @@ SEED = 20261021
 DRAWS = 10_000
 
 # Pin the historical arms. Round 4 jev_v5 is a populated development replay,
-# not its JEV v4 result. Round 4 llm_v5 is entirely empty; llm_v4 is Gemini v4.
+# not its JEV v4 result. Round 4 llm_v5 is entirely empty; the confirmed
+# Gemini v4 arm uses llm_v4 so its published counts remain reproducible.
 ARM_COLUMNS = {
     4: {"jev_action": "jev_v4", "gemini_action": "llm_v4"},
     5: {"jev_action": "jev_v5", "gemini_action": "llm_v5"},
@@ -94,6 +95,8 @@ def export_source() -> None:
         counts[round_number] += 1
         if round_number == 4 and (not source["jev_v5"] or source["llm_v5"]):
             raise ValueError("round 4 source does not match the documented v5 replay shape")
+        if round_number == 4 and not source["llm_v4"]:
+            raise ValueError("round 4 Gemini v4 source llm_v4 is missing")
         columns = ARM_COLUMNS[round_number]
         exported[round_number].append(
             {
