@@ -49,6 +49,10 @@ def test_exported_counts_and_round_four_arm() -> None:
     assert sum(
         paired_stats.correct(row, "keep_drop", "gemini") for row in rounds[4]
     ) == 62
+    assert all(row.gemini_action for row in rounds[4])
+    assert sum(
+        paired_stats.correct(row, "exact_action", "gemini") for row in rounds[4]
+    ) == 51
 
 
 def test_corrupted_csv_aborts_before_statistics(tmp_path, monkeypatch, capsys) -> None:

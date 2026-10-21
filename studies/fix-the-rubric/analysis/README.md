@@ -22,9 +22,10 @@ round 4 JEV arm. Using it would yield 68/90 instead of the published 57/90 keep/
 agreement. All 90 round 4 source rows have a blank `llm_v5`; Gemini v5 has no round 4
 measurement. The round 4 export uses `llm_v4` for Gemini v4. The brief also asks for
 an empty round 4 `gemini_action`, which conflicts with its requirement to recompute
-Gemini v4 statistics solely from these six-column CSVs. Keeping `llm_v4` in that column
-is necessary to reproduce the published 62/90 and 51/90 counts and the round 4 paired
-comparison.
+Gemini v4 statistics solely from these six-column CSVs. The study owner confirmed
+keeping `llm_v4` in that column so the published 62/90 and 51/90 counts and the round 4
+paired comparison remain reproducible. This column represents Gemini v4 on round 4,
+not Gemini v5.
 
 From the repository root, regenerate the CSVs from the pinned git blob and then the
 results:
